@@ -762,11 +762,7 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(call_line);
                         try stack.append(.{ .name = result_name, .ty = .I64 });
                     } else {
-                        const fallback = try self.nextTemp(id);
-                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{fallback});
-                        defer self.allocator.free(line);
-                        try w.writeAll(line);
-                        try stack.append(.{ .name = fallback, .ty = .I64 });
+                        return self.hirFault("@length operand is {s}, which this instruction has no lowering for", .{@tagName(arg.ty)});
                     }
                 },
                 .ToInt => {
@@ -853,11 +849,7 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(trunc_line);
                         try stack.append(.{ .name = as_i8, .ty = .I8 });
                     } else {
-                        const zero = try self.nextTemp(id);
-                        const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{zero});
-                        defer self.allocator.free(zero_line);
-                        try w.writeAll(zero_line);
-                        try stack.append(.{ .name = zero, .ty = .I8 });
+                        return self.hirFault("@byte operand is {s}, which this instruction has no lowering for", .{@tagName(arg.ty)});
                     }
                 },
                 .ToString => {
@@ -1030,12 +1022,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try self.emitRTCallReturningString(w, stack, id, "doxa_substring", args_line);
                 },
                 else => {
-                    const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                    id.* += 1;
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{fallback});
-                    defer self.allocator.free(line);
-                    try w.writeAll(line);
-                    try stack.append(.{ .name = fallback, .ty = .I64 });
+                    return self.hirFault("string operation {s} has no lowering", .{@tagName(sop.op)});
                 },
             }
         }
@@ -2758,17 +2745,14 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(store_line);
         }
 
-        pub fn handleLoadVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, slot: HIR.Slot, gname: []const u8) !void {
+        pub fn handleLoadVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gname: []const u8) !void {
             const st = self.global_types.get(gname) orelse .I64;
             if (st == .Nothing) {
                 const result_name = try self.nextTemp(id);
                 try stack.append(.{ .name = result_name, .ty = .Nothing });
                 return;
             }
-            // A group or union global loads as its %DoxaValue box; inside a
-            // narrowed branch it is read as the member the branch proved, exactly
-            // as a local is (`loadNarrowedUnion`): a member as its own
-            // representation, a group re-packed as the group's box.
+            // A group or union global loads as its %DoxaValue box.
             const llty = self.stackTypeToLLVMType(st);
             const gptr = try self.mangleGlobalName(gname);
             defer self.allocator.free(gptr);
@@ -2799,7 +2783,6 @@ pub fn Methods(comptime Ctx: type) type {
                 .fixed_array_sizes = if (fixed_info) |fi| fi.sizes else [_]u32{0} ** 4,
                 .boxed_type = self.global_boxed_types.get(gname),
             };
-            if (try self.loadNarrowedUnion(w, loaded, slot, id)) |member| return stack.append(member);
             try stack.append(loaded);
         }
 

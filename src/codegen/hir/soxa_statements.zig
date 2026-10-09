@@ -147,24 +147,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         .VarDecl => |decl| {
             // The binding's type, as analysis declared it: its annotation
             // (completed from the initializer where incomplete), or else its
-            // initializer's type. Dispatch and peeks read a named one by key.
+            // initializer's type.
             const var_type = try self.bindingTypeOf(&stmt.base);
-            const binding_key = self.typeKeyOf(self.semantic.getStoreTarget(stmt.base.id).?.slot.*);
 
             if (decl.initializer) |init_expr| {
-                const previous_override = self.array_storage_override;
-                defer self.array_storage_override = previous_override;
-                const previous_element_override = self.array_element_type_override;
-                defer self.array_element_type_override = previous_element_override;
-
-                if (decl.type_info.base == .Array) {
-                    self.array_storage_override = self.storageKindFromTypeInfo(decl.type_info);
-                    self.array_element_type_override = var_type.Array.*;
-                } else {
-                    self.array_storage_override = null;
-                    self.array_element_type_override = null;
-                }
-
                 try self.generateExpression(init_expr, true, true);
 
                 const empty_literal = init_expr.data == .Array and init_expr.data.Array.len == 0;
@@ -203,28 +189,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 const const_idx = try self.addConstant(default_value);
                 try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
                 try self.convertValue(if (default_value == .nothing) .Nothing else var_type, var_type);
-            }
-
-            if (var_type == .Array) {
-                const storage_kind = if (decl.type_info.base == .Array)
-                    self.storageKindFromTypeInfo(decl.type_info)
-                else
-                    SoxaTypes.ArrayStorageKind.dynamic;
-                try self.trackArrayStorageKind(decl.name.lexeme, storage_kind);
-                try self.trackArrayElementType(decl.name.lexeme, var_type.Array.*);
-            }
-            try self.trackVariableType(decl.name.lexeme, var_type);
-            if (binding_key) |key| try self.trackVariableCustomType(decl.name.lexeme, key);
-
-            const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
-            const is_local = self.symbol_table.isLocalVariable(decl.name.lexeme);
-            switch (var_type) {
-                .Union => try self.symbol_table.trackVariableUnionMembers(is_local, var_idx, try self.collectUnionMemberNamesFromHIRType(var_type)),
-                .Group => {
-                    const member_names = try self.type_system.getGroupMemberNames(self.semantic.group_table.keyOf(var_type.Group).?);
-                    if (member_names.len > 0) try self.symbol_table.trackVariableUnionMembers(is_local, var_idx, member_names);
-                },
-                else => {},
             }
 
             const is_module_ctx = self.current_function == null and self.isModuleContext();

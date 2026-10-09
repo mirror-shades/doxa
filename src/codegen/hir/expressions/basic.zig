@@ -53,7 +53,7 @@ pub const BasicExpressionHandler = struct {
                 .Expression => |expr| {
                     // B2: a struct interpolated into a string is printed, so its
                     // descriptor must stay registered.
-                    const value_type = self.generator.inferTypeFromExpression(expr);
+                    const value_type = try self.generator.typeOf(expr);
                     self.generator.markReflectedType(value_type);
                     try self.generator.generateExpression(expr, true, false);
                     try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
@@ -108,7 +108,7 @@ pub const BasicExpressionHandler = struct {
     pub fn generateEnumMember(self: *BasicExpressionHandler, expr: *ast.Expr) (std.mem.Allocator.Error || ErrorList)!void {
         const member = expr.data.EnumMember;
         const location = ast.SourceSpan.fromToken(member).location;
-        const type_info = self.generator.semantic.getCachedExprType(expr) orelse return ErrorList.MissingExpressionType;
+        const type_info = try self.generator.typeInfoOf(expr);
         // Analysis rejects a shorthand its context left untyped.
         const key = self.generator.typeKeyOf(type_info.*).?;
 

@@ -7,7 +7,6 @@ const Slot = @import("../soxa_types.zig").Slot;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const StructId = @import("../soxa_types.zig").StructId;
 const EnumId = @import("../soxa_types.zig").EnumId;
-const TypeSystem = @import("../type_system.zig").TypeSystem;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const Location = @import("../../../utils/reporting.zig").Location;
@@ -87,12 +86,12 @@ pub const ControlFlowHandler = struct {
 
     /// The group the analyzer typed `subject` as, or null when it is not
     /// group-typed.
-    fn resolveMatchGroup(self: *ControlFlowHandler, subject: *ast.Expr) ?MatchGroup {
-        const type_info = self.generator.semantic.getCachedExprType(subject) orelse return null;
-        const custom = type_info.custom_type orelse return null;
-        const ref = custom.resolved();
-        const id = self.generator.semantic.group_table.idOf(ref) orelse return null;
-        return .{ .id = id, .name = ref.name };
+    fn resolveMatchGroup(self: *ControlFlowHandler, subject: *ast.Expr) ErrorList!?MatchGroup {
+        const id = switch (try self.generator.typeOf(subject)) {
+            .Group => |id| id,
+            else => return null,
+        };
+        return .{ .id = id, .name = self.generator.semantic.group_table.displayName(id).? };
     }
 
     const GroupMember = struct { index: u32, key: []const u8 };
@@ -278,10 +277,8 @@ pub const ControlFlowHandler = struct {
         };
     }
 
-    fn expressionNeedsRuntimeScope(self: *ControlFlowHandler, expr: *ast.Expr) bool {
-        if (self.generator.semantic.getCachedExprType(expr)) |info| {
-            if (typeNeedsRuntimeScope(info.*)) return true;
-        }
+    fn expressionNeedsRuntimeScope(self: *ControlFlowHandler, expr: *ast.Expr) ErrorList!bool {
+        if (typeNeedsRuntimeScope((try self.generator.typeInfoOf(expr)).*)) return true;
         return switch (expr.data) {
             .Literal => |literal| switch (literal) {
                 .string => true,
@@ -293,32 +290,32 @@ pub const ControlFlowHandler = struct {
             // `doxa_char_to_string`, and string pattern comparisons may build
             // temporaries. Treat every match as arena-live.
             .Match => true,
-            .Block => |block| self.blockNeedsRuntimeScope(block.statements, block.value),
-            .If => |if_expr| (if_expr.then_branch != null and self.expressionNeedsRuntimeScope(if_expr.then_branch.?)) or
-                (if_expr.else_branch != null and self.expressionNeedsRuntimeScope(if_expr.else_branch.?)),
+            .Block => |block| try self.blockNeedsRuntimeScope(block.statements, block.value),
+            .If => |if_expr| (if_expr.then_branch != null and try self.expressionNeedsRuntimeScope(if_expr.then_branch.?)) or
+                (if_expr.else_branch != null and try self.expressionNeedsRuntimeScope(if_expr.else_branch.?)),
             else => false,
         };
     }
 
-    fn blockNeedsRuntimeScope(self: *ControlFlowHandler, statements: []ast.Stmt, value: ?*ast.Expr) bool {
+    fn blockNeedsRuntimeScope(self: *ControlFlowHandler, statements: []ast.Stmt, value: ?*ast.Expr) ErrorList!bool {
         for (statements) |statement| {
             switch (statement.data) {
                 .VarDecl => |decl| {
                     if (typeNeedsRuntimeScope(decl.type_info)) return true;
                     if (decl.initializer) |initializer| {
-                        if (self.expressionNeedsRuntimeScope(initializer)) return true;
+                        if (try self.expressionNeedsRuntimeScope(initializer)) return true;
                     }
                 },
                 .Expression => |expr| {
-                    if (expr) |e| if (self.expressionNeedsRuntimeScope(e)) return true;
+                    if (expr) |e| if (try self.expressionNeedsRuntimeScope(e)) return true;
                 },
                 .Return => |ret| {
-                    if (ret.value) |e| if (self.expressionNeedsRuntimeScope(e)) return true;
+                    if (ret.value) |e| if (try self.expressionNeedsRuntimeScope(e)) return true;
                 },
                 else => {},
             }
         }
-        return if (value) |e| self.expressionNeedsRuntimeScope(e) else false;
+        return if (value) |e| try self.expressionNeedsRuntimeScope(e) else false;
     }
 
     fn lowerMatchPatternLiteral(literal: ast.TokenLiteral) PatternLiteralLowering {
@@ -510,10 +507,10 @@ pub const ControlFlowHandler = struct {
     /// When both the match subject and a pattern name struct types, the arm is
     /// decided statically: `true` when the subject is that struct, `false` when
     /// it is a different one. Null leaves the pattern to the checks below.
-    fn structTypePatternMatches(self: *ControlFlowHandler, subject_type: HIRType, resolved: ast.MatchCase.Resolved) ?bool {
+    fn structTypePatternMatches(self: *ControlFlowHandler, subject_type: HIRType, resolved: ast.MatchCase.Resolved) ErrorList!?bool {
         const subject_sid = matchSubjectStructId(subject_type) orelse return null;
         const named = switch (resolved) {
-            .type => |ref| self.generator.type_system.typeForRef(ref),
+            .type => |ref| try self.generator.type_system.typeForRef(ref),
             .token, .variant => return null,
         };
         if (named != .Struct) return null;
@@ -546,7 +543,7 @@ pub const ControlFlowHandler = struct {
     fn unionPatternFor(self: *ControlFlowHandler, subject_type: HIRType, resolved: ast.MatchCase.Resolved) !?UnionPattern {
         if (subject_type != .Union) return null;
         const named = switch (resolved) {
-            .type => |ref| self.generator.type_system.typeForRef(ref),
+            .type => |ref| try self.generator.type_system.typeForRef(ref),
             .token, .variant => return null,
         };
 
@@ -557,84 +554,6 @@ pub const ControlFlowHandler = struct {
             .Enum => .{ .indices = indices, .struct_id = null, .tag = @intFromEnum(DoxaTag.Enum) },
             else => .{ .indices = indices, .struct_id = null },
         } };
-    }
-
-    /// What a type test asks for: a builtin type by its display name
-    /// (`int`, `string[]`), or a named type by identity.
-    const TypeTest = union(enum) {
-        builtin: []const u8,
-        named: HIRType,
-    };
-
-    /// Whether the union member `member` is what `type_test` asks for.
-    fn memberPasses(self: *ControlFlowHandler, member: HIRType, type_test: TypeTest) !bool {
-        return switch (type_test) {
-            .named => |named| self.memberIsNamed(member, named),
-            .builtin => |name| std.mem.eql(u8, try self.generator.hirTypeToDisplayName(member), name),
-        };
-    }
-
-    /// What a match pattern says the subject is once the arm runs: the member
-    /// type a type pattern (`int`, `string`, `int[]`) or a named-type pattern
-    /// (`FileError`) names. Null for a pattern that selects a value rather than
-    /// a type — `else`, an enum variant.
-    fn patternTypeTest(self: *ControlFlowHandler, pattern: ast.Token, resolved: ast.MatchCase.Resolved) ?TypeTest {
-        switch (resolved) {
-            .type => |ref| return .{ .named = self.generator.type_system.typeForRef(ref) },
-            .variant => return null,
-            .token => {},
-        }
-        if (std.mem.indexOf(u8, pattern.lexeme, "[]") != null) return .{ .builtin = pattern.lexeme };
-        return .{ .builtin = switch (pattern.type) {
-            .INT_TYPE, .INT => "int",
-            .FLOAT_TYPE, .FLOAT => "float",
-            .STRING_TYPE, .STRING => "string",
-            .BYTE_TYPE, .BYTE => "byte",
-            .TETRA_TYPE, .TETRA => "tetra",
-            .NOTHING_TYPE, .NOTHING => "nothing",
-            else => return null,
-        } };
-    }
-
-    /// The single-member union view an arm narrows a union-typed subject to, or
-    /// null when narrowing would not be true of every way the arm can be
-    /// selected: `else` names no member (the box holds any of them), a
-    /// multi-pattern arm may be picked by patterns that disagree, and a
-    /// pattern the union cannot hold is a check that always fails.
-    ///
-    /// The jump into the arm body is exactly the evidence the view asserts — a
-    /// `MemberCheck`/`TypeCheck` that passed for this one pattern — so a load
-    /// of the subject inside the body unwraps the box to that member and
-    /// infers as it, the same contract `as` narrowing relies on.
-    fn armNarrowingView(self: *ControlFlowHandler, subject: *ast.Expr, case: ast.MatchCase) !?HIRType {
-        if (subject.data != .Variable) return null;
-        if (case.patterns.len != 1) return null;
-        const var_name = subject.data.Variable.lexeme;
-        const saved_type = self.generator.getTrackedVariableType(var_name) orelse return null;
-        if (saved_type != .Union) return null;
-
-        const type_test = self.patternTypeTest(case.patterns[0], case.resolved[0]) orelse return null;
-        for (saved_type.Union.members) |member_ptr| {
-            if (!try self.memberPasses(member_ptr.*, type_test)) continue;
-            const view_members = try self.generator.allocator.alloc(*const HIRType, 1);
-            view_members[0] = try self.narrowedMember(member_ptr, type_test);
-            return HIRType{ .Union = .{ .id = saved_type.Union.id, .members = view_members } };
-        }
-        return null;
-    }
-
-    /// What a value narrowed by `type_test` is, given that the union member
-    /// `member` passed it: that member, or for a group test the group itself —
-    /// the union holds the group's members, and the narrowed value is boxed as
-    /// the group's.
-    fn narrowedMember(self: *ControlFlowHandler, member: *const HIRType, type_test: TypeTest) !*const HIRType {
-        const group = switch (type_test) {
-            .named => |named| if (named == .Group) named else return member,
-            .builtin => return member,
-        };
-        const group_ptr = try self.generator.allocator.create(HIRType);
-        group_ptr.* = group;
-        return group_ptr;
     }
 
     /// The enum a pattern compares against as a variant, when it is one.
@@ -668,7 +587,7 @@ pub const ControlFlowHandler = struct {
 
         // A group subject is discriminated by its boxed member index, never by
         // an enum variant index.
-        const match_group = self.resolveMatchGroup(match_expr.value);
+        const match_group = try self.resolveMatchGroup(match_expr.value);
 
         // Track whether any pattern is an explicit else (wildcard) to know if falling through is possible.
         var has_else_case = false;
@@ -766,7 +685,7 @@ pub const ControlFlowHandler = struct {
                     continue;
                 }
 
-                if (self.structTypePatternMatches(subject_type, resolved)) |is_match| {
+                if (try self.structTypePatternMatches(subject_type, resolved)) |is_match| {
                     if (is_match) {
                         try self.generator.instructions.append(.{ .Jump = .{ .label = case_labels.items[i] } });
                     } else {
@@ -819,7 +738,7 @@ pub const ControlFlowHandler = struct {
                 if (is_type_pattern) {
                     const type_name = if (pattern.type == .NOTHING) "nothing" else pattern.lexeme;
                     try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
-                } else if (self.structTypePatternMatches(subject_type, resolved)) |is_match| {
+                } else if (try self.structTypePatternMatches(subject_type, resolved)) |is_match| {
                     // A struct subject makes a named-type pattern a type test
                     // decided here: comparing it as an enum variant or as a
                     // literal would never select the arm.
@@ -905,31 +824,8 @@ pub const ControlFlowHandler = struct {
             // values are not left for LLVM to merge into a dead phi.
             try self.generator.instructions.append(.Pop);
 
-            // The check that selected this arm established which member the box
-            // holds, so the body reads the subject as that member: tracked as
-            // the member for inference, pushed as the view so the backend
-            // unwraps the box on load. Both are torn down with the arm.
-            const arm_view = try self.armNarrowingView(match_expr.value, case);
-            var arm_saved_type: ?HIRType = null;
-            var arm_saved_narrowing: ?HIRType = null;
-            if (arm_view) |view| {
-                const subject_name = match_expr.value.data.Variable.lexeme;
-                arm_saved_type = self.generator.getTrackedVariableType(subject_name);
-                arm_saved_narrowing = self.generator.symbol_table.getVariableNarrowing(subject_name);
-                try self.generator.trackVariableType(subject_name, TypeSystem.memberView(view));
-                try self.generator.symbol_table.trackVariableNarrowing(subject_name, TypeSystem.memberView(view));
-                try self.generator.instructions.append(.{ .NarrowVar = .{ .slot = try self.generator.slotOf(&match_expr.value.base), .var_name = subject_name, .narrowed_type = view } });
-            }
-
             try self.generator.generateExpression(case.body, preserve_result, !preserve_result);
             if (result_box) |boxed_type| try self.generator.instructions.append(.{ .Box = .{ .boxed_type = boxed_type } });
-
-            if (arm_view != null) {
-                const subject_name = match_expr.value.data.Variable.lexeme;
-                try self.generator.instructions.append(.{ .RestoreVar = .{ .slot = try self.generator.slotOf(&match_expr.value.base), .var_name = subject_name } });
-                try self.generator.trackVariableType(subject_name, arm_saved_type.?);
-                try self.generator.symbol_table.restoreVariableNarrowing(subject_name, arm_saved_narrowing);
-            }
 
             try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
         }
@@ -980,9 +876,6 @@ pub const ControlFlowHandler = struct {
                 .nested_struct_id = field.nested_struct_id,
             } });
             try self.generator.storePlace(try self.generator.placeOf(storage, field_token.lexeme, false), field.hir_type, .rehome);
-            // The body reads this binding by name; without a tracked type
-            // every use of it would infer Unknown.
-            try self.generator.trackVariableType(field_token.lexeme, field.hir_type);
         }
         // Pop the duplicated struct and the original value
         try self.generator.instructions.append(.Pop);
@@ -1000,7 +893,7 @@ pub const ControlFlowHandler = struct {
         const loop_exit_label = try self.generator.generateLabel("loop_exit");
         const loop_scope_id = self.generator.nextScopeId();
         const body_scope_id = self.generator.nextScopeId();
-        const has_runtime_scope = self.expressionNeedsRuntimeScope(loop.body);
+        const has_runtime_scope = try self.expressionNeedsRuntimeScope(loop.body);
 
         // continue should jump to step if present, otherwise to start
         const continue_target = if (loop.step != null) loop_step_label else loop_start_label;
@@ -1039,9 +932,6 @@ pub const ControlFlowHandler = struct {
             try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
         }
 
-        // Push symbol table scope for loop body variables
-        try self.generator.symbol_table.pushScope();
-
         const body_boundary = self.generator.deferred_stack.items.len;
         try self.generator.loop_deferred_boundaries.append(body_boundary);
 
@@ -1053,7 +943,6 @@ pub const ControlFlowHandler = struct {
             if (has_runtime_scope) {
                 try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
             }
-            self.generator.symbol_table.popScope();
 
             if (loop.step) |step_expr| {
                 try self.generator.generateExpression(step_expr, false, false);
@@ -1062,7 +951,6 @@ pub const ControlFlowHandler = struct {
             if (has_runtime_scope) {
                 try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
             }
-            self.generator.symbol_table.popScope();
         }
 
         try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label } });
@@ -1158,197 +1046,12 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.{ .Unreachable = .{ .location = expr.base.location() } });
     }
 
-    /// Narrowing applied to the cast subject variable inside the then/else branches.
-    /// The then branch narrows the variable to the target type; the else branch
-    /// narrows it to the union remainder (full union minus target).
-    const CastNarrowing = struct {
-        slot: Slot,
-        var_name: []const u8,
-        var_index: u32,
-        is_local: bool,
-        saved_type: HIRType,
-        saved_index_members: ?[][]const u8,
-        saved_narrowing: ?HIRType,
-        then_type: HIRType,
-        then_members: [][]const u8,
-        else_type: HIRType,
-        else_members: [][]const u8,
-    };
-
-    fn applyCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing, ty: HIRType, members: [][]const u8) !void {
-        // `NarrowVar` carries the union view so the backend unwraps the box
-        // through the member list; the symbol table tracks the member itself,
-        // because that is what the value structurally is inside the branch —
-        // `u + 1` is an int operation and a call argument is the member type.
-        try self.generator.trackVariableType(nw.var_name, TypeSystem.memberView(ty));
-        try self.generator.symbol_table.trackVariableNarrowing(nw.var_name, TypeSystem.memberView(ty));
-        try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
-        // Tell the native backend that the variable's boxed value now denotes a
-        // narrower member view, so loads inside the branch unwrap it.
-        try self.generator.instructions.append(.{ .NarrowVar = .{ .slot = nw.slot, .var_name = nw.var_name, .narrowed_type = ty } });
-    }
-
-    fn restoreCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing) !void {
-        try self.generator.trackVariableType(nw.var_name, nw.saved_type);
-        try self.generator.symbol_table.restoreVariableNarrowing(nw.var_name, nw.saved_narrowing);
-        if (nw.saved_index_members) |members| {
-            try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
-        } else {
-            self.generator.symbol_table.removeVariableUnionMembers(nw.is_local, nw.var_index);
-        }
-        try self.generator.instructions.append(.{ .RestoreVar = .{ .slot = nw.slot, .var_name = nw.var_name } });
-    }
-
-    /// What an `as` target asks for, or null for a target no union member or
-    /// group member can be (a map, an anonymous struct).
-    fn castTypeTest(self: *ControlFlowHandler, target: *const ast.TypeExpr) ?TypeTest {
-        return switch (target.data) {
-            .Basic => |b| .{ .builtin = switch (b) {
-                .Integer => "int",
-                .Byte => "byte",
-                .Float => "float",
-                .String => "string",
-                .Tetra => "tetra",
-                .Nothing => "nothing",
-            } },
-            .Custom => |custom| .{ .named = self.generator.type_system.typeForRef(custom.ref.?) },
-            else => null,
-        };
-    }
-
-    /// Per-branch narrowing for an `as` cast whose subject is a group-typed
-    /// variable. The then view is the same single-member union view unions use,
-    /// so backend loads unwrap the box identically; the else view keeps the
-    /// group type so its loads stay boxed. A store into either branch re-boxes
-    /// from the variable's declared type rather than from the view, so the box
-    /// keeps the group's own member index.
-    fn computeGroupCastNarrowing(
-        self: *ControlFlowHandler,
-        named: HIRType,
-        slot: Slot,
-        var_name: []const u8,
-        var_index: u32,
-        is_local: bool,
-        saved_type: HIRType,
-    ) !?CastNarrowing {
-        const group_id = saved_type.Group;
-        const group_members = self.generator.semantic.group_table.members(group_id) orelse return null;
-
-        var then_member: ?struct { type: HIRType, qualifier: []const u8 } = null;
-        var else_members = std.array_list.Managed([]const u8).init(self.generator.allocator);
-        for (group_members) |member| {
-            const member_type = self.generator.type_system.typeForRef(member.ref);
-            if (then_member == null and isNamedType(member_type, named)) {
-                then_member = .{ .type = member_type, .qualifier = member.qualifier };
-            } else {
-                try else_members.append(member.qualifier);
-            }
-        }
-
-        const then = then_member orelse return null;
-        const member_ptr = try self.generator.allocator.create(HIRType);
-        member_ptr.* = then.type;
-        const then_member_ptrs = try self.generator.allocator.alloc(*const HIRType, 1);
-        then_member_ptrs[0] = member_ptr;
-        const then_members = try self.generator.allocator.alloc([]const u8, 1);
-        then_members[0] = then.qualifier;
-
-        return CastNarrowing{
-            .slot = slot,
-            .var_name = var_name,
-            .var_index = var_index,
-            .is_local = is_local,
-            .saved_type = saved_type,
-            .saved_index_members = self.generator.symbol_table.getVariableUnionMembers(is_local, var_index),
-            .saved_narrowing = self.generator.symbol_table.getVariableNarrowing(var_name),
-            .then_type = HIRType{ .Union = .{ .id = group_id, .members = then_member_ptrs } },
-            .then_members = then_members,
-            .else_type = saved_type,
-            .else_members = try else_members.toOwnedSlice(),
-        };
-    }
-
-    /// Compute the per-branch narrowing for an `as` cast whose subject is a plain
-    /// union-typed variable. Returns null when narrowing does not apply (subject is
-    /// not a tracked union variable, or the target is not a member of the union).
-    fn computeCastNarrowing(self: *ControlFlowHandler, cast_data: anytype) !?CastNarrowing {
-        if (cast_data.value.data != .Variable) return null;
-        const var_name = cast_data.value.data.Variable.lexeme;
-        const slot = try self.generator.slotOf(&cast_data.value.base);
-        const var_index = self.generator.symbol_table.getVariable(var_name) orelse return null;
-        const is_local = self.generator.symbol_table.isLocalVariable(var_name);
-        const saved_type = self.generator.getTrackedVariableType(var_name) orelse return null;
-        const type_test = self.castTypeTest(cast_data.target_type) orelse return null;
-        if (saved_type == .Group) {
-            return switch (type_test) {
-                .named => |named| self.computeGroupCastNarrowing(named, slot, var_name, var_index, is_local, saved_type),
-                .builtin => null,
-            };
-        }
-        if (saved_type != .Union) return null;
-
-        const member_ptrs = saved_type.Union.members;
-        if (member_ptrs.len == 0) return null;
-
-        // A group target takes every member the group flattened into; any
-        // other target takes the one member it names.
-        const takes_all = switch (type_test) {
-            .named => |named| named == .Group,
-            .builtin => false,
-        };
-        var then_member: ?struct { ptr: *const HIRType, name: []const u8 } = null;
-        const remainder_ptrs = try self.generator.allocator.alloc(*const HIRType, member_ptrs.len);
-        const remainder_names = try self.generator.allocator.alloc([]const u8, member_ptrs.len);
-        var remainder_len: usize = 0;
-        for (member_ptrs) |mp| {
-            const name = try self.generator.hirTypeToDisplayName(mp.*);
-            if ((takes_all or then_member == null) and try self.memberPasses(mp.*, type_test)) {
-                if (then_member == null) {
-                    const narrowed = try self.narrowedMember(mp, type_test);
-                    then_member = .{ .ptr = narrowed, .name = try self.generator.hirTypeToDisplayName(narrowed.*) };
-                }
-            } else {
-                remainder_ptrs[remainder_len] = mp;
-                remainder_names[remainder_len] = name;
-                remainder_len += 1;
-            }
-        }
-        const then = then_member orelse return null;
-
-        // Represent both narrowed views as unions (even single-member) so the
-        // VM and native peek paths agree: the VM keys off the runtime value while
-        // the native backend resolves the active member through the union member
-        // list, which preserves concrete enum/struct names.
-        const then_member_ptrs = try self.generator.allocator.alloc(*const HIRType, 1);
-        then_member_ptrs[0] = then.ptr;
-        const then_type = HIRType{ .Union = .{ .id = saved_type.Union.id, .members = then_member_ptrs } };
-        const then_members = try self.generator.allocator.alloc([]const u8, 1);
-        then_members[0] = then.name;
-
-        const else_type = HIRType{ .Union = .{ .id = saved_type.Union.id, .members = remainder_ptrs[0..remainder_len] } };
-
-        return CastNarrowing{
-            .slot = slot,
-            .var_name = var_name,
-            .var_index = var_index,
-            .is_local = is_local,
-            .saved_type = saved_type,
-            .saved_index_members = self.generator.symbol_table.getVariableUnionMembers(is_local, var_index),
-            .saved_narrowing = self.generator.symbol_table.getVariableNarrowing(var_name),
-            .then_type = then_type,
-            .then_members = then_members,
-            .else_type = else_type,
-            .else_members = remainder_names[0..remainder_len],
-        };
-    }
-
     /// Generate HIR for cast expressions
     pub fn generateCast(self: *ControlFlowHandler, cast_expr: *ast.Expr, preserve_result: bool) !void {
         const cast_data = cast_expr.data.Cast;
         // Every branch's value becomes the cast's: the subject read as the
         // member it was proved to hold, or a branch's own value.
         const cast_type = try self.generator.typeOf(cast_expr);
-        const narrowing = try self.computeCastNarrowing(cast_data);
 
         // Generate the value to cast
         try self.generator.generateExpression(cast_data.value, true, false);
@@ -1368,7 +1071,7 @@ pub const ControlFlowHandler = struct {
             },
             // The runtime type checker distinguishes only broad categories for
             // named types, so `as Employee` asks for a struct.
-            .Custom => |custom| switch (self.generator.type_system.typeForRef(custom.ref.?)) {
+            .Custom => |custom| switch (try self.generator.type_system.typeForRef(custom.ref.?)) {
                 .Struct => "struct",
                 .Enum => "enum",
                 else => "group",
@@ -1404,7 +1107,7 @@ pub const ControlFlowHandler = struct {
         const subject_type = try self.generator.typeOf(cast_data.value);
         const boxed_members: ?[]const u32 = switch (cast_data.target_type.data) {
             .Custom => |custom| if (subject_type == .Union or subject_type == .Group)
-                try self.boxedMembersNamed(subject_type, self.generator.type_system.typeForRef(custom.ref.?))
+                try self.boxedMembersNamed(subject_type, try self.generator.type_system.typeForRef(custom.ref.?))
             else
                 null,
             else => null,
@@ -1427,10 +1130,8 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.Pop);
         if (cast_data.else_branch) |else_expr| {
             // Preserve result only if requested by parent
-            if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.else_type, nw.else_members);
             try self.generator.generateExpression(else_expr, preserve_result, false);
             if (preserve_result) try self.generator.convertValue(try self.generator.typeOf(else_expr), cast_type);
-            if (narrowing) |nw| try self.restoreCastNarrowing(nw);
         } else {
             // No else branch: cast must fail -> halt program
             try self.generator.instructions.append(.Halt);
@@ -1441,7 +1142,6 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.{ .Label = .{ .name = ok_label } });
         if (cast_data.decl_then) |binding| try self.bindCastDecl(cast_data.decl_name.?, binding, subject_type);
         if (cast_data.then_branch) |then_expr| {
-            if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.then_type, nw.then_members);
             if (then_expr.data == .Block) {
                 try self.generator.generateExpression(then_expr, true, false);
                 try self.generator.instructions.append(.Pop);
@@ -1455,7 +1155,6 @@ pub const ControlFlowHandler = struct {
                 try self.generator.generateExpression(then_expr, preserve_result, false);
                 if (preserve_result) try self.generator.convertValue(try self.generator.typeOf(then_expr), cast_type);
             }
-            if (narrowing) |nw| try self.restoreCastNarrowing(nw);
         } else if (preserve_result) {
             try self.generator.convertValue(subject_type, cast_type);
         } else {
@@ -1474,7 +1173,7 @@ pub const ControlFlowHandler = struct {
     /// Bind the name a cast declares for one of its branches to the subject on
     /// top of the stack, of `subject_type`, read as the branch's narrowed type.
     fn bindCastDecl(self: *ControlFlowHandler, name: []const u8, binding: ast.CastBinding, subject_type: HIRType) !void {
-        const narrowed = self.generator.type_system.convertTypeInfo(binding.type_info.*);
+        const narrowed = try self.generator.type_system.lowerType(binding.type_info);
         try self.generator.instructions.append(.Dup);
         try self.generator.convertValue(subject_type, narrowed);
         try self.generator.storePlace(try self.generator.placeOf(binding.storage, name, false), narrowed, .rehome);

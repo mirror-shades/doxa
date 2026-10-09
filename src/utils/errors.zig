@@ -40,6 +40,7 @@ pub const ErrorList = error{
     UnknownVariableType,
     MissingExpressionType,
     MissingBindingType,
+    IncompleteType,
     UnknownCustomType,
     InvalidExpressionType,
     ImportMustHaveFrom,
@@ -405,7 +406,7 @@ pub const ErrorCode = struct {
     pub const NOT_TRUTHY = "E2026";
     pub const EXPECTED_OPEN_BRACE = "E2027";
     pub const INVALID_PLACEHOLDER_EXPRESSION = "E2028";
-    pub const NESTED_TYPE_DECLARATION = "E2029";
+    pub const NESTED_DECLARATION = "E2029";
     pub const INVALID_THIS = "E2030";
 
     // 3xxx - Memory & Ownership

@@ -10,17 +10,26 @@ const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const names = @import("names.zig");
+const ParamRef = @import("semantic.zig").ParamRef;
 const TypeRef = ast.TypeRef;
 const Scope = @import("../../utils/memory.zig").Scope;
 const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
-const SemanticError = std.mem.Allocator.Error || ErrorList;
+pub const SemanticError = std.mem.Allocator.Error || ErrorList;
 
 /// The type of a builtin's subject argument. Expression inference can miss a
 /// variable's type (e.g. a global or an imported binding) even though its
 /// declaration is in scope, so fall back to the stored declaration type.
 fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) SemanticError!*ast.TypeInfo {
     const subject_type = try inferTypeFromExpr(self, subject);
+    // An empty literal takes its element type from its context, and a
+    // built-in that accepts any array is all the context it has: it holds
+    // no element, so it is an array of `nothing`.
+    if (subject.data == .Array and subject.data.Array.len == 0 and subject_type.base == .Array and subject_type.array_type == null) {
+        const element = try ast.TypeInfo.createDefault(self.allocator);
+        element.* = .{ .base = .Nothing };
+        subject_type.array_type = element;
+    }
     if (subject_type.base != .Nothing or subject.data != .Variable) return subject_type;
     if (try names.lookupVariable(self, subject.data.Variable.lexeme)) |variable| {
         if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
@@ -147,12 +156,14 @@ fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "push")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
-        const val_t = try inferTypeFromExpr(self, args[1]);
+        const val_t = if (coll_t.base == .Array and coll_t.array_type != null)
+            try inferTypeIn(self, args[1], coll_t.array_type.?)
+        else
+            try inferTypeFromExpr(self, args[1]);
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@push")) return type_info;
             if (coll_t.array_type) |elem| {
-                helpers.contextualizeEnumMember(self, args[1], val_t, elem);
-                try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[1].base) });
+                try helpers.unifyElement(self, elem, val_t, args[1], .{ .location = getLocationFromBase(args[1].base) });
             } else if (val_t.base == .Array and val_t.array_type != null) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(args[1].base),
@@ -216,10 +227,9 @@ fn inferBuiltinCallInner(
         }
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@insert")) return type_info;
-            const val_t = try inferTypeFromExpr(self, args[2]);
+            const val_t = if (coll_t.array_type) |elem| try inferTypeIn(self, args[2], elem) else try inferTypeFromExpr(self, args[2]);
             if (coll_t.array_type) |elem| {
-                helpers.contextualizeEnumMember(self, args[2], val_t, elem);
-                try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[2].base) });
+                try helpers.unifyElement(self, elem, val_t, args[2], .{ .location = getLocationFromBase(args[2].base) });
             }
         } else if (coll_t.base == .String) {
             // A string is not a byte array: only a string can be inserted.
@@ -323,12 +333,13 @@ fn inferBuiltinCallInner(
                     self.fatal_error = true;
                     return type_info;
                 }
-                if (operand_type.array_type) |elem| {
-                    const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
-                    byte_elem.* = .{ .base = .Byte };
-                    try helpers.unifyTypes(self, byte_elem, elem, .{ .location = getLocationFromBase(args[0].base) });
-                    if (self.fatal_error) return type_info;
-                }
+                // `byte[]` is the argument's context: a literal, empty or
+                // not, is typed by it as a declaration's initializer is.
+                const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
+                byte_elem.* = .{ .base = .Byte };
+                var expected: ast.TypeInfo = .{ .base = .Array, .array_type = byte_elem };
+                try helpers.unifyTypesExpr(self, &expected, operand_type, args[0], .{ .location = getLocationFromBase(args[0].base) });
+                if (self.fatal_error) return type_info;
             }
             type_info.* = .{ .base = info.return_type };
             if (info.return_element_type) |elem_base| {
@@ -460,6 +471,31 @@ fn inferBuiltinCallInner(
 /// expression's type from the cache instead of deriving it again
 /// (plan/type-authority.md), so an arm that returned without recording would
 /// leave them nothing to read.
+/// The type of `expr` in a position that expects `expected`. An array literal
+/// there is typed by it, element by element: each element is checked against
+/// the expected element type, so the elements need not agree with one another
+/// (`[IOError.NotFound, ParseError.Eof]` is an `Error[]`). Anything else is
+/// inferred on its own, and the caller unifies it with `expected` as before.
+pub fn inferTypeIn(self: *SemanticAnalyzer, expr: *ast.Expr, expected: *const ast.TypeInfo) SemanticError!*ast.TypeInfo {
+    if (expr.data != .Array or expected.base != .Array) return inferTypeFromExpr(self, expr);
+    const element_type = expected.array_type orelse return inferTypeFromExpr(self, expr);
+    if (self.type_cache.get(expr.base.id)) |cached| return cached;
+    for (expr.data.Array) |element| {
+        const actual = try inferTypeIn(self, element, element_type);
+        if (!helpers.adoptByteLiteral(self, element, actual, element_type)) break;
+        try helpers.unifyTypesExpr(self, element_type, actual, element, .{ .location = getLocationFromBase(element.base) });
+    }
+    const type_info = try ast.TypeInfo.createDefault(self.allocator);
+    type_info.* = .{
+        .base = .Array,
+        .array_type = element_type,
+        .array_storage = expected.array_storage,
+        .array_size = expected.array_size,
+    };
+    try self.type_cache.put(expr.base.id, type_info);
+    return type_info;
+}
+
 pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticError!*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
         return cached;
@@ -575,6 +611,17 @@ const op: []const u8 = switch (bin.operator.type) {
                 return type_info;
             }
 
+            // An integer literal beside a byte is a byte: `b + 1` is byte
+            // arithmetic, so `b += 1` keeps `b` a byte.
+            if (is_arithmetic and !std.mem.eql(u8, op, "/")) {
+                if (!helpers.adoptByteLiteral(self, bin.left.?, left_type, right_type) or
+                    !helpers.adoptByteLiteral(self, bin.right.?, right_type, left_type))
+                {
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+            }
+
             if (std.mem.eql(u8, op, "/")) {
                 if (left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) {
                     self.reporter.reportCompileError(
@@ -660,8 +707,8 @@ const op: []const u8 = switch (bin.operator.type) {
                     } else {
                         type_info.* = .{ .base = .Array };
                     }
-                } else if (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte or
-                    right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte)
+                } else if ((left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte) and
+                    (right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte))
                 {
                     if (left_type.base == .Float or right_type.base == .Float) {
                         type_info.* = .{ .base = .Float };
@@ -877,8 +924,13 @@ const op: []const u8 = switch (bin.operator.type) {
                                 return type_info;
                             }
 
-                            const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
-                            if (func_type.params[param_index].base != .Nothing) {
+                            const arg_type = try inferTypeIn(self, arg_expr_it.expr, &func_type.params[param_index]);
+                            if (arg_expr_it.is_alias) {
+                                if (!try checkAliasArgument(self, arg_expr_it.expr, func_type, param_index)) {
+                                    type_info.base = .Nothing;
+                                    return type_info;
+                                }
+                            } else if (func_type.params[param_index].base != .Nothing) {
                                 try helpers.unifyTypesExpr(self, &func_type.params[param_index], arg_type, arg_expr_it.expr, .{ .location = getLocationFromBase(expr.base) });
                             }
                             param_index += 1;
@@ -1141,6 +1193,9 @@ const op: []const u8 = switch (bin.operator.type) {
                 for (elements[1..], element_types[1..]) |element, *element_type| {
                     element_type.* = try inferTypeFromExpr(self, element);
                     if (element_type.*.base == .Float and (joined.base == .Int or joined.base == .Byte)) joined = element_type.*;
+                    // An empty element takes its element type from a sibling
+                    // that has one: `[[], [1]]` is an `int[][]`.
+                    if (helpers.hasUninferredElement(joined) and !helpers.hasUninferredElement(element_type.*)) joined = element_type.*;
                 }
                 for (elements, element_types) |element, element_type| {
                     if (element_type == joined) continue;
@@ -1278,7 +1333,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
                 for (match_expr.cases) |*case| {
                     try self.resolveMatchPatterns(case, group, subject_enum);
-                    const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, matched_var_name);
+                    const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, matched_var_name);
                     try union_types.append(case_type);
                 }
 
@@ -1306,9 +1361,24 @@ const op: []const u8 = switch (bin.operator.type) {
                 const prev_bve = self.block_value_expected;
                 self.block_value_expected = true;
                 defer self.block_value_expected = prev_bve;
-                const value_type = try inferTypeFromExpr(self, value);
-                if (try names.resolveAssignmentTarget(self, expr, &assign.name)) |variable| {
-                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                // The target is resolved first: its storage's type is the
+                // context the value is typed in.
+                const assigned = try names.resolveAssignmentTarget(self, expr, &assign.name);
+                const target_storage = if (assigned) |variable| self.memory.scope_manager.value_storage.get(variable.storage_id) else null;
+                const value_type = if (target_storage) |storage|
+                    try inferTypeIn(self, value, storage.type_info)
+                else
+                    try inferTypeFromExpr(self, value);
+                if (assigned) |variable| {
+                    // A store into a union `^` parameter keeps its member only
+                    // through a narrowing of it to one member: un-narrowed, or
+                    // narrowed to a smaller union, it may store another.
+                    if (self.getStoreTarget(expr.base.id)) |target| {
+                        if (self.union_alias_params.get(target.storage)) |param| {
+                            if (!variable.is_view or target.read.base == .Union) try self.member_mutators.put(param, {});
+                        }
+                    }
+                    if (target_storage) |storage| {
                         if (storage.constant) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(expr.base),
@@ -1328,55 +1398,6 @@ const op: []const u8 = switch (bin.operator.type) {
                         ErrorCode.VARIABLE_NOT_FOUND,
                         "Undefined variable '{s}'",
                         .{assign.name.lexeme},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-            }
-            type_info.* = .{ .base = .Nothing };
-        },
-        .CompoundAssign => |*compound_assign| {
-            if (compound_assign.value) |value| {
-                const value_type = try inferTypeFromExpr(self, value);
-                if (try names.resolveAssignmentTarget(self, expr, &compound_assign.name)) |variable| {
-                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        if (storage.constant) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.INVALID_ASSIGNMENT_TARGET,
-                                "Cannot assign to immutable variable '{s}'",
-                                .{compound_assign.name.lexeme},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-                        // `/` is Doxa's *float* division, so `/=` produces a
-                        // `float` whatever the operands are. Unifying the
-                        // operand's type misses that: `n /= 2` on an `int`
-                        // compared `Int` against `Int` and passed, while the
-                        // lowering emitted an `fdiv` and stored a `double` into
-                        // an `i64` slot — invalid IR that reached clang
-                        // uncaught. Check the operation's result type instead,
-                        // so `n /= 2` reports the narrowing and `n //= 2` is
-                        // the integer form.
-                        if (compound_assign.operator.type == .SLASH_EQUAL) {
-                            const division_result = try ast.TypeInfo.createDefault(self.allocator);
-                            errdefer self.allocator.destroy(division_result);
-                            division_result.* = .{ .base = .Float };
-                            try helpers.unifyTypesExpr(self, storage.type_info, division_result, value, .{ .location = getLocationFromBase(expr.base) });
-                            self.allocator.destroy(division_result);
-                        } else {
-                            try helpers.unifyTypesExpr(self, storage.type_info, value_type, value, .{ .location = getLocationFromBase(expr.base) });
-                        }
-                    }
-                } else {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.VARIABLE_NOT_FOUND,
-                        "Undefined variable '{s}'",
-                        .{compound_assign.name.lexeme},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
@@ -1446,7 +1467,12 @@ const op: []const u8 = switch (bin.operator.type) {
         .IndexAssign => |index_assign| {
             const array_type = try inferTypeFromExpr(self, index_assign.array);
             const index_type = try inferTypeFromExpr(self, index_assign.index);
-            const value_type = try inferTypeFromExpr(self, index_assign.value);
+            const value_type = if (array_type.base == .Array and array_type.array_type != null)
+                try inferTypeIn(self, index_assign.value, array_type.array_type.?)
+            else if (array_type.base == .Map and array_type.map_value_type != null)
+                try inferTypeIn(self, index_assign.value, array_type.map_value_type.?)
+            else
+                try inferTypeFromExpr(self, index_assign.value);
 
             if (array_type.base != .Array and array_type.base != .Map) {
                 self.reporter.reportCompileError(
@@ -1492,8 +1518,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
 
             if (array_type.array_type) |elem_type| {
-                helpers.contextualizeEnumMember(self, index_assign.value, value_type, elem_type);
-                try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(expr.base) });
+                try helpers.unifyElement(self, elem_type, value_type, index_assign.value, .{ .location = getLocationFromBase(expr.base) });
             }
 
             type_info.* = .{ .base = .Nothing };
@@ -2146,8 +2171,10 @@ fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, argum
             return false;
         }
 
-        const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
-        if (func_type.params[param_index].base != .Nothing) {
+        const arg_type = try inferTypeIn(self, arg_expr_it.expr, &func_type.params[param_index]);
+        if (arg_expr_it.is_alias) {
+            if (!try checkAliasArgument(self, arg_expr_it.expr, func_type, param_index)) return false;
+        } else if (func_type.params[param_index].base != .Nothing) {
             var expected_type = func_type.params[param_index];
             try helpers.unifyTypesExpr(self, &expected_type, arg_type, arg_expr_it.expr, .{ .location = getLocationFromBase(expr.base) });
         }
@@ -2155,6 +2182,45 @@ fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, argum
     }
 
     return true;
+}
+
+/// A `^` argument lends its storage, so the storage's type — the binding
+/// beneath any narrowing view — must be exactly the parameter's: a callee may
+/// store any value of its parameter type, which a narrower or wider caller slot
+/// cannot hold. The one exception is a union parameter that preserves its
+/// member, which may be lent storage of any one member type; that is settled
+/// once every body is analyzed (`settleMemberLoans`). An unannotated parameter
+/// accepts any storage.
+fn checkAliasArgument(self: *SemanticAnalyzer, arg: *ast.Expr, signature: *const ast.FunctionType, index: usize) !bool {
+    const param = &signature.params[index];
+    if (param.base == .Nothing) return true;
+    // The parser admits only a name after `^`; an unresolved one is already
+    // `Undefined variable`.
+    const target = self.getStoreTarget(arg.base.id) orelse return true;
+    const lent_to: ParamRef = .{ .signature = signature, .index = @intCast(index) };
+    if (helpers.typesEqual(self, target.slot, param)) {
+        // Lending a union `^` parameter on: it preserves its member only if
+        // the parameter it is lent to does.
+        if (self.union_alias_params.get(target.storage)) |from| {
+            try self.member_relays.append(self.allocator, .{ .from = from, .to = lent_to });
+        }
+        return true;
+    }
+    if (param.base == .Union and target.slot.base != .Union) {
+        for (param.union_type.?.types) |member| {
+            if (!helpers.typesEqual(self, target.slot, member)) continue;
+            try self.member_loans.append(self.allocator, .{ .param = lent_to, .location = getLocationFromBase(arg.base) });
+            return true;
+        }
+    }
+    self.reporter.reportCompileError(
+        getLocationFromBase(arg.base),
+        ErrorCode.INVALID_ALIAS_ARGUMENT,
+        "An alias argument lends its storage, so its type must be exactly the parameter's: {s} is not {s}",
+        try helpers.typeLabels(self, target.slot, param),
+    );
+    self.fatal_error = true;
+    return false;
 }
 
 const MapTypeResolution = struct {

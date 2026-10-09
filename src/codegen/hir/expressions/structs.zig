@@ -52,15 +52,11 @@ pub const StructsHandler = struct {
     /// the one read. Anything else reaching lowering is a compiler bug.
     pub fn fieldSlot(self: *StructsHandler, object: *ast.Expr, field: ast.Token) ErrorList!FieldSlot {
         const semantic = self.generator.semantic;
-        const object_type = semantic.getCachedExprType(object) orelse return self.unresolvedField(field);
-        const custom = object_type.custom_type orelse return self.unresolvedField(field);
-        const ref = custom.resolved();
-        const struct_id = if (semantic.struct_table.idOf(ref)) |id|
-            id
-        else if (semantic.group_table.idOf(ref)) |group_id|
-            self.generator.type_system.groupMemberStructForField(group_id, field.lexeme) orelse return self.unresolvedField(field)
-        else
-            return self.unresolvedField(field);
+        const struct_id = switch (try self.generator.typeOf(object)) {
+            .Struct => |id| id,
+            .Group => |group_id| self.generator.type_system.groupMemberStructForField(group_id, field.lexeme) orelse return self.unresolvedField(field),
+            else => return self.unresolvedField(field),
+        };
         for (semantic.struct_table.fields(struct_id).?) |declared| {
             if (std.mem.eql(u8, declared.name, field.lexeme)) {
                 return .{ .struct_id = struct_id, .index = declared.index, .hir_type = declared.hir_type };
@@ -175,25 +171,12 @@ pub const StructsHandler = struct {
         field_types: []HIRType,
         field_names: [][]const u8,
     ) ErrorList!void {
-        // Array-typed fields thread their declared element type down so empty
-        // literals (`[]`) produce a correctly-tagged runtime array, not `Unknown`.
-        const prev_override = self.generator.array_storage_override;
-        defer self.generator.array_storage_override = prev_override;
-        const prev_element_override = self.generator.array_element_type_override;
-        defer self.generator.array_element_type_override = prev_element_override;
-        if (field_type == .Array) {
-            self.generator.array_storage_override = null;
-            self.generator.array_element_type_override = field_type.Array.*;
-        } else {
-            self.generator.array_storage_override = null;
-            self.generator.array_element_type_override = null;
-        }
         try self.generator.generateExpression(value_expr, true, false);
 
         field_types[reverse_i] = if (field_type != .Unknown and field_type != .Nothing)
             field_type
         else
-            self.generator.inferTypeFromExpression(value_expr);
+            try self.generator.typeOf(value_expr);
         field_names[reverse_i] = field_name;
 
         // Push field name as constant
@@ -325,7 +308,7 @@ pub const StructsHandler = struct {
             }
         }
 
-        const obj_type = self.generator.inferTypeFromExpression(field.object);
+        const obj_type = try self.generator.typeOf(field.object);
         try self.generator.generateExpression(field.object, true, false);
 
         const slot = try self.fieldSlot(field.object, field.field);
@@ -377,14 +360,14 @@ pub const StructsHandler = struct {
 
             // Get the outer field (person)
             const outer_slot = try self.fieldSlot(outer_field.object, outer_field.field);
-            const outer_container_type = self.generator.inferTypeFromExpression(outer_field.object);
+            const outer_container_type = try self.generator.typeOf(outer_field.object);
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = outer_field.field.lexeme,
                     .container_type = outer_container_type,
                     .struct_id = outer_slot.struct_id,
                     .field_index = outer_slot.index,
-                    .field_type = .Unknown,
+                    .field_type = outer_slot.hir_type,
                     .field_for_peek = false,
                     .nested_struct_id = null,
                 },
@@ -398,14 +381,14 @@ pub const StructsHandler = struct {
 
             // Set the inner field (age) on the duplicate
             const inner_slot = try self.fieldSlot(assign_data.object, assign_data.field);
-            const inner_container_type = self.generator.inferTypeFromExpression(assign_data.object);
+            const inner_container_type = try self.generator.typeOf(assign_data.object);
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = inner_container_type,
                     .struct_id = inner_slot.struct_id,
                     .field_index = inner_slot.index,
-                    .field_type = .Unknown,
+                    .field_type = inner_slot.hir_type,
                     .nested_struct_id = null,
                 },
             });
@@ -424,7 +407,7 @@ pub const StructsHandler = struct {
                     .container_type = outer_container_type,
                     .struct_id = outer_slot.struct_id,
                     .field_index = outer_slot.index,
-                    .field_type = .Unknown,
+                    .field_type = outer_slot.hir_type,
                     .nested_struct_id = null,
                 },
             });
@@ -447,14 +430,14 @@ pub const StructsHandler = struct {
             }
 
             const slot = try self.fieldSlot(assign_data.object, assign_data.field);
-            const assign_container_type = self.generator.inferTypeFromExpression(assign_data.object);
+            const assign_container_type = try self.generator.typeOf(assign_data.object);
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = assign_container_type,
                     .struct_id = slot.struct_id,
                     .field_index = slot.index,
-                    .field_type = .Unknown,
+                    .field_type = slot.hir_type,
                     .nested_struct_id = null,
                 },
             });

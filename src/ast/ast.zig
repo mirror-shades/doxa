@@ -444,12 +444,6 @@ pub const CallArgument = struct {
     is_alias: bool = false,
 };
 
-pub const CompoundAssignment = struct {
-    name: Token,
-    operator: Token,
-    value: ?*Expr,
-};
-
 pub const Index = struct {
     array: *Expr,
     index: *Expr,
@@ -669,8 +663,6 @@ pub const Expr = struct {
 
         Increment: *Expr,
         Decrement: *Expr,
-
-        CompoundAssign: CompoundAssignment,
         Assert: struct {
             condition: *Expr,
             location: Location,
@@ -945,12 +937,6 @@ pub const Expr = struct {
                     allocator.destroy(arg);
                 }
                 allocator.free(m.arguments);
-            },
-            .CompoundAssign => |*ca| {
-                if (ca.value) |value| {
-                    value.deinit(allocator);
-                    allocator.destroy(value);
-                }
             },
             .Input => {},
             .Assert => |*a| {
@@ -1513,10 +1499,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
         .Decrement => |e| {
             try writer.print("Expr.Decrement\n", .{});
             try dumpExpr(writer, e, depth + 1);
-        },
-        .CompoundAssign => |c| {
-            try writer.print("Expr.CompoundAssign name={s} op={s}\n", .{ c.name.lexeme, c.operator.lexeme });
-            if (c.value) |value| try dumpExpr(writer, value, depth + 1);
         },
         .Assert => |a| {
             try writer.print("Expr.Assert\n", .{});

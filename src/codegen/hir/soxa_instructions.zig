@@ -107,6 +107,10 @@ pub const HIRInstruction = union(enum) {
         /// Set when the variable is itself a `^` parameter: the storage is
         /// re-passed from that alias slot, not from a local of this frame.
         alias_slot: ?u32 = null,
+        /// Set when the slot holds a box read here as the struct with this
+        /// id (a narrowed receiver): the pushed address is the box's payload
+        /// word, which holds the struct.
+        box_payload: ?u32 = null,
     },
 
     /// Load value from an alias parameter
@@ -195,22 +199,6 @@ pub const HIRInstruction = union(enum) {
     /// it holds: the inverse of `Box`.
     Unbox: struct {
         member_type: HIRType,
-    },
-
-    /// Narrow a union-typed variable to a member view for the following span of
-    /// instructions. Mirrors the `as`-cast narrowing the HIR symbol table
-    /// tracks; the LLVM backend uses it to unwrap the boxed `%DoxaValue` at the
-    /// next `LoadVar`, so consumers see the concrete member representation.
-    NarrowVar: struct {
-        slot: Slot,
-        var_name: []const u8,
-        narrowed_type: HIRType,
-    },
-
-    /// End the narrowing span started by `NarrowVar`.
-    RestoreVar: struct {
-        slot: Slot,
-        var_name: []const u8,
     },
 
     //==================================================================

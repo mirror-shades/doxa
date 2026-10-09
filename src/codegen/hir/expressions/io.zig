@@ -26,92 +26,27 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         // Generate the expression to peek (leaves value on stack)
         try self.generator.generateExpression(peek.expr, true, false);
 
-        // Build the full path for the peek expression (handles field access)
-        // Special case: Don't show variable name for enum member access like Color.Red
-        const peek_path = if (peek.expr.data == .FieldAccess) blk: {
-            const field = peek.expr.data.FieldAccess;
-            const obj_type = self.generator.inferTypeFromExpression(field.object);
-            // If this is enum member access (Color.Red), don't show variable name
-            if (obj_type == .Enum and field.object.data == .Variable) {
-                break :blk null; // No variable name for enum member access
-            } else {
-                break :blk try self.generator.buildPeekPath(peek.expr);
-            }
-        } else try self.generator.buildPeekPath(peek.expr);
+        // A variant read through its enum (`Color.Red`) names no variable.
+        const names_variant = peek.expr.data == .FieldAccess and
+            if (self.generator.resolutionOf(peek.expr.data.FieldAccess.object)) |resolved| resolved == .type else false;
+        const peek_path = if (names_variant) null else try self.generator.buildPeekPath(peek.expr);
 
-        // NEW: Prefer expression inference; refine for array indexing
-        var inferred_type: HIRType = self.generator.inferTypeFromExpression(peek.expr);
-        var enum_type_name: ?[]const u8 = null;
-        if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
-            if (self.generator.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
-                inferred_type = elem_type;
-            }
-        } else if (peek.expr.data == .Variable) {
-            inferred_type = try self.generator.typeOf(peek.expr);
-        } else if (peek.expr.data == .FieldAccess) {
-            // For field accesses, try to recover the concrete enum type name
-            // (e.g., "Species" for zoo[0].animal_type) so the LLVM backend
-            // can print the enum nicely even when the value on the stack is
-            // just an i64 discriminant.
-            if (inferred_type == .Enum) {
-                if (self.generator.resolveFieldAccessType(peek.expr)) |res| {
-                    enum_type_name = res.custom_type_name;
-                }
-            }
-        }
+        const value_type = try self.generator.typeOf(peek.expr);
+        // Without its enum the backend falls back to raw integers.
+        const enum_type_name: ?[]const u8 = if (value_type == .Enum) self.generator.semantic.enum_table.keyOf(value_type.Enum) else null;
 
-        // Without its enum the backend falls back to raw integers, which prints
-        // `enum = <enum>`. A variable narrowed by `as` tracks the member type
-        // itself, so the enum's key comes from the enum table rather than from
-        // a field-access path.
-        if (enum_type_name == null and inferred_type == .Enum) {
-            enum_type_name = self.generator.semantic.enum_table.keyOf(inferred_type.Enum);
-        }
-
-        // New: include union member list for variables declared as unions or expressions that return unions
-        var union_members: ?[][]const u8 = null;
-        // Attach inline union info for selected builtins/internal calls
-        if (peek.expr.data == .Variable) {
-            const var_name = peek.expr.data.Variable.lexeme;
-            // Scope-aware lookup: local and global variables can share a numeric
-            // index, so the union-member key is keyed by (is_local, index).
-            if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                const is_local = self.generator.symbol_table.isLocalVariable(var_name);
-                // Inside a function, a global accessed by name should not surface
-                // union member info; keep parameters/locals authoritative.
-                const should_use_union_members = !(self.generator.symbol_table.current_function != null and !is_local);
-                if (should_use_union_members) {
-                    if (self.generator.symbol_table.getVariableUnionMembers(is_local, var_index)) |members2| {
-                        union_members = members2;
-                    }
-                }
-            }
-        }
-
-        if (union_members == null and inferred_type == .Union) {
-            union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
-        }
-
-        if (union_members == null and inferred_type == .Group) {
-            if (peek.expr.data == .Variable) {
-                const var_name = peek.expr.data.Variable.lexeme;
-                if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_name| {
-                    union_members = try self.generator.type_system.getGroupMemberNames(custom_name);
-                }
-            }
-            if (union_members == null) {
-                if (self.generator.semantic.group_table.keyOf(inferred_type.Group)) |group_key| {
-                    union_members = try self.generator.type_system.getGroupMemberNames(group_key);
-                }
-            }
-        }
+        var union_members: ?[][]const u8 = switch (value_type) {
+            .Union => try self.generator.collectUnionMemberNamesFromHIRType(value_type),
+            .Group => try self.generator.type_system.getGroupMemberNames(self.generator.semantic.group_table.keyOf(value_type.Group).?),
+            else => null,
+        };
 
         // A union the source wrote with a group shows the group, not the
         // members it flattened into.
         var member_slots: ?[]const u32 = null;
         if (union_members) |names| {
-            if (inferred_type == .Union) {
-                if (try self.collapseWrittenGroups(peek.expr, inferred_type, names)) |collapsed| {
+            if (value_type == .Union) {
+                if (try self.collapseWrittenGroups(peek.expr, value_type, names)) |collapsed| {
                     union_members = collapsed.names;
                     member_slots = collapsed.slots;
                 }
@@ -120,10 +55,10 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
 
         // Generate peek instruction with full path and correct type
         // B2: peeking a struct prints it through the descriptor registry.
-        self.generator.markReflectedType(inferred_type);
+        self.generator.markReflectedType(value_type);
         try self.generator.instructions.append(.{ .Peek = .{
             .name = peek_path,
-            .value_type = inferred_type,
+            .value_type = value_type,
             .location = peek.location,
             .union_members = union_members,
             .member_slots = member_slots,
@@ -150,7 +85,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
     /// the place of its first member. Null when the written type names no group.
     fn collapseWrittenGroups(self: *IOHandler, expr: *ast.Expr, union_type: HIRType, member_names: [][]const u8) !?CollapsedMembers {
         const g = self.generator;
-        const written = g.semantic.getCachedExprType(expr) orelse return null;
+        const written = try g.typeInfoOf(expr);
         if (written.base != .Union) return null;
         var groups: std.ArrayListUnmanaged(u32) = .empty;
         try self.collectWrittenGroups(written, &groups);
@@ -220,7 +155,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                 const field_types = try self.generator.allocator.alloc(HIRType, struct_lit.fields.len);
                 for (struct_lit.fields, 0..) |field_ptr, idx| {
                     field_names[idx] = field_ptr.name.lexeme;
-                    field_types[idx] = self.generator.inferTypeFromExpression(field_ptr.value);
+                    field_types[idx] = try self.generator.typeOf(field_ptr.value);
                 }
                 break :blk StructPeekInfo{
                     .name = struct_lit.name.lexeme,
@@ -229,7 +164,8 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                     .field_types = field_types,
                 };
             },
-            .Variable => |var_token| if (self.generator.getTrackedVariableType(var_token.lexeme)) |var_type| blk: {
+            .Variable => |var_token| blk: {
+                const var_type = try self.generator.typeOf(peek_data.expr);
                 if (var_type != .Struct) {
                     return error.ExpectedStructType;
                 }
@@ -243,8 +179,6 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                 };
                 try self.populateStructInfoFromType(&info, var_type);
                 break :blk info;
-            } else {
-                return error.UnknownVariableType;
             },
             .FieldAccess => |field| blk: {
                 // For field access, we need to generate the field access code first
@@ -255,8 +189,9 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                     },
                 });
 
-                const container_type = self.generator.inferTypeFromExpression(field.object);
+                const container_type = try self.generator.typeOf(field.object);
                 const field_struct_id: u32 = if (container_type == .Struct) container_type.Struct else 0;
+                const peeked_field_type = try self.generator.typeOf(peek_data.expr);
 
                 // Generate GetField instruction to access the field
                 try self.generator.instructions.append(.{
@@ -265,7 +200,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                         .container_type = container_type,
                         .struct_id = field_struct_id,
                         .field_index = 0,
-                        .field_type = .Unknown,
+                        .field_type = peeked_field_type,
                         .field_for_peek = true,
                         .nested_struct_id = null,
                     },
@@ -275,7 +210,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                 const field_names = try self.generator.allocator.alloc([]const u8, 1);
                 const field_types = try self.generator.allocator.alloc(HIRType, 1);
                 field_names[0] = field.field.lexeme;
-                field_types[0] = self.generator.inferTypeFromExpression(peek_data.expr);
+                field_types[0] = peeked_field_type;
 
                 break :blk StructPeekInfo{
                     .name = field.field.lexeme,
@@ -289,10 +224,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             },
         };
 
-        const peek_struct_type = if (peek_data.expr.data == .StructLiteral)
-            try self.generator.typeOf(peek_data.expr)
-        else
-            self.generator.inferTypeFromExpression(peek_data.expr);
+        const peek_struct_type = try self.generator.typeOf(peek_data.expr);
         const peek_sid: u32 = if (peek_struct_type == .Struct) peek_struct_type.Struct else 0;
 
         // B2: a struct peek prints through the descriptor registry.

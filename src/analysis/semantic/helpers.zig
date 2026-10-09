@@ -14,6 +14,7 @@ const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = HIRTypeModule.HIRType;
 const StructId = HIRTypeModule.StructId;
 const names = @import("names.zig");
+const infer_type = @import("infer_type.zig");
 const graph_mod = @import("../../module/graph.zig");
 
 /// The resolved identity of a named type, or null for an anonymous one.
@@ -476,71 +477,11 @@ pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !?
     return try self.struct_table.idFor(ref);
 }
 
-/// Centralized AST→HIR lowering. Recurses through array/map/union/function
-/// element types and resolves named struct/enum/group types to their table
-/// ids, which are stable from first sight.
-pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
-    return switch (ti.base) {
-        .Int => HIRType.Int,
-        .Byte => HIRType.Byte,
-        .Float => HIRType.Float,
-        .String => HIRType.String,
-        .Tetra => HIRType.Tetra,
-        .Nothing => HIRType.Nothing,
-
-        .Array => blk: {
-            const elem = ti.array_type orelse break :blk HIRType.Nothing;
-            const elem_ptr = try self.allocator.create(HIRType);
-            elem_ptr.* = try lowerAstTypeToHIR(self, elem);
-            break :blk HIRType{ .Array = elem_ptr };
-        },
-
-        .Map => blk: {
-            const key_ptr = try self.allocator.create(HIRType);
-            const val_ptr = try self.allocator.create(HIRType);
-            key_ptr.* = if (ti.map_key_type) |key| try lowerAstTypeToHIR(self, key) else .Unknown;
-            val_ptr.* = if (ti.map_value_type) |value| try lowerAstTypeToHIR(self, value) else .Unknown;
-            break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
-        },
-
-        .Enum, .Custom, .Struct => blk: {
-            const ref = refOf(ti) orelse break :blk if (ti.base == .Enum) HIRType{ .Enum = 0 } else if (ti.base == .Struct) HIRType{ .Struct = 0 } else HIRType.Nothing;
-            break :blk switch (declKind(self, ref) orelse break :blk HIRType.Nothing) {
-                .Struct => HIRType{ .Struct = try self.struct_table.idFor(ref) },
-                .Enum => HIRType{ .Enum = try self.enum_table.idFor(ref) },
-                .Group => HIRType{ .Group = try self.group_table.idFor(ref) },
-            };
-        },
-
-        .Function => blk: {
-            const ft = ti.function_type orelse break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = &HIRType{ .Unknown = {} } } };
-            var params_list: std.ArrayList(*const HIRType) = .empty;
-            defer params_list.deinit(self.allocator);
-            for (ft.params) |p| {
-                const pptr = try self.allocator.create(HIRType);
-                pptr.* = try lowerAstTypeToHIR(self, &p);
-                try params_list.append(self.allocator, pptr);
-            }
-            const ret_ptr = try self.allocator.create(HIRType);
-            ret_ptr.* = try lowerAstTypeToHIR(self, ft.return_type);
-            break :blk HIRType{ .Function = .{
-                .params = try params_list.toOwnedSlice(self.allocator),
-                .ret = ret_ptr,
-            } };
-        },
-
-        .Union => blk: {
-            const ut = ti.union_type orelse break :blk HIRType.Nothing;
-            const lowered = try self.allocator.alloc(*const HIRType, ut.types.len);
-            defer self.allocator.free(lowered);
-            for (ut.types, lowered) |member, *slot| {
-                const member_ptr = try self.allocator.create(HIRType);
-                member_ptr.* = try lowerAstTypeToHIR(self, member);
-                slot.* = member_ptr;
-            }
-            break :blk try self.union_table.intern(self.unionNames(), lowered);
-        },
-    };
+/// Whether an array in `t` still lacks the element type an empty literal takes
+/// from its context: `[]`, or `[[]]` at any depth.
+pub fn hasUninferredElement(t: *const ast.TypeInfo) bool {
+    if (t.base != .Array) return false;
+    return hasUninferredElement(t.array_type orelse return true);
 }
 
 pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
@@ -628,6 +569,52 @@ pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const as
     return try createUnionType(self, remaining.items);
 }
 
+/// An array literal is typed by the array its context expects, as an integer
+/// literal is by the number type: each element is checked against the
+/// expected element type (a nested literal in turn), and the literal takes
+/// that element type and storage. So `[]` under `int[]` is an `int[]`,
+/// `[65, 66]` under `byte[]` holds bytes, and a literal initializing an
+/// `int[3]` is laid out fixed — codegen reads all of it from the literal.
+fn contextualizeArrayLiteral(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, elements: []const *ast.Expr, span: ast.SourceSpan) infer_type.SemanticError!void {
+    if (expected.array_type) |element_type| {
+        for (elements) |element| {
+            const element_actual = try infer_type.inferTypeFromExpr(self, element);
+            if (!adoptByteLiteral(self, element, element_actual, element_type)) return;
+            try unifyTypesExpr(self, element_type, element_actual, element, span);
+        }
+    }
+    actual.array_type = expected.array_type orelse actual.array_type;
+    actual.array_storage = expected.array_storage;
+    actual.array_size = expected.array_size;
+}
+
+/// Make the integer literal `literal`, of type `literal_type`, a byte literal
+/// when its context is a byte: the other operand of its arithmetic, or the
+/// element type of the array it sits in. Returns false after reporting a
+/// literal no byte can hold.
+pub fn adoptByteLiteral(self: *SemanticAnalyzer, literal: *ast.Expr, literal_type: *ast.TypeInfo, context: *const ast.TypeInfo) bool {
+    if (context.base != .Byte or literal_type.base != .Int) return true;
+    const value = literal_type.comptime_int orelse return true;
+    if (value < 0 or value > 255) {
+        self.reporter.reportCompileError(literal.base.location(), ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
+        self.fatal_error = true;
+        return false;
+    }
+    if (literal.data != .Literal) return true;
+    literal.data.Literal = .{ .byte = @intCast(value) };
+    literal_type.base = .Byte;
+    return true;
+}
+
+/// Check a value stored into an array element (`xs[i] is v`, `@push`,
+/// `@insert`) against the element type. An element store is an operator
+/// position, where a runtime number widens; an array literal stored there is
+/// still typed by the element type it lands in.
+pub fn unifyElement(self: *SemanticAnalyzer, element_type: *const ast.TypeInfo, value_type: *ast.TypeInfo, value: *ast.Expr, span: ast.SourceSpan) !void {
+    contextualizeEnumMember(self, value, value_type, element_type);
+    try unifyTypesExpr(self, element_type, value_type, if (value.data == .Array) value else null, span);
+}
+
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
     return unifyTypesExpr(self, expected, actual, null, span);
 }
@@ -638,6 +625,9 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
     // Two shorthands with no context yet agree; their context types both.
     if (isUntypedVariant(expected) and isUntypedVariant(actual)) return;
     if (actual_expr) |expr| if (reportUndeclaredVariant(self, expr, actual, expected, span)) return;
+    if (actual_expr) |expr| if (expr.data == .Array and expected.base == .Array) {
+        return contextualizeArrayLiteral(self, expected, actual, expr.data.Array, span);
+    };
 
     // ── Phase 1: Group widening ──
     // If expected is a group, any member type (or union of members) is assignable.
@@ -895,7 +885,7 @@ pub fn registerStructType(self: *SemanticAnalyzer, ref: TypeRef, fields: []const
 /// union field flattens — so this runs once every record is analyzed.
 pub fn lowerStructFieldTypes(self: *SemanticAnalyzer) !void {
     for (self.struct_table.entries.items) |entry| {
-        for (entry.fields) |*field| field.hir_type = try lowerAstTypeToHIR(self, field.type_info);
+        for (entry.fields) |*field| field.hir_type = try self.typeLowering().lower(field.type_info);
     }
 }
 

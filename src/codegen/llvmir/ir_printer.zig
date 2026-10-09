@@ -90,6 +90,8 @@ pub const IRPrinter = struct {
     pub const reflectedContains = ModuleLayoutMethods.reflectedContains;
     pub const markTypeNeeds = ModuleLayoutMethods.markTypeNeeds;
     pub const markNestedStructs = ModuleLayoutMethods.markNestedStructs;
+    pub const markArrayElementNeeds = ModuleLayoutMethods.markArrayElementNeeds;
+    pub const skippedStructWords = ModuleLayoutMethods.skippedStructWords;
     pub const markInstructionNeeds = ModuleLayoutMethods.markInstructionNeeds;
     pub const findFunctionsSectionStart = ModuleLayoutMethods.findFunctionsSectionStart;
     pub const findTopLevelInitEnd = ModuleLayoutMethods.findTopLevelInitEnd;
@@ -100,11 +102,6 @@ pub const IRPrinter = struct {
     pub const writeFunction = FunctionEmitMethods.writeFunction;
     pub const nextTemp = FunctionEmitMethods.nextTemp;
     pub const nextTempText = FunctionEmitMethods.nextTempText;
-    pub const narrowVariable = FunctionEmitMethods.narrowVariable;
-    pub const restoreVariable = FunctionEmitMethods.restoreVariable;
-    pub const clearNarrowedVars = FunctionEmitMethods.clearNarrowedVars;
-    pub const loadNarrowedUnion = FunctionEmitMethods.loadNarrowedUnion;
-    pub const narrowedMemberType = FunctionEmitMethods.narrowedMemberType;
     pub const buildEnumPrintMap = FunctionEmitMethods.buildEnumPrintMap;
     pub const emitEnumPrint = FunctionEmitMethods.emitEnumPrint;
     pub const emitQuantifierWrappers = FunctionEmitMethods.emitQuantifierWrappers;
@@ -275,10 +272,6 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     /// scalar leaf function does not pay two page-allocator round trips per call.
     scopes_elided: bool = false,
     exited_scopes: std.AutoHashMap(u32, void),
-    /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
-    /// a single-member union view; `RestoreVar` pops it. Loads of the variable
-    /// unwrap the boxed `%DoxaValue` to the active member representation.
-    narrowed_vars: std.AutoHashMap(HIR.Slot, std.ArrayListUnmanaged(HIR.HIRType)),
     /// Region class of each local variable's heap payload (A1). Populated while
     /// a function body is emitted so a `LoadVar` knows whether the object it
     /// loads provably outlives a later rehome store's destination. Global scope
@@ -324,6 +317,11 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     /// Computed once before emission; `emitStructNew` skips the registry write
     /// for these and clones use the typed scalar path.
     skip_descriptor_structs: std.StringHashMap(void),
+    /// Structs that are an element of a one-dimensional dynamic array. A skipped
+    /// one is rehomed by owner lookup (`doxa_struct_rehome_scalar_*`) so an
+    /// `each` binding still writes through to the element; any other skipped
+    /// struct has no aliased element and is simply copied.
+    array_element_structs: std.AutoHashMap(HIR.StructId, void),
     /// The peek accumulator active for the current emit pass. A container
     /// element descriptor has to be materialized from `emitSetField`, which
     /// carries no `PeekEmitState` parameter, so the pass installs its state
@@ -422,11 +420,7 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
         ptr_name: []const u8,
         stack_type: StackType,
         /// The group or union the slot was declared as, when it holds a
-        /// `%DoxaValue` box. A store has to re-pack the member index from this
-        /// declaration: `StoreVar.expected_type` describes the value being
-        /// stored, which inside a `NarrowVar` branch is the member itself, and
-        /// boxing from it would leave no index for a later `MemberCheck` to
-        /// read.
+        /// `%DoxaValue` box: the box type a load of it pushes.
         boxed_declared_type: ?HIR.HIRType = null,
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null,

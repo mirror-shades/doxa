@@ -1374,6 +1374,16 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(store_scope);
             try w.writeAll(store_scope);
 
+            // Field 6 (`elem_words`): a view's struct elements are found through
+            // the registry, never by a recorded size.
+            const words_ptr = try self.nextTemp(id);
+            const words_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 6\n", .{ words_ptr, hdr_reg });
+            defer self.allocator.free(words_gep);
+            try w.writeAll(words_gep);
+            const store_words = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{words_ptr});
+            defer self.allocator.free(store_words);
+            try w.writeAll(store_words);
+
             return hdr_reg;
         }
 
@@ -1585,6 +1595,42 @@ pub fn Methods(comptime Ctx: type) type {
             const desc_global = try std.fmt.allocPrint(self.allocator, "@.doxa.struct.desc.{d}", .{peek_state.next_id_ptr.*});
             peek_state.next_id_ptr.* += 1;
 
+            // Word counts of fields that hold a descriptor-free scalar struct,
+            // which the runtime's descriptor walk cannot look up by address.
+            // Only emitted when some field needs it.
+            var has_struct_words = false;
+            for (field_types) |ft| {
+                if (self.skippedStructWords(ft) != 0) has_struct_words = true;
+            }
+            var struct_words_ptr_expr: []const u8 = "ptr null";
+            var struct_words_owned = false;
+            defer if (struct_words_owned) self.allocator.free(struct_words_ptr_expr);
+            if (has_struct_words) {
+                const words_global = try std.fmt.allocPrint(self.allocator, "@.doxa.struct.words.{d}", .{peek_state.next_id_ptr.*});
+                peek_state.next_id_ptr.* += 1;
+                defer self.allocator.free(words_global);
+                var elems = std.ArrayListUnmanaged(u8).empty;
+                defer elems.deinit(self.allocator);
+                for (field_types, 0..) |ft, i| {
+                    if (i != 0) try elems.appendSlice(self.allocator, ", ");
+                    const piece = try std.fmt.allocPrint(self.allocator, "i64 {d}", .{self.skippedStructWords(ft)});
+                    defer self.allocator.free(piece);
+                    try elems.appendSlice(self.allocator, piece);
+                }
+                const words_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s} = private constant [{d} x i64] [{s}]\n",
+                    .{ words_global, field_types.len, elems.items },
+                );
+                try peek_state.globals.append(words_line);
+                struct_words_ptr_expr = try std.fmt.allocPrint(
+                    self.allocator,
+                    "ptr getelementptr inbounds ([{d} x i64], ptr {s}, i64 0, i64 0)",
+                    .{ field_types.len, words_global },
+                );
+                struct_words_owned = true;
+            }
+
             // Field names array
             if (field_count == 0) {
                 const names_line = try std.fmt.allocPrint(self.allocator, "{s} = private constant [0 x ptr] []\n", .{names_global});
@@ -1718,8 +1764,8 @@ pub fn Methods(comptime Ctx: type) type {
 
             const desc_line = try std.fmt.allocPrint(
                 self.allocator,
-                "{s} = private constant {{ ptr, i64, ptr, ptr, ptr }} {{ {s}, i64 {d}, {s}, {s}, {s} }}\n",
-                .{ desc_global, type_gep_expr, field_count, names_ptr_expr, tags_ptr_expr, enumtys_ptr_expr },
+                "{s} = private constant {{ ptr, i64, ptr, ptr, ptr, ptr }} {{ {s}, i64 {d}, {s}, {s}, {s}, {s} }}\n",
+                .{ desc_global, type_gep_expr, field_count, names_ptr_expr, tags_ptr_expr, enumtys_ptr_expr, struct_words_ptr_expr },
             );
             try peek_state.globals.append(desc_line);
 

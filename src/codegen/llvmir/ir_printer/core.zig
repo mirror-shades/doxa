@@ -681,13 +681,13 @@ pub fn Methods(comptime Ctx: type) type {
                 .entry_str_out_len = null,
                 .entry_allocas = std.array_list.Managed([]const u8).init(allocator),
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
-                .narrowed_vars = std.AutoHashMap(HIR.Slot, std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
                 .var_regions = std.AutoHashMap(HIR.Slot, Region).init(allocator),
                 .var_ranges = std.AutoHashMap(HIR.Slot, IntRange).init(allocator),
                 .var_range_blocks = std.AutoHashMap(HIR.Slot, []const u8).init(allocator),
                 .reflected_structs = reflected_structs,
                 .force_struct_descriptors = force_struct_descriptors,
                 .skip_descriptor_structs = std.StringHashMap(void).init(allocator),
+                .array_element_structs = std.AutoHashMap(HIR.StructId, void).init(allocator),
                 .arith_overflow = arith_overflow,
                 .loop_head_envs = std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(allocator),
             };
@@ -708,15 +708,11 @@ pub fn Methods(comptime Ctx: type) type {
             self.struct_type_names_by_id.deinit();
             self.defined_globals.deinit();
             self.exited_scopes.deinit();
-            var narrowed_it = self.narrowed_vars.iterator();
-            while (narrowed_it.next()) |entry| {
-                entry.value_ptr.deinit(self.allocator);
-            }
-            self.narrowed_vars.deinit();
             self.var_regions.deinit();
             self.var_ranges.deinit();
             self.var_range_blocks.deinit();
             self.skip_descriptor_structs.deinit();
+            self.array_element_structs.deinit();
             for (self.entry_allocas.items) |line| self.allocator.free(line);
             self.entry_allocas.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
@@ -1152,20 +1148,29 @@ pub fn Methods(comptime Ctx: type) type {
                     // B2/B3: a scalar-only struct that never needs the descriptor
                     // is cloned with a typed word copy — no registry lookup, so it
                     // is consistent with skipping its registration at construction.
-                    if (value.struct_type_name) |name| {
-                        if (self.skip_descriptor_structs.contains(name)) {
-                            const field_types = value.struct_field_types orelse self.global_struct_field_types.get(name);
-                            const words: usize = if (field_types) |fts| fts.len else 0;
-                            if (words > 0) {
-                                const scalar_line = if (dest == .program_root)
-                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_root(i64 {d}, ptr {s})\n", .{ clone_reg, words, src_ptr.name })
-                                else
-                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_at(i64 {s}, i64 {d}, ptr {s})\n", .{ clone_reg, levels_operand, words, src_ptr.name });
-                                defer self.allocator.free(scalar_line);
-                                try w.writeAll(scalar_line);
-                                return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
-                            }
-                        }
+                    // It is sized from the declared struct id first, since a value
+                    // that arrives through a call or an array element may not carry
+                    // its type name. A rehome of a struct that can be an array
+                    // element keeps identity when the owning arena outlives the
+                    // destination, like the registry-backed rehome; any other one
+                    // has no aliased element, so a copy is equivalent and cheaper.
+                    const declared_words = self.skippedStructWords(declared_type);
+                    const words: u64 = if (declared_words != 0) declared_words else blk: {
+                        const name = value.struct_type_name orelse break :blk 0;
+                        if (!self.skip_descriptor_structs.contains(name)) break :blk 0;
+                        const field_types = value.struct_field_types orelse self.global_struct_field_types.get(name);
+                        break :blk if (field_types) |fts| fts.len else 0;
+                    };
+                    if (words > 0) {
+                        const aliasable = declared_type == .Struct and self.array_element_structs.contains(declared_type.Struct);
+                        const op = if (snapshot or !aliasable) "clone" else "rehome";
+                        const scalar_line = if (dest == .program_root)
+                            try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_{s}_scalar_root(i64 {d}, ptr {s})\n", .{ clone_reg, op, words, src_ptr.name })
+                        else
+                            try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_{s}_scalar_at(i64 {s}, i64 {d}, ptr {s})\n", .{ clone_reg, op, levels_operand, words, src_ptr.name });
+                        defer self.allocator.free(scalar_line);
+                        try w.writeAll(scalar_line);
+                        return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
                     }
 
                     const clone_line = if (dest == .program_root)

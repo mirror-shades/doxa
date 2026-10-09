@@ -33,32 +33,10 @@ fn collectLiteralNestedSizes(
     collectLiteralNestedSizes(inner, sizes, depth);
 }
 
-const NumLit = union(enum) { integral: i64, floating: f64 };
-
-/// Extract a comptime numeric value from a plain or unary-negated numeric
-/// literal expression. Returns null for anything else, so callers can fall
-/// back to normal expression lowering.
-fn numericLiteralOf(element: *const ast.Expr) ?NumLit {
-    switch (element.data) {
-        .Literal => |l| return switch (l) {
-            .int => |i| NumLit{ .integral = i },
-            .byte => |b| NumLit{ .integral = b },
-            .float => |f| NumLit{ .floating = f },
-            else => null,
-        },
-        .Unary => |u| {
-            if (u.operator.type != .MINUS) return null;
-            const inner = u.right orelse return null;
-            if (inner.data != .Literal) return null;
-            return switch (inner.data.Literal) {
-                .int => |i| NumLit{ .integral = -i },
-                .byte => |b| NumLit{ .integral = -@as(i64, b) },
-                .float => |f| NumLit{ .floating = -f },
-                else => null,
-            };
-        },
-        else => return null,
-    }
+/// How a runtime map stores a key of type `key_type`: a string by its bytes,
+/// every other key (an int, an enum's discriminant) as an `i64` word.
+fn mapKeyRepresentation(key_type: HIRType) HIRType {
+    return if (key_type == .String) .String else .Int;
 }
 
 /// Handle collection operations: arrays, maps, indexing
@@ -69,7 +47,9 @@ pub const CollectionsHandler = struct {
         return .{ .generator = generator };
     }
 
-    /// Generate HIR for an array literal.
+    /// Generate HIR for an array literal. Its element type and storage are
+    /// the analyzer's: the array its context expects, or else its elements'
+    /// promoted type, with every element already of that type.
     pub fn generateArray(self: *CollectionsHandler, array_expr: *ast.Expr, preserve_result: bool) !void {
         const elements = array_expr.data.Array;
         // A3: consume a pending return-placement intent. Clearing it before the
@@ -78,27 +58,8 @@ pub const CollectionsHandler = struct {
         const place_intent = self.generator.place_return_value;
         self.generator.place_return_value = false;
 
-        // Consume the declared element type (if the enclosing declaration had an
-        // explicit array annotation). Reset the field so it doesn't leak into
-        // unrelated sub-expressions; we re-thread it explicitly for nested arrays.
-        const expected_element = self.generator.array_element_type_override;
-        self.generator.array_element_type_override = null;
-        defer self.generator.array_element_type_override = expected_element;
-
-        const have_expected = if (expected_element) |e| (e != .Unknown and e != .Nothing) else false;
-
-        // The declared element type is authoritative; without one, the literal
-        // has the type analysis gave it, whose elements are already promoted
-        // (a float among ints makes it float[]).
-        const element_type: HIRType = if (have_expected)
-            expected_element.?
-        else if (elements.len == 0)
-            .Unknown
-        else switch (try self.generator.typeOf(array_expr)) {
-            .Array => |inner| inner.*,
-            else => .Unknown,
-        };
-        const storage_kind = self.generator.array_storage_override orelse ArrayStorageKind.dynamic;
+        const element_type = (try self.generator.typeOf(array_expr)).Array.*;
+        const storage_kind = self.generator.storageKindFromTypeInfo((try self.generator.typeInfoOf(array_expr)).*);
 
         var nested_sizes: [4]u32 = [_]u32{0} ** 4;
         var nested_depth: u3 = 0;
@@ -110,7 +71,6 @@ pub const CollectionsHandler = struct {
             collectLiteralNestedSizes(elements, &nested_sizes, &nested_depth);
         }
 
-        // Generate ArrayNew instruction with nested type info
         try self.generator.instructions.append(.{ .ArrayNew = .{
             .element_type = element_type,
             .size = @intCast(elements.len),
@@ -124,82 +84,23 @@ pub const CollectionsHandler = struct {
             .element_struct_type_name = self.generator.elementStructTypeName(element_type),
         } });
 
-        // Declared element type to apply to direct (non-nested) literal elements.
-        const inner_override: ?HIRType = if (have_expected) switch (element_type) {
-            .Array => |inner| inner.*,
-            else => element_type,
-        } else null;
-
-        // Generate each element and ArraySet
         for (elements, 0..) |element, i| {
-            // Push index
             const index_value = HIRValue{ .int = @intCast(i) };
             const index_const = try self.generator.addConstant(index_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
-            // Generate the element value
-            if (element.data == .Array) {
-                // Thread the inner declared element type down before
-                // generating the nested array.
-                const prev_override = self.generator.array_element_type_override;
-                self.generator.array_element_type_override = inner_override;
-                defer self.generator.array_element_type_override = prev_override;
-
-                try self.generator.generateExpression(element, true, false);
-            } else if (!try self.emitCoercedLiteral(element, element_type)) {
-                try self.generator.generateExpression(element, true, false);
-            }
+            try self.generator.generateExpression(element, true, false);
+            // A member of a union or group element is boxed by the element
+            // store itself (Phase C makes it explicit).
+            if (!element_type.isBoxed()) try self.generator.convertValue(try self.generator.typeOf(element), element_type);
 
             // ArraySet pops: value, index, array; and pushes updated array back
             try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
         }
 
-        // Handle preserve_result parameter
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
-    }
-
-    /// Emit a comptime numeric literal element coerced to the array's element
-    /// type, with a compile-time bounds check for byte. Handles plain and
-    /// unary-negated numeric literals; returns false for anything else so the
-    /// normal lowering path handles it.
-    fn emitCoercedLiteral(self: *CollectionsHandler, element: *ast.Expr, target: HIRType) !bool {
-        const num = numericLiteralOf(element) orelse return false;
-
-        const coerced: ?HIRValue = switch (target) {
-            .Byte => switch (num) {
-                .integral => |i| blk: {
-                    if (i < 0 or i > 255) {
-                        self.generator.reporter.reportCompileError(
-                            element.base.location(),
-                            ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
-                            "byte value out of range (must be 0-255)",
-                            .{},
-                        );
-                        return ErrorList.TypeError;
-                    }
-                    break :blk HIRValue{ .byte = @intCast(i) };
-                },
-                .floating => null,
-            },
-            .Int => switch (num) {
-                .integral => |i| HIRValue{ .int = i },
-                .floating => null,
-            },
-            .Float => switch (num) {
-                .integral => |i| HIRValue{ .float = @floatFromInt(i) },
-                .floating => |f| HIRValue{ .float = f },
-            },
-            else => null,
-        };
-
-        if (coerced) |value| {
-            const cid = try self.generator.addConstant(value);
-            try self.generator.instructions.append(.{ .Const = .{ .value = value, .constant_id = cid } });
-            return true;
-        }
-        return false;
     }
 
     /// Generate HIR for range expressions (e.g., 1 to 6)
@@ -223,7 +124,7 @@ pub const CollectionsHandler = struct {
     }
 
     /// Generate HIR for map literals
-    pub fn generateMap(self: *CollectionsHandler, entries: []*ast.MapEntry, else_expr: ?*ast.Expr) !void {
+    pub fn generateMap(self: *CollectionsHandler, map_expr: *ast.Expr, entries: []*ast.MapEntry, else_expr: ?*ast.Expr) !void {
         if (else_expr) |expr| {
             try self.generator.generateExpression(expr, true, false);
         }
@@ -247,31 +148,13 @@ pub const CollectionsHandler = struct {
             e.* = HIRMapEntry{ .key = nothing_key, .value = nothing_value };
         }
 
-        // Infer key/value types from the first entry when possible so that
-        // downstream stages (LLVM + peek) know what the map actually stores.
-        var inferred_key_type: HIRType = .String;
-        var inferred_value_type: HIRType = .Unknown;
-        if (entries.len > 0) {
-            const first = entries[0];
-            const key_t = self.generator.inferTypeFromExpression(first.key);
-            const val_t = self.generator.inferTypeFromExpression(first.value);
-
-            inferred_key_type = switch (key_t) {
-                // Enums are represented as integer discriminants at runtime.
-                .Enum => .Int,
-                else => key_t,
-            };
-            inferred_value_type = switch (val_t) {
-                .Unknown, .Nothing => .Unknown,
-                else => val_t,
-            };
-        }
-
+        // The map's key and value types, as analysis typed the literal.
+        const map_type = (try self.generator.typeOf(map_expr)).Map;
         const map_instruction = HIRInstruction{
             .Map = .{
                 .entries = dummy_entries,
-                .key_type = inferred_key_type,
-                .value_type = inferred_value_type,
+                .key_type = mapKeyRepresentation(map_type.key.*),
+                .value_type = map_type.value.*,
                 .has_else_value = else_expr != null,
             },
         };
@@ -285,34 +168,18 @@ pub const CollectionsHandler = struct {
         // Generate array/map expression
         try self.generator.generateExpression(index.array, true, false);
 
-        // Determine if we're accessing an array, map. A union narrowed to a
-        // single member by `as` behaves like that member (e.g. `x[i]` where the
-        // else branch narrowed `x` to `string[]`).
-        const container_type = self.generator.inferTypeFromExpression(index.array);
-        const effective_container: HIRType = if (container_type == .Union and container_type.Union.members.len == 1)
-            container_type.Union.members[0].*
-        else
-            container_type;
-        switch (effective_container) {
+        // The container as analysis typed it; a narrowed name has already
+        // been read as its member.
+        switch (try self.generator.typeOf(index.array)) {
             .Map => {
                 // Generate index expression
                 try self.generator.generateExpression(index.index, true, false);
 
-                // Infer the result type of this index expression (e.g., float | nothing)
-                const result_type = self.generator.inferTypeFromExpression(expr);
-
-                // Map access - choose a compatible key type for the runtime map (i64 storage).
-                // Treat enums/bytes/tetra/etc as Int keys; only String stays String.
-                const raw_key_type = self.generator.inferTypeFromExpression(index.index);
-                const key_type: HIRType = switch (raw_key_type) {
-                    .String => .String,
-                    .Enum => .Int,
-                    .Group => .Int,
-                    .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
-                };
+                // The read is the map's value, or `value | nothing` for a map
+                // without an `else`.
                 try self.generator.instructions.append(.{ .MapGet = .{
-                    .key_type = key_type,
-                    .value_type = result_type,
+                    .key_type = mapKeyRepresentation(try self.generator.typeOf(index.index)),
+                    .value_type = try self.generator.typeOf(expr),
                 } });
             },
             .Array, .String => {
@@ -321,21 +188,8 @@ pub const CollectionsHandler = struct {
 
                 // Array or string access - use ArrayGet
                 try self.generator.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
-
-                // Record element type for index expressions into variables
-                if (index.array.data == .Variable) {
-                    if (self.generator.getTrackedArrayElementType(index.array.data.Variable.lexeme)) |elem_type| {
-                        try self.generator.trackVariableType("__index_tmp__", elem_type);
-                    }
-                }
             },
-            else => {
-                // Generate index expression
-                try self.generator.generateExpression(index.index, true, false);
-
-                // Default unknown container to ArrayGet (covers strings/arrays); Map is detected explicitly above
-                try self.generator.instructions.append(.{ .ArrayGet = .{ .bounds_check = true } });
-            },
+            else => unreachable, // analysis indexes only arrays, strings and maps
         }
         // If result is not preserved AND needs to be popped, do so now
         if (!preserve_result and should_pop_after_use) {
@@ -430,16 +284,8 @@ pub const CollectionsHandler = struct {
             try self.generator.generateExpression(assign_data.value, true, false);
 
             // If the receiver is a map, emit MapSet; otherwise ArraySet
-            const container_type = self.generator.inferTypeFromExpression(assign_data.array);
-            if (container_type == .Map) {
-                const idx_type = self.generator.inferTypeFromExpression(assign_data.index);
-                const key_type: HIRType = switch (idx_type) {
-                    .String => .String,
-                    .Enum => .Int,
-                    .Group => .Int,
-                    .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
-                };
-                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type } });
+            if (try self.generator.typeOf(assign_data.array) == .Map) {
+                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = mapKeyRepresentation(try self.generator.typeOf(assign_data.index)) } });
             } else {
                 // Generate ArraySet instruction
                 // Stack order expected by VM (top to bottom): value, index, array

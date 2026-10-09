@@ -1096,6 +1096,11 @@ pub const ArrayHeader = extern struct {
     /// The scope arena this array was allocated in. Heap elements pushed into
     /// the array are re-homed here so they survive the pushing scope's teardown.
     scope: ?*scope_arena.Scope,
+    /// For struct elements (tag 7) of a descriptor-free scalar struct, the
+    /// struct's size in i64 words, so an element store copies it without a
+    /// registry lookup; 0 otherwise. Set by `doxa_array_set_elem_words` and
+    /// carried to every array built from this one.
+    elem_words: u64,
 };
 
 pub const StructDesc = extern struct {
@@ -1104,17 +1109,43 @@ pub const StructDesc = extern struct {
     field_names: ?[*]const ?[*:0]const u8,
     field_tags: ?[*]const u64,
     field_enum_type_names: ?[*]const ?[*:0]const u8,
+    /// Per field: the word count of a nested descriptor-free scalar struct
+    /// (tag 7), which has no registry entry to clone it by; 0 for any other
+    /// field. Null when the struct has no such field.
+    field_struct_words: ?[*]const u64,
 };
 
-var struct_registry: std.AutoHashMapUnmanaged(usize, *const StructDesc) = .{};
-var struct_scopes: std.AutoHashMapUnmanaged(usize, ?*scope_arena.Scope) = .{};
+/// What the runtime knows about a heap struct instance: its layout descriptor
+/// (null when it was registered for scope tracking only) and the arena that
+/// owns it. One map keyed by instance address, so registering an instance is a
+/// single hash-table write.
+const StructMeta = struct {
+    desc: ?*const StructDesc,
+    scope: ?*scope_arena.Scope,
+};
+
+var struct_meta: std.AutoHashMapUnmanaged(usize, StructMeta) = .{};
+
+/// Starting size of `struct_meta`, so a program that registers many structs
+/// does not pay for the table's first several rehashes.
+const struct_meta_initial_capacity = 4096;
+
+fn registerStruct(inst: *anyopaque, desc: ?*const StructDesc, scope: ?*scope_arena.Scope) void {
+    // Best-effort registration; OOM in a runtime struct registry is non-recoverable
+    if (struct_meta.capacity() == 0) struct_meta.ensureTotalCapacity(std.heap.page_allocator, struct_meta_initial_capacity) catch {};
+    struct_meta.put(std.heap.page_allocator, @intFromPtr(inst), .{ .desc = desc, .scope = scope }) catch {};
+}
+
+/// The descriptor registered for the struct at `ptr`, if any.
+fn structDescOf(ptr: *const anyopaque) ?*const StructDesc {
+    const meta = struct_meta.get(@intFromPtr(ptr)) orelse return null;
+    return meta.desc;
+}
 
 pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
     const inst = instance orelse return;
     const sd = desc orelse return;
-    // Best-effort registration; OOM in a runtime struct registry is non-recoverable
-    struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
-    struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope_arena.currentScope()) catch {};
+    registerStruct(inst, sd, scope_arena.currentScope());
 }
 
 /// Register a struct whose storage was placed `levels` scopes above the current
@@ -1123,8 +1154,7 @@ pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDe
 pub export fn doxa_struct_register_at(levels: i64, instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
     const inst = instance orelse return;
     const sd = desc orelse return;
-    struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
-    struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope_arena.scopeAt(@intCast(levels))) catch {};
+    registerStruct(inst, sd, scope_arena.scopeAt(@intCast(levels)));
 }
 
 /// Word count of a single struct field given its runtime tag. String fields
@@ -1194,8 +1224,7 @@ fn fillDefaultStructsRec(hdr: *ArrayHeader, desc: *const StructDesc) void {
         }
 
         const inst: *anyopaque = @ptrCast(dst.ptr);
-        struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), desc) catch {};
-        struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope) catch {};
+        registerStruct(inst, desc, scope);
         doxa_array_set_i64(hdr, i, @as(i64, @intCast(@intFromPtr(inst))));
     }
 }
@@ -1204,7 +1233,7 @@ fn fillDefaultStructsRec(hdr: *ArrayHeader, desc: *const StructDesc) void {
 /// descriptor. Used to write an assigned element through a non-owning view's
 /// existing slot.
 fn structWordCountInRegistry(ptr: *anyopaque) ?usize {
-    const desc = struct_registry.get(@intFromPtr(ptr)) orelse return null;
+    const desc = structDescOf(ptr) orelse return null;
     const field_count: usize = @intCast(desc.field_count);
     const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
     return structTotalWords(tags, field_count);
@@ -1212,7 +1241,7 @@ fn structWordCountInRegistry(ptr: *anyopaque) ?usize {
 
 fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
-    const desc = struct_registry.get(@intFromPtr(src)) orelse return null;
+    const desc = structDescOf(src) orelse return null;
     const field_count: usize = @intCast(desc.field_count);
     const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
     const dst = scope_arena.allocSliceInScope(scope, i64, structTotalWords(tags, field_count));
@@ -1247,7 +1276,11 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
             // scope), so deep-copy it into the destination scope rather than
             // copying the pointer verbatim.
             const nested_src: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(bits)));
-            const nested = structCloneInto(scope, nested_src);
+            const nested_words: u64 = if (desc.field_struct_words) |fw| fw[i] else 0;
+            const nested = if (nested_words != 0)
+                structCloneScalarInto(scope, @intCast(nested_words), nested_src)
+            else
+                structCloneInto(scope, nested_src);
             dst[word] = @intCast(@intFromPtr(nested orelse nested_src));
             word += 1;
         } else if (tag == 9 and bits != 0) {
@@ -1269,8 +1302,7 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
     const result: ?*anyopaque = @ptrCast(dst.ptr);
     // Register the clone so its fields can be introspected/printed (and cloned
     // again) under the same descriptor as the source.
-    struct_registry.put(std.heap.page_allocator, @intFromPtr(dst.ptr), desc) catch {};
-    struct_scopes.put(std.heap.page_allocator, @intFromPtr(dst.ptr), scope) catch {};
+    registerStruct(@ptrCast(dst.ptr), desc, scope);
     return result;
 }
 
@@ -1302,6 +1334,27 @@ pub export fn doxa_struct_clone_scalar_root(word_count: u64, ptr: ?*anyopaque) c
     return structCloneScalarInto(scope_arena.rootScope(), @intCast(word_count), ptr);
 }
 
+/// Rehome for a descriptor-free scalar struct, which has no `struct_meta`
+/// entry to say which arena owns it. Keeps the original pointer when its arena
+/// outlives `scope`, or when no live arena holds it (as the registry path does
+/// for an unregistered pointer), and otherwise copies `word_count` words into
+/// `scope`. Identity therefore survives the same cases it does for a
+/// registered struct, such as an `each` binding writing through to an element.
+fn structRehomeScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*anyopaque) ?*anyopaque {
+    const src = ptr orelse return null;
+    const owner = scope_arena.ownerOf(src) orelse return src;
+    if (scope_arena.isEqualOrDescendant(scope, owner)) return src;
+    return structCloneScalarInto(scope, word_count, src);
+}
+
+pub export fn doxa_struct_rehome_scalar_at(levels: i64, word_count: u64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structRehomeScalarInto(scope_arena.scopeAt(@intCast(levels)), @intCast(word_count), ptr);
+}
+
+pub export fn doxa_struct_rehome_scalar_root(word_count: u64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structRehomeScalarInto(scope_arena.rootScope(), @intCast(word_count), ptr);
+}
+
 fn structCloneScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
     const dst = scope_arena.allocSliceInScope(scope, i64, word_count);
@@ -1315,7 +1368,7 @@ fn structCloneScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*a
 // not latent: `test/misc/expression_branch_merge.doxa` and
 // `test/misc/descriptor_skip.doxa` emit these calls on every test run, and the
 // root-aliasing identity the path preserves is load-bearing. Removing this
-// family (`struct_scopes`, `ArrayHeader.scope`, `isEqualOrDescendant`,
+// family (`StructMeta.scope`, `ArrayHeader.scope`, `isEqualOrDescendant`,
 // `doxa_struct_rehome_*`, `doxa_array_rehome_*`) is a semantic change to a live
 // path, not a cleanup — decide it with the user first. See
 // plan/performance-upgrades.md, "A2 completion landing notes".
@@ -1325,12 +1378,12 @@ fn structCloneScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*a
 /// disconnect `n` from the array element.
 ///
 /// Unknown allocation scope keeps identity too. Array elements and other
-/// long-lived heap objects are often not in `struct_scopes`; cloning them
+/// long-lived heap objects are often not in `struct_meta`; cloning them
 /// would silently snapshot field writes off the source.
 fn structRehomeInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
-    if (struct_scopes.get(@intFromPtr(src))) |src_scope| {
-        if (scope_arena.isEqualOrDescendant(scope, src_scope)) return src;
+    if (struct_meta.get(@intFromPtr(src))) |meta| {
+        if (scope_arena.isEqualOrDescendant(scope, meta.scope)) return src;
         return structCloneInto(scope, src);
     }
     return src;
@@ -1471,8 +1524,15 @@ fn arrayNewIn(scope: ?*scope_arena.Scope, elem_size: u64, elem_tag: u64, init_le
         .elem_size = elem_size,
         .elem_tag = elem_tag,
         .scope = scope,
+        .elem_words = 0,
     };
     return hdr_ptr;
+}
+
+/// Record that `hdr` holds descriptor-free scalar structs of `words` words.
+/// Emitted right after a dynamic array of such a struct is created.
+pub export fn doxa_array_set_elem_words(hdr: *ArrayHeader, words: u64) callconv(.c) void {
+    hdr.elem_words = words;
 }
 
 fn arrayNewAt(levels: usize, elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
@@ -1589,8 +1649,7 @@ pub export fn doxa_array_from_fixed_structs_at(
         const box = scope_arena.allocSliceInScope(scope, i64, words);
         @memcpy(box, src_words[@intCast(idx * struct_words)..][0..words]);
         const box_ptr: *anyopaque = @ptrCast(box.ptr);
-        if (desc) |d| struct_registry.put(std.heap.page_allocator, @intFromPtr(box_ptr), d) catch {};
-        struct_scopes.put(std.heap.page_allocator, @intFromPtr(box_ptr), scope) catch {};
+        registerStruct(box_ptr, desc, scope);
         slots[@intCast(idx)] = box_ptr;
     }
     return arr;
@@ -1657,6 +1716,7 @@ fn copyElement(dst: *ArrayHeader, dst_idx: u64, src: *ArrayHeader, src_idx: u64)
 fn arrayCloneIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
     const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
     const result = arrayNewIn(scope, src.elem_size, src.elem_tag, src.len);
+    result.elem_words = src.elem_words;
     var idx: u64 = 0;
     while (idx < src.len) : (idx += 1) copyElement(result, idx, src, idx);
     return result;
@@ -1811,7 +1871,8 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             // buffer. With no slot to write through, keep the raw pointer.
             if (hdr.scope == null) {
                 if (sp.* != null and src != null) {
-                    if (structWordCountInRegistry(src.?)) |words| {
+                    const known: ?usize = if (hdr.elem_words != 0) @intCast(hdr.elem_words) else structWordCountInRegistry(src.?);
+                    if (known) |words| {
                         const dst: [*]i64 = @ptrCast(@alignCast(sp.*.?));
                         const src_words: [*]const i64 = @ptrCast(@alignCast(src.?));
                         @memcpy(dst[0..words], src_words[0..words]);
@@ -1821,7 +1882,13 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
                 sp.* = src;
                 return;
             }
-            sp.* = if (src == null) null else structCloneInto(hdr.scope, src.?);
+            if (src == null) {
+                sp.* = null;
+            } else if (hdr.elem_words != 0) {
+                sp.* = structCloneScalarInto(hdr.scope, @intCast(hdr.elem_words), src);
+            } else {
+                sp.* = structCloneInto(hdr.scope, src.?);
+            }
         },
         // Default: store raw 64-bit payload (pointers/unknown).
         // When the element type is unknown (e.g. an empty `[]` literal) and the
@@ -1911,6 +1978,7 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
     const len_a: u64 = if (a) |hdr| hdr.len else 0;
     const len_b: u64 = if (b) |hdr| hdr.len else 0;
     const result = doxa_array_new(elem_size, elem_tag, len_a + len_b);
+    result.elem_words = if (a) |hdr| hdr.elem_words else if (b) |hdr| hdr.elem_words else 0;
     if (a) |hdr_a| {
         var idx: u64 = 0;
         while (idx < len_a) : (idx += 1) copyElement(result, idx, hdr_a, idx);
@@ -2012,12 +2080,14 @@ pub export fn doxa_array_remove_value(hdr: ?*ArrayHeader, idx: i64, out_removed:
 
 pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(8, 0, 0);
-    if (start < 0 or length < 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
-    const s: u64 = @intCast(start);
-    const n: u64 = @intCast(length);
-    if (s >= h.len or n == 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
-    const out_len: u64 = @min(n, h.len - s);
+    const out_len: u64 = if (start < 0 or length < 0 or @as(u64, @intCast(start)) >= h.len or length == 0)
+        0
+    else
+        @min(@as(u64, @intCast(length)), h.len - @as(u64, @intCast(start)));
     const out = doxa_array_new(h.elem_size, h.elem_tag, out_len);
+    out.elem_words = h.elem_words;
+    if (out_len == 0) return out;
+    const s: u64 = @intCast(start);
     var i: u64 = 0;
     while (i < out_len) : (i += 1) copyElement(out, i, h, s + i);
     return out;
@@ -2150,7 +2220,7 @@ fn printEnumImpl(out: *std.Io.Writer, type_name: []const u8, bits: i64) anyerror
 
 fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
     const key: usize = @intCast(addr);
-    const desc = struct_registry.get(key) orelse {
+    const desc = structDescOf(@ptrFromInt(key)) orelse {
         try out.print("<struct@0x{x}>", .{addr});
         return;
     };

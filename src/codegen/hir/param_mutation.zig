@@ -78,11 +78,6 @@ fn exprMutates(expr: *const ast.Expr, name: []const u8) bool {
             if (rootVariableIs(operand, name)) return true;
         },
 
-        // `p += x` rebinds `p`, but for a collection the lowering reads and
-        // rewrites the existing object, so treat it as a write.
-        .CompoundAssign => |ca| {
-            if (std.mem.eql(u8, ca.name.lexeme, name)) return true;
-        },
 
         // In-place intrinsic calls (`@push`, `@insert`, `@remove`, `@pop`,
         // `@clear`, ...) mutate their subject, so any mention of the parameter
@@ -171,9 +166,6 @@ fn forEachChild(
         },
         .Assignment => |a| {
             if (a.value) |v| visit(v, name, found);
-        },
-        .CompoundAssign => |ca| {
-            if (ca.value) |v| visit(v, name, found);
         },
         .Increment, .Decrement => |operand| visit(operand, name, found),
         .FunctionCall => |fc| {

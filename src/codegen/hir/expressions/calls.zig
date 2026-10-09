@@ -9,7 +9,6 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const HeapCopyKind = @import("../soxa_types.zig").HeapCopyKind;
 const ScopeKind = @import("../soxa_types.zig").ScopeKind;
-const Slot = @import("../soxa_types.zig").Slot;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
@@ -104,27 +103,25 @@ pub const CallsHandler = struct {
 
         var arg_emitted_count: u32 = 0;
 
-        // A concrete member variable passed to a union/group `^` parameter is
-        // boxed into a temporary at the call site, the temporary is aliased,
-        // and the member is written back after the call. Alias binding is by
-        // reference, and a plain variable's storage is not a `%DoxaValue` box,
-        // so the callee cannot read or write the union layout directly.
+        // A member-typed variable lent to a union `^` parameter is boxed into
+        // a temporary at the call site, the temporary is lent, and the member
+        // is read back out after the call. Analysis admits such a loan only
+        // when the parameter preserves its member, so the box still holds the
+        // member the variable's storage is typed as.
+        const MemberLoan = struct {
+            /// The call-site temporary the member is boxed into.
+            box: HIRGenerator.Place,
+            /// The variable lent, a name.
+            target: *ast.Expr,
+            member_type: HIRType,
+            box_type: HIRType,
+        };
+        var member_loans = std.array_list.Managed(MemberLoan).init(self.generator.allocator);
+        defer member_loans.deinit();
         const finfo_opt = switch (call_kind) {
             .DoxaFunction, .ZigFunction => self.generator.functionInfoByLink(function_name),
             .BuiltinFunction => null,
         };
-        const AliasWriteback = struct {
-            /// The call-site temporary the member was boxed into.
-            box_slot: Slot,
-            box_name: []const u8,
-            /// The aliased argument, a name, the member is written back to.
-            target: *ast.Expr,
-            member_type: HIRType,
-            /// The parameter type the temporary is boxed as.
-            box_type: HIRType,
-        };
-        var alias_writebacks = std.array_list.Managed(AliasWriteback).init(self.generator.allocator);
-        defer alias_writebacks.deinit();
 
         for (call_data.arguments, 0..) |arg, arg_index| {
             if (arg.expr.data == .DefaultArgPlaceholder) {
@@ -144,30 +141,27 @@ pub const CallsHandler = struct {
                 if (arg.is_alias) {
                     if (arg.expr.data == .Variable) {
                         const var_token = arg.expr.data.Variable;
-                        // When the callee's parameter is a boxed (union/group)
-                        // alias but the aliased storage is a concrete member,
-                        // forwarding the storage would hand the callee a raw
-                        // concrete layout it reads as a `%DoxaValue`. Box the
-                        // member into a call-site temporary and write it back
-                        // after the call; matching storage is passed directly.
-                        if (finfo_opt) |info| {
-                            if (arg_index < info.param_types.len) {
-                                const param_type = info.param_types[arg_index];
-                                const member_type = try self.generator.bindingTypeOf(&arg.expr.base);
-                                if (param_type.isBoxed() and !member_type.eql(param_type)) {
-                                    const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
-                                    const box_slot = self.generator.tempSlot();
-                                    try self.generator.loadName(&arg.expr.base, var_token.lexeme);
-                                    try self.generator.convertValue(try self.generator.typeOf(arg.expr), param_type);
-                                    try self.generator.instructions.append(.{ .StoreVar = .{ .slot = box_slot, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
-                                    try self.generator.instructions.append(.{ .PushStorageId = .{ .slot = box_slot, .var_name = box_name, .scope_kind = .Local } });
-                                    try alias_writebacks.append(.{ .box_slot = box_slot, .box_name = box_name, .target = arg.expr, .member_type = member_type, .box_type = param_type });
-                                    arg_emitted_count += 1;
-                                    continue;
-                                }
-                            }
+                        const member_type = try self.generator.bindingTypeOf(&arg.expr.base);
+                        const param_type = if (finfo_opt) |info| info.param_types[arg_index] else member_type;
+                        if (member_type.eql(param_type)) {
+                            try self.generator.pushStorageOfName(&arg.expr.base, var_token.lexeme);
+                        } else {
+                            const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_member_loan_{d}", .{self.generator.instructions.items.len});
+                            const box_slot = self.generator.tempSlot();
+                            try self.generator.loadName(&arg.expr.base, var_token.lexeme);
+                            try self.generator.convertValue(try self.generator.typeOf(arg.expr), param_type);
+                            const box_place = try self.generator.placeOf(box_slot, box_name, false);
+                            try self.generator.instructions.append(.{ .StoreDecl = .{
+                                .slot = box_slot,
+                                .var_name = box_place.var_name,
+                                .scope_kind = box_place.scope_kind,
+                                .module_context = null,
+                                .declared_type = param_type,
+                                .is_const = false,
+                            } });
+                            try self.generator.instructions.append(.{ .PushStorageId = .{ .slot = box_slot, .var_name = box_place.var_name, .scope_kind = box_place.scope_kind } });
+                            try member_loans.append(.{ .box = box_place, .target = arg.expr, .member_type = member_type, .box_type = param_type });
                         }
-                        try self.generator.pushStorageOfName(&arg.expr.base, var_token.lexeme);
                         arg_emitted_count += 1;
                     } else {
                         self.generator.reporter.reportCompileError(
@@ -186,7 +180,7 @@ pub const CallsHandler = struct {
             }
         }
 
-        const return_type = self.generator.calleeReturnType(callee);
+        const return_type = try self.generator.calleeReturnType(callee);
 
         if (call_kind == .DoxaFunction) {
             if (try self.tryInlineFunction(function_name, call_kind)) {
@@ -206,37 +200,19 @@ pub const CallsHandler = struct {
                 .return_type = return_type,
             },
         });
-        // Unbox each call-site temporary and store the member back into the
-        // caller's plain variable. The call result (if any) stays on the stack
-        // across these stores.
-        for (alias_writebacks.items) |wb| {
-            try self.generator.instructions.append(.{ .LoadVar = .{ .slot = wb.box_slot, .var_name = wb.box_name, .scope_kind = .Local, .module_context = null } });
-            try self.generator.convertValue(wb.box_type, wb.member_type);
-            // Written back through an alias, the member is re-homed into the
-            // arena that owns the aliased variable; `.rehome` preserves array
-            // identity and clones a fresh string out of the transient box
-            // arena. A local of this frame keeps it.
-            const slot = try self.generator.slotOf(&wb.target.base);
-            const heap_copy: HeapCopyKind = if (self.generator.alias_params.contains(slot)) .rehome else .keep;
-            try self.generator.storeName(&wb.target.base, wb.target.data.Variable.lexeme, wb.member_type, heap_copy);
+        // The call result, if any, stays on the stack across the read-backs.
+        for (member_loans.items) |loan| {
+            try self.generator.instructions.append(.{ .LoadVar = .{ .slot = loan.box.slot, .var_name = loan.box.var_name, .scope_kind = loan.box.scope_kind, .module_context = null } });
+            try self.generator.convertValue(loan.box_type, loan.member_type);
+            // Read back through an alias, the member is re-homed into the
+            // arena that owns the aliased variable; a local of this frame
+            // keeps it.
+            const heap_copy: HeapCopyKind = if (self.generator.alias_params.contains(try self.generator.slotOf(&loan.target.base))) .rehome else .keep;
+            try self.generator.storeName(&loan.target.base, loan.target.data.Variable.lexeme, loan.member_type, heap_copy);
         }
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
-    }
-
-    /// Helper function to convert AST type to HIR type
-    fn astTypeToHIRType(self: *CallsHandler, ast_type: ast.Type) HIRType {
-        _ = self; // self not used but kept for consistency
-        return switch (ast_type) {
-            .Int => .Int,
-            .Byte => .Byte,
-            .Float => .Float,
-            .String => .String,
-            .Tetra => .Tetra,
-            .Nothing => .Nothing,
-            else => .Unknown,
-        };
     }
 
     /// Helper to validate argument count using centralized data structure
@@ -249,28 +225,20 @@ pub const CallsHandler = struct {
         }
     }
 
-    /// Helper to generate simple builtin calls that just need argument validation and a call instruction
-    fn generateSimpleBuiltinCall(self: *CallsHandler, name: []const u8, arguments: []const *ast.Expr) !?HIRType {
+    /// A builtin that is one runtime call on its arguments, whose value is
+    /// what analysis typed the call as.
+    fn generateSimpleBuiltinCall(self: *CallsHandler, expr: *ast.Expr, name: []const u8, arguments: []const *ast.Expr) !void {
         try self.validateBuiltinArgCount(name, arguments.len);
-
-        // Generate all argument expressions
         for (arguments) |arg| {
             try self.generator.generateExpression(arg, true, false);
         }
-
-        // Get return type from metadata
-        if (builtin_methods.getMethodInfoByName(name)) |info| {
-            const return_type = self.astTypeToHIRType(info.return_type);
-            try self.generator.instructions.append(.{ .Call = .{
-                .function_index = null,
-                .qualified_name = name,
-                .arg_count = @intCast(arguments.len),
-                .call_kind = .BuiltinFunction,
-                .return_type = return_type,
-            } });
-            return return_type;
-        }
-        return null;
+        try self.generator.instructions.append(.{ .Call = .{
+            .function_index = null,
+            .qualified_name = name,
+            .arg_count = @intCast(arguments.len),
+            .call_kind = .BuiltinFunction,
+            .return_type = try self.generator.typeOf(expr),
+        } });
     }
 
     pub fn generateInternalCall(self: *CallsHandler, expr: *ast.Expr, preserve_result: bool) !void {
@@ -295,7 +263,7 @@ pub const CallsHandler = struct {
             const arg = args[0];
 
             // The analyzer's type for the operand, shown by its declared name.
-            const type_info = self.generator.semantic.getCachedExprType(arg) orelse return ErrorList.MissingExpressionType;
+            const type_info = try self.generator.typeInfoOf(arg);
             const type_name: []const u8 = if (type_info.custom_type) |custom| custom.displayName() else switch (type_info.base) {
                 .Int => "int",
                 .Float => "float",
@@ -317,27 +285,7 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "length")) {
             try self.validateBuiltinArgCount(name, args.len);
             try self.generator.generateExpression(args[0], true, false);
-            var t = self.generator.inferTypeFromExpression(args[0]);
-            var use_array_len = t == .Array;
-            // A union narrowed by `as` to a single array member behaves like an
-            // array for @length (e.g. `x as string then ... else @length(x)`).
-            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
-                use_array_len = true;
-            }
-            if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                if (self.generator.getTrackedVariableType(var_name)) |tracked| {
-                    if (t == .Unknown) t = tracked;
-                    use_array_len = use_array_len or tracked == .Array;
-                    if (tracked == .Union and tracked.Union.members.len == 1 and tracked.Union.members[0].* == .Array) {
-                        use_array_len = true;
-                    }
-                }
-                // Match VM: length() on arrays uses element count even when the static annotation is wrong.
-                if (!use_array_len and self.generator.symbol_table.getTrackedArrayElementType(var_name) != null) {
-                    use_array_len = true;
-                }
-            }
+            const use_array_len = try self.generator.typeOf(args[0]) == .Array;
             if (use_array_len) {
                 try self.generator.instructions.append(.ArrayLen);
             } else {
@@ -354,7 +302,7 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "string")) {
             try self.validateBuiltinArgCount(name, args.len);
             // B2: @string(x) of a struct prints it, so its descriptor must stay.
-            const value_type = self.generator.inferTypeFromExpression(args[0]);
+            const value_type = try self.generator.typeOf(args[0]);
             self.generator.markReflectedType(value_type);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
@@ -369,7 +317,7 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "byte")) {
             try self.validateBuiltinArgCount(name, args.len);
             try self.generator.generateExpression(args[0], true, false);
-            const t = self.generator.inferTypeFromExpression(args[0]);
+            const t = try self.generator.typeOf(args[0]);
             if (t == .String) {
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
             } else {
@@ -377,16 +325,7 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "push")) {
             try self.validateBuiltinArgCount(name, args.len);
-            if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                const storage_kind = self.generator.getTrackedArrayStorageKind(var_name) orelse .dynamic;
-                if (storage_kind == .fixed or storage_kind == .const_literal) {
-                    const location = args[0].base.location();
-                    self.generator.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "cannot push to a fixed-size array", .{});
-                    return ErrorList.UnsupportedArrayType;
-                }
-            }
-            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            const target_type = try self.generator.typeOf(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             if (target_type == .String) {
@@ -402,7 +341,7 @@ pub const CallsHandler = struct {
                 const fa = args[0].data.FieldAccess;
                 try self.generator.generateExpression(fa.object, true, false);
                 try self.generator.instructions.append(.Swap);
-                const container_type = self.generator.inferTypeFromExpression(fa.object);
+                const container_type = try self.generator.typeOf(fa.object);
                 var structs_handler = StructsHandler.init(self.generator);
                 const slot = try structs_handler.fieldSlot(fa.object, fa.field);
                 try self.generator.instructions.append(.{
@@ -411,7 +350,7 @@ pub const CallsHandler = struct {
                         .container_type = container_type,
                         .struct_id = slot.struct_id,
                         .field_index = slot.index,
-                        .field_type = .Unknown,
+                        .field_type = slot.hir_type,
                         .nested_struct_id = null,
                     },
                 });
@@ -427,7 +366,7 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "pop")) {
             try self.validateBuiltinArgCount(name, args.len);
-            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            const target_type = try self.generator.typeOf(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             if (target_type == .String) {
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .Pop } });
@@ -446,7 +385,7 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "insert")) {
             try self.validateBuiltinArgCount(name, args.len);
-            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            const target_type = try self.generator.typeOf(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.generateExpression(args[2], true, false);
@@ -465,7 +404,7 @@ pub const CallsHandler = struct {
             if (!preserve_result) try self.generator.instructions.append(.Pop);
         } else if (std.mem.eql(u8, name, "remove")) {
             try self.validateBuiltinArgCount(name, args.len);
-            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            const target_type = try self.generator.typeOf(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.instructions.append(.ArrayRemove);
@@ -486,7 +425,7 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.ArraySlice);
         } else if (std.mem.eql(u8, name, "clear")) {
             try self.validateBuiltinArgCount(name, args.len);
-            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            const target_type = try self.generator.typeOf(args[0]);
 
             if (target_type == .String) {
                 if (args[0].data == .Variable) {
@@ -530,12 +469,8 @@ pub const CallsHandler = struct {
                     .return_type = .Int,
                 },
             });
-        } else if (std.mem.eql(u8, name, "exit")) {
-            // Use centralized data structure for simple builtin calls
-            _ = try self.generateSimpleBuiltinCall(name, args);
-        } else if (std.mem.eql(u8, name, "panic")) {
-            // Use centralized data structure for simple builtin calls
-            _ = try self.generateSimpleBuiltinCall(name, args);
+        } else if (std.mem.eql(u8, name, "exit") or std.mem.eql(u8, name, "panic")) {
+            try self.generateSimpleBuiltinCall(expr, name, args);
         } else if (std.mem.eql(u8, name, "print")) {
             // @print(string) - emits the string to stdout
             try self.validateBuiltinArgCount(name, args.len);

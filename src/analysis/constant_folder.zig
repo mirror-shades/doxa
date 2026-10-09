@@ -373,12 +373,6 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .CompoundAssign => |*compound| {
-                if (compound.value) |value| {
-                    compound.value = try self.foldExpr(value);
-                }
-                return expr;
-            },
             .Increment => |*increment| {
                 const operand = increment.*;
                 expr.data.Increment = try self.foldExpr(operand);

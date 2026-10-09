@@ -8,6 +8,7 @@ pub fn Methods(comptime Ctx: type) type {
     const VariableInfo = Ctx.VariableInfo;
     const StackMergeState = Ctx.StackMergeState;
     const escapeLLVMString = Ctx.escapeLLVMString;
+    const ScopeElision = @import("./scope_elision.zig").Methods(Ctx);
 
     return struct {
         /// B2: classify struct types that never need the runtime descriptor
@@ -15,9 +16,17 @@ pub fn Methods(comptime Ctx: type) type {
         /// typed word-copy clone can reproduce it) and it never needs the
         /// descriptor for reflection or the scope-tracking rehome walk. That is:
         /// it is not reflected (per the generator's whole-program predicate) and
-        /// its type never appears in a function signature, container, union, or
-        /// global declaration — the only ways a value can reach a runtime
-        /// `Unknown` rehome or an out-of-function clone.
+        /// its type never appears where a runtime operation looks it up by
+        /// address: a map key or value, a union member, a fixed or nested array,
+        /// a function type, or a field of a reflected struct.
+        ///
+        /// A skipped struct may still cross a call boundary, be a field of an
+        /// unreflected struct, or be an element of a one-dimensional dynamic
+        /// array. Those paths carry its size instead of a registry entry: clone
+        /// sites resolve it from the declared struct id (`cloneHeapValue`), an
+        /// enclosing struct's descriptor records it per field
+        /// (`field_struct_words`), and an array records it in its header
+        /// (`ArrayHeader.elem_words`).
         pub fn computeDescriptorSkips(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
             const alloc = self.allocator;
             var fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(alloc);
@@ -39,12 +48,12 @@ pub fn Methods(comptime Ctx: type) type {
             defer needs.deinit();
 
             for (hir.function_table) |func| {
-                // A struct that crosses a call boundary as a by-value parameter
-                // or result is snapshotted/rehomed from the callee side; keep its
-                // descriptor so those runtime clones can resolve its layout
-                // regardless of source spelling.
-                self.markNestedStructs(&needs, func.return_type);
-                for (func.param_types) |pt| self.markNestedStructs(&needs, pt);
+                // A struct crossing a call boundary by value is cloned by
+                // `cloneHeapValue`, which sizes a skipped struct from the declared
+                // struct id rather than the value's spelling, so only containers
+                // in a signature can force a descriptor.
+                self.markTypeNeeds(&needs, func.return_type);
+                for (func.param_types) |pt| self.markTypeNeeds(&needs, pt);
             }
             for (hir.instructions) |inst| self.markInstructionNeeds(&needs, inst);
 
@@ -99,7 +108,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn markTypeNeeds(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), t: HIR.HIRType) void {
             switch (t) {
                 .Struct => {},
-                .Array => |inner| self.markNestedStructs(needs, inner.*),
+                .Array => |inner| self.markArrayElementNeeds(needs, inner.*),
                 .Map => |kv| {
                     self.markNestedStructs(needs, kv.key.*);
                     self.markNestedStructs(needs, kv.value.*);
@@ -112,6 +121,34 @@ pub fn Methods(comptime Ctx: type) type {
                 .Group, .Unknown, .Poison => self.force_struct_descriptors = true,
                 else => {},
             }
+        }
+
+        /// The element of a one-dimensional dynamic array. A struct element
+        /// needs no descriptor: the array records a skipped struct's size in
+        /// `ArrayHeader.elem_words` (set by `emitArrayNew`). A nested array
+        /// does, since `doxa_array_new_nested` builds its inner headers without
+        /// that size.
+        pub fn markArrayElementNeeds(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), element: HIR.HIRType) void {
+            switch (element) {
+                .Struct => |sid| if (sid == 0) {
+                    self.force_struct_descriptors = true;
+                } else {
+                    self.array_element_structs.put(sid, {}) catch {};
+                },
+                else => self.markNestedStructs(needs, element),
+            }
+        }
+
+        /// Word count of `t` when it is a struct that skips the descriptor
+        /// registry (every field scalar, so one word per field); 0 otherwise.
+        /// Every path that clones such a struct without a registry entry sizes
+        /// it with this.
+        pub fn skippedStructWords(self: *IRPrinter, t: HIR.HIRType) u64 {
+            if (t != .Struct) return 0;
+            const name = self.struct_type_names_by_id.get(t.Struct) orelse return 0;
+            if (!self.skip_descriptor_structs.contains(name)) return 0;
+            const fields = self.global_struct_field_types.get(name) orelse return 0;
+            return fields.len;
         }
 
         /// Mark every struct reachable through container types. Used for positions
@@ -148,7 +185,14 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn markInstructionNeeds(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), inst: Ctx.HIRInstruction) void {
             switch (inst) {
                 .ArrayNew => |a| {
-                    self.markNestedStructs(needs, a.element_type);
+                    // Only a one-dimensional dynamic array records its element
+                    // size; fixed arrays and their views find a struct element's
+                    // size through the registry.
+                    if (a.storage_kind == .dynamic and a.nested_depth == 0) {
+                        self.markArrayElementNeeds(needs, a.element_type);
+                    } else {
+                        self.markNestedStructs(needs, a.element_type);
+                    }
                     if (a.nested_element_type) |ne| self.markNestedStructs(needs, ne);
                 },
                 .Map => |m| {
@@ -160,16 +204,25 @@ pub fn Methods(comptime Ctx: type) type {
                     self.markNestedStructs(needs, m.value_type);
                 },
                 .MapSet => |m| self.markNestedStructs(needs, m.key_type),
-                .StructNew => |sn| for (sn.field_types) |ft| self.markNestedStructs(needs, ft),
+                // A struct field of an unreflected struct is cloned through the
+                // enclosing descriptor's `field_struct_words`. Printing a reflected
+                // struct prints its struct fields through the registry, and the
+                // reflection predicate does not follow fields, so those keep it.
+                .StructNew => |sn| for (sn.field_types) |ft| {
+                    if (ft == .Struct and !self.reflectedContains(sn.type_name)) continue;
+                    self.markNestedStructs(needs, ft);
+                },
                 .Box => |b| self.markNestedStructs(needs, b.boxed_type),
                 .Unbox => |u| self.markNestedStructs(needs, u.member_type),
+                // A field read or written is a value; only a container field
+                // type can hide a struct that needs a descriptor.
                 .GetField => |g| {
                     self.markTypeNeeds(needs, g.container_type);
-                    self.markNestedStructs(needs, g.field_type);
+                    self.markTypeNeeds(needs, g.field_type);
                 },
                 .SetField => |s| {
                     self.markTypeNeeds(needs, s.container_type);
-                    self.markNestedStructs(needs, s.field_type);
+                    self.markTypeNeeds(needs, s.field_type);
                 },
                 // Value-position types: a top-level struct here needs no
                 // descriptor, but a container type can hide a struct element or
@@ -178,7 +231,6 @@ pub fn Methods(comptime Ctx: type) type {
                 .StoreVar => |sv| self.markTypeNeeds(needs, sv.expected_type),
                 .StoreAlias => |sa| self.markTypeNeeds(needs, sa.expected_type),
                 .BindAlias => |ba| self.markTypeNeeds(needs, ba.target_type),
-                .NarrowVar => |nv| self.markTypeNeeds(needs, nv.narrowed_type),
                 .Return => |r| self.markTypeNeeds(needs, r.return_type),
                 .Call => |c| self.markTypeNeeds(needs, c.return_type),
                 .Peek => |p| self.markTypeNeeds(needs, p.value_type),
@@ -349,6 +401,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_struct_clone_root(ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_clone_scalar_at(i64, i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_clone_scalar_root(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_scalar_at(i64, i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_scalar_root(i64, ptr)\n");
+            try w.writeAll("declare void @doxa_array_set_elem_words(ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_struct_rehome_at(i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_rehome_root(ptr)\n");
             try w.writeAll("declare void @doxa_enum_register(ptr)\n");
@@ -447,7 +502,7 @@ pub fn Methods(comptime Ctx: type) type {
             // must stay in sync with `DoxaValue` in `src/runtime/doxa_rt.zig`.
             try w.writeAll("%DoxaValue = type { i32, i32, i64, i64 }\n");
             try w.writeAll("%DoxaString = type { ptr, i64 }\n");
-            try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64, ptr }\n\n");
+            try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64, ptr, i64 }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
             try w.writeAll("@.doxa.empty = private constant [1 x i8] c\"\\00\"\n");
             try w.writeAll("@.doxa.arr_open = private constant [2 x i8] c\"[\\00\"\n");
@@ -608,8 +663,22 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll("\n");
             }
 
-            for (hir.function_table) |func| {
-                try self.writeFunction(hir, w, func, &func_start_labels, &peek_state);
+            // Which functions never use their scope arena, decided over the
+            // whole call graph before any body is written.
+            const bodies = try self.allocator.alloc([]const Ctx.HIRInstruction, hir.function_table.len);
+            defer self.allocator.free(bodies);
+            for (hir.function_table, bodies) |func, *body| {
+                const range = self.getFunctionRange(hir, func, &func_start_labels) orelse {
+                    body.* = &.{};
+                    continue;
+                };
+                body.* = hir.instructions[range.start..range.end];
+            }
+            const dead_scopes = try ScopeElision.deadScopes(self.allocator, hir, bodies);
+            defer self.allocator.free(dead_scopes);
+
+            for (hir.function_table, dead_scopes) |func, scope_dead| {
+                try self.writeFunction(hir, w, func, scope_dead, &func_start_labels, &peek_state);
             }
 
             if (peek_state.globals.items.len > 0) {
@@ -716,7 +785,6 @@ pub fn Methods(comptime Ctx: type) type {
             }
             var dead_block_counter: usize = 0;
 
-            self.clearNarrowedVars();
             self.var_regions.clearRetainingCapacity();
             self.var_ranges.clearRetainingCapacity();
             self.var_range_blocks.clearRetainingCapacity();
@@ -749,14 +817,6 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreAlias => {
-                        last_instruction_was_terminator = false;
-                    },
-                    .NarrowVar => |nv| {
-                        try self.narrowVariable(nv.slot, nv.narrowed_type);
-                        last_instruction_was_terminator = false;
-                    },
-                    .RestoreVar => |rv| {
-                        self.restoreVariable(rv.slot);
                         last_instruction_was_terminator = false;
                     },
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
@@ -904,7 +964,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
-                        try self.handleLoadVarGlobal(w, &stack, &id, lv.slot, lv.var_name);
+                        try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {

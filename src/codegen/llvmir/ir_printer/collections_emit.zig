@@ -378,6 +378,18 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                 defer self.allocator.free(line);
                 try w.writeAll(line);
+
+                // A dynamic array of a descriptor-free scalar struct records the
+                // struct's size, so element stores and clones copy it without the
+                // registry (see `computeDescriptorSkips`).
+                if (inst.storage_kind == .dynamic) {
+                    const words = self.skippedStructWords(inst.element_type);
+                    if (words != 0) {
+                        const words_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_array_set_elem_words(ptr {s}, i64 {d})\n", .{ reg, words });
+                        defer self.allocator.free(words_line);
+                        try w.writeAll(words_line);
+                    }
+                }
             }
 
             // A fixed array whose innermost element is a struct that could not be
@@ -2516,6 +2528,19 @@ pub fn Methods(comptime Ctx: type) type {
             const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_reg});
             defer self.allocator.free(store_scope);
             try w.writeAll(store_scope);
+
+            // Field 6 (`elem_words`): a view over a fixed buffer records no
+            // element size.
+            const words_reg = try self.nextTemp(id);
+            const words_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 6\n",
+                .{ words_reg, hdr_ptr },
+            );
+            defer self.allocator.free(words_gep);
+            try w.writeAll(words_gep);
+            const store_words = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{words_reg});
+            defer self.allocator.free(store_words);
+            try w.writeAll(store_words);
 
             return StackVal{ .name = hdr_ptr, .ty = .PTR, .array_type = elem_type };
         }

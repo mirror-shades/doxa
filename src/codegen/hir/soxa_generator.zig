@@ -25,7 +25,6 @@ const ParamMutation = @import("param_mutation.zig");
 const ResourceManager = @import("resource_manager.zig");
 const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
-const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -47,18 +46,6 @@ const ModuleCall = @import("module_call.zig");
 const module_graph = @import("../../module/graph.zig");
 const TypeRef = ast.TypeRef;
 
-/// A declared parameter type as the signature table records it: primitives
-/// plus the container and marker types the call lowering passes through
-/// directly. A type the frontend could not resolve collapses to `Int`.
-fn sanitizeParamType(t: HIRType) HIRType {
-    return switch (t) {
-        .Int, .Byte, .Float, .String, .Tetra, .Nothing,
-        .Struct, .Enum, .Array, .Map, .Function, .Union, .Group,
-        => t,
-        else => .Int,
-    };
-}
-
 pub const TETRA_FALSE: u8 = 0;
 pub const TETRA_TRUE: u8 = 1;
 pub const TETRA_BOTH: u8 = 2;
@@ -72,11 +59,6 @@ pub const HIRGenerator = struct {
     current_field_name: ?[]const u8 = null,
     string_pool: std.array_list.Managed([]const u8),
     reporter: *Reporter,
-    array_storage_override: ?SoxaTypes.ArrayStorageKind = null,
-    // Declared element type for the array literal currently being lowered, when the
-    // enclosing declaration has an explicit array annotation (e.g. byte[4]). Drives
-    // comptime coercion + bounds-checking of literal elements. Null otherwise.
-    array_element_type_override: ?SoxaTypes.HIRType = null,
     /// A3: set while lowering the value expression of a `return` whose top-level
     /// expression constructs a struct or array. The construction emitter consumes
     /// it (clearing it for nested sub-expressions) and tags the produced object so
@@ -92,7 +74,6 @@ pub const HIRGenerator = struct {
     /// cannot enumerate its members, so no struct may skip the descriptor.
     force_struct_descriptors: bool = false,
 
-    symbol_table: SymbolTable,
     constant_manager: ConstantManager,
     label_generator: LabelGenerator,
     type_system: TypeSystem,
@@ -121,7 +102,6 @@ pub const HIRGenerator = struct {
 
     stats: HIRStats,
 
-    function_calls: std.array_list.Managed(FunctionCallSite),
 
     /// The compilation's module graph (mangling final) and the entry record.
     /// Codegen identity for module-owned symbols is keyed by the *defining*
@@ -162,12 +142,6 @@ pub const HIRGenerator = struct {
         key: module_graph.SymbolKey,
         /// The resolved parameter types, as analysis recorded them.
         param_types: []const ast.TypeInfo,
-    };
-
-    pub const FunctionCallSite = struct {
-        function_name: []const u8,
-        is_tail_position: bool,
-        instruction_index: u32,
     };
 
     pub const LoopContext = struct {
@@ -229,9 +203,6 @@ pub const HIRGenerator = struct {
             .current_peek_expr = null,
             .string_pool = std.array_list.Managed([]const u8).init(allocator),
             .reporter = reporter,
-            .array_storage_override = null,
-            .array_element_type_override = null,
-            .symbol_table = SymbolTable.init(allocator),
             .constant_manager = ConstantManager.init(allocator),
             .label_generator = LabelGenerator.init(allocator),
             .type_system = TypeSystem.init(allocator, reporter, semantic, &semantic.union_table),
@@ -245,7 +216,6 @@ pub const HIRGenerator = struct {
             .current_function = null,
             .current_function_return_type = .Nothing,
             .is_global_init_phase = false,
-            .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
             .reflected_structs = std.StringHashMap(void).init(allocator),
             .graph = semantic.graph,
             .entry_module = semantic.entry_module,
@@ -301,7 +271,7 @@ pub const HIRGenerator = struct {
             const converted = try self.allocator.alloc(TypeSystem.CustomTypeInfo.StructField, fields.len);
             for (fields, converted) |field, *dest| dest.* = .{
                 .name = field.name,
-                .field_type = self.convertTypeInfo(field.field_type_info.*),
+                .field_type = try self.lowerType(field.field_type_info),
                 .index = field.index,
                 .custom_type_name = self.typeKeyOf(field.field_type_info.*),
             };
@@ -349,12 +319,6 @@ pub const HIRGenerator = struct {
         return self.typeKey(custom.resolved());
     }
 
-    /// The codegen description of the named type `type_info` refers to.
-    pub fn customTypeOf(self: *HIRGenerator, type_info: ast.TypeInfo) ?TypeSystem.CustomTypeInfo {
-        const key = self.typeKeyOf(type_info) orelse return null;
-        return self.type_system.custom_types.get(key);
-    }
-
     /// What analysis resolved `expr` to, if it names a module-level entity.
     pub fn resolutionOf(self: *const HIRGenerator, expr: *const ast.Expr) ?Resolution {
         return self.semantic.resolutionOf(expr);
@@ -363,7 +327,6 @@ pub const HIRGenerator = struct {
     pub fn deinit(self: *HIRGenerator) void {
         self.instructions.deinit();
         self.string_pool.deinit();
-        self.symbol_table.deinit();
         self.constant_manager.deinit();
         self.type_system.deinit();
         var methods_it = self.struct_methods.valueIterator();
@@ -375,7 +338,6 @@ pub const HIRGenerator = struct {
         self.function_indices.deinit();
         self.zig_functions.deinit();
 
-        self.function_calls.deinit();
         self.loop_context_stack.deinit();
         for (self.deferred_stack.items) |*block| {
             block.deinit();
@@ -492,8 +454,8 @@ pub const HIRGenerator = struct {
         while (it.next()) |entry| : (i += 1) {
             const sig = entry.value_ptr.*;
             const param_types = try self.allocator.alloc(HIRType, sig.param_types.len);
-            for (sig.param_types, param_types) |param, *dest| dest.* = self.convertTypeInfo(param);
-            functions[i] = .{ .link_name = entry.key_ptr.*, .param_types = param_types, .return_type = self.convertTypeInfo(sig.return_type) };
+            for (sig.param_types, param_types) |param, *dest| dest.* = try self.lowerType(&param);
+            functions[i] = .{ .link_name = entry.key_ptr.*, .param_types = param_types, .return_type = try self.lowerType(&sig.return_type) };
         }
         return functions;
     }
@@ -550,12 +512,12 @@ pub const HIRGenerator = struct {
         const link_name = try self.graph.mangle(self.allocator, module, .function, &.{func.name.lexeme});
         const signature = self.declaredSignature(module, func.name.lexeme);
 
-        var return_type = self.convertTypeInfo(func.return_type_info);
+        var return_type = try self.lowerType(&func.return_type_info);
         // A function without an explicit `returns` takes the analyzer's
         // inferred return type.
         if (func.return_type_info.base == .Nothing) {
             if (self.semantic.function_return_types.get(stmt.base.id)) |inferred| {
-                return_type = self.convertTypeInfo(inferred.*);
+                return_type = try self.lowerType(inferred);
             }
         }
 
@@ -565,7 +527,7 @@ pub const HIRGenerator = struct {
         for (func.params, 0..) |param, i| {
             param_is_alias[i] = param.is_alias;
             param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
-            param_types[i] = sanitizeParamType(if (param.type_expr != null) self.convertTypeInfo(signature.params[i]) else .Int);
+            param_types[i] = try self.lowerType(&signature.params[i]);
         }
 
         const function_info = FunctionInfo{
@@ -573,7 +535,6 @@ pub const HIRGenerator = struct {
             .arity = @intCast(func.params.len),
             .return_type = return_type,
             .start_label = try self.label_generator.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{link_name})),
-            .local_var_count = 0,
             .is_entry = func.is_entry,
             .param_is_alias = param_is_alias,
             .param_is_readonly = param_is_readonly,
@@ -634,17 +595,11 @@ pub const HIRGenerator = struct {
 
     /// Pass 3: Generate function bodies AFTER main program
     fn generateFunctionBodies(self: *HIRGenerator) !void {
-        // Global/module array tracking is the only array tracking that should
-        // span functions; capture it once so each function body starts from a
-        // clean per-function view (see `captureGlobalArrayTracking`).
-        try self.symbol_table.captureGlobalArrayTracking();
-
         for (self.function_bodies.items) |*function_body| {
             self.current_function = function_body.function_info.name;
             self.current_module = function_body.module_id;
             self.current_function_return_type = function_body.function_info.return_type;
             self.is_global_init_phase = false;
-            try self.symbol_table.enterFunctionScope(function_body.function_info.name);
 
             function_body.start_instruction_index = @intCast(self.instructions.items.len);
             try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label } });
@@ -664,10 +619,8 @@ pub const HIRGenerator = struct {
                 param_index -= 1;
                 const param = params[param_index];
 
-                const resolved = try self.resolveParameterType(param, function_body);
-                const param_type = resolved.param_type;
-                const declared_type_info = resolved.type_info;
-                defer if (declared_type_info) |info| self.allocator.destroy(info);
+                const param_info = function_body.param_types[param_index];
+                const param_type = try self.lowerType(&param_info);
 
                 const alias_lookup = if (is_method) param_index + 1 else param_index;
 
@@ -676,11 +629,8 @@ pub const HIRGenerator = struct {
                         .Map, .Function => return error.InvalidAliasType,
                         else => {},
                     }
-                    // An alias of a struct or an enum lends a named type; its
-                    // type and custom-type key were tracked with the parameter.
-                    if (declared_type_info) |info| {
-                        if ((info.base == .Struct or info.base == .Enum) and info.custom_type == null) return error.InvalidAliasType;
-                    }
+                    // An alias of a struct or an enum lends a named type.
+                    if ((param_info.base == .Struct or param_info.base == .Enum) and param_info.custom_type == null) return error.InvalidAliasType;
 
                     const alias_slot = self.allocAliasSlot();
                     try self.alias_params.put(try self.paramSlot(param), alias_slot);
@@ -693,7 +643,6 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    _ = try self.symbol_table.createVariable(param.name.lexeme);
                     // A by-value heap parameter is deep-copied on entry so the
                     // callee cannot write through to the caller's object. When the
                     // body never writes through it, the copy is unobservable and
@@ -715,8 +664,6 @@ pub const HIRGenerator = struct {
             // An instance method binds its receiver as the alias `this`.
             if (function_body.function_info.receiver) |struct_id| {
                 const receiver_type = HIRType{ .Struct = struct_id };
-                try self.trackVariableType("this", receiver_type);
-                if (self.semantic.struct_table.keyOf(struct_id)) |key| try self.trackVariableCustomType("this", key);
                 const alias_slot = self.allocAliasSlot();
                 const this_slot = self.tempSlot();
                 self.this_slot = this_slot;
@@ -772,15 +719,10 @@ pub const HIRGenerator = struct {
             }
             self.current_function_scope_id = null;
 
-            if (self.function_signatures.getPtr(function_body.key)) |func_info| {
-                func_info.local_var_count = self.symbol_table.local_variable_count;
-            }
-
             self.current_function = null;
             self.current_module = self.entry_module;
             self.current_function_return_type = .Nothing;
             self.current_function_scope_id = null;
-            self.symbol_table.exitFunctionScope();
         }
     }
 
@@ -871,7 +813,6 @@ pub const HIRGenerator = struct {
                 .body_label = function_info.body_label,
                 .start_ip = 0,
                 .body_ip = null,
-                .local_var_count = function_info.local_var_count,
                 .is_entry = function_info.is_entry,
                 .param_is_alias = function_info.param_is_alias,
                 .param_is_readonly = function_info.param_is_readonly,
@@ -886,8 +827,8 @@ pub const HIRGenerator = struct {
         return self.function_indices.get(link_name);
     }
 
-    pub fn convertTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) HIRType {
-        return self.type_system.convertTypeInfo(type_info);
+    pub fn lowerType(self: *HIRGenerator, type_info: *const ast.TypeInfo) ErrorList!HIRType {
+        return self.type_system.lowerType(type_info);
     }
 
     pub fn findFunctionBody(self: *HIRGenerator, link_name: []const u8) ?*FunctionBody {
@@ -985,7 +926,7 @@ pub const HIRGenerator = struct {
             .EnumMember => try basic_handler.generateEnumMember(expr),
             .DefaultArgPlaceholder => try basic_handler.generateDefaultArgPlaceholder(),
 
-            .Binary => |bin| try binary_handler.generateBinary(bin, should_pop_after_use),
+            .Binary => try binary_handler.generateBinary(expr, should_pop_after_use),
             .Logical => |log| try binary_handler.generateLogical(log, should_pop_after_use),
             .Unary => |unary| try binary_handler.generateUnary(unary),
 
@@ -998,8 +939,8 @@ pub const HIRGenerator = struct {
             .Cast => try control_flow_handler.generateCast(expr, preserve_result),
 
             .Array => try collections_handler.generateArray(expr, preserve_result),
-            .Map => |map_expr| try collections_handler.generateMap(map_expr.entries, null),
-            .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries, map_literal.else_value),
+            .Map => |map_expr| try collections_handler.generateMap(expr, map_expr.entries, null),
+            .MapLiteral => |map_literal| try collections_handler.generateMap(expr, map_literal.entries, map_literal.else_value),
             .Index => try collections_handler.generateIndex(expr, preserve_result, should_pop_after_use),
             .IndexAssign => try collections_handler.generateIndexAssign(expr.data, preserve_result),
             .ForAll => try collections_handler.generateForAll(expr.data),
@@ -1017,7 +958,6 @@ pub const HIRGenerator = struct {
             .EnumDecl, .StructDecl, .GroupDecl => try structs_handler.generateTypeDecl(),
 
             .Assignment => try assignments_handler.generateAssignment(expr, preserve_result),
-            .CompoundAssign => try assignments_handler.generateCompoundAssign(expr, preserve_result),
 
             .Print => unreachable, // @print is lowered to an InternalCall
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
@@ -1076,7 +1016,7 @@ pub const HIRGenerator = struct {
             for (method.params, 0..) |param, i| {
                 param_is_alias[param_idx] = param.is_alias;
                 param_is_readonly[param_idx] = !ParamMutation.bodyMutatesVariable(method.body, param.name.lexeme);
-                param_types[param_idx] = sanitizeParamType(if (param.type_expr != null) self.convertTypeInfo(info.signature.params[i]) else .Int);
+                param_types[param_idx] = try self.lowerType(&info.signature.params[i]);
                 param_idx += 1;
             }
 
@@ -1085,9 +1025,8 @@ pub const HIRGenerator = struct {
                     .name = link_name,
                     .receiver = if (method.is_static) null else struct_id,
                     .arity = arity,
-                    .return_type = self.convertTypeInfo(info.signature.return_type.*),
+                    .return_type = try self.lowerType(info.signature.return_type),
                     .start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{link_name})),
-                    .local_var_count = 0,
                     .is_entry = false,
                     .param_is_alias = param_is_alias,
                     .param_is_readonly = param_is_readonly,
@@ -1171,6 +1110,9 @@ pub const HIRGenerator = struct {
                 .scope_kind = .Local,
                 .module_context = null,
                 .expected_type = try self.typeOf(receiver),
+                // The receiver already lives in this scope's arena or an
+                // outer one, so a re-home could only keep its identity.
+                .heap_copy = .keep,
             },
         });
         try self.instructions.append(.{
@@ -1257,34 +1199,6 @@ pub const HIRGenerator = struct {
         try self.generateExpression(value, true, false);
     }
 
-    pub fn inferTypeFromLiteral(self: *HIRGenerator, literal: TokenLiteral) HIRType {
-        return self.type_system.inferTypeFromLiteral(literal);
-    }
-
-    pub fn resolveFieldAccessType(self: *HIRGenerator, e: *ast.Expr) ?TypeSystem.FieldResolveResult {
-        return self.type_system.resolveFieldAccessType(e, &self.symbol_table);
-    }
-
-    pub fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
-        return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-    }
-
-    pub fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
-        try self.symbol_table.trackVariableType(var_name, var_type);
-    }
-
-    pub fn trackVariableCustomType(self: *HIRGenerator, var_name: []const u8, custom_type_name: []const u8) !void {
-        try self.symbol_table.trackVariableCustomType(var_name, custom_type_name);
-    }
-
-    pub fn getTrackedVariableType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
-        return self.symbol_table.getTrackedVariableType(var_name);
-    }
-
-    fn astTypeToLowerName(self: *HIRGenerator, base: ast.Type) []const u8 {
-        return self.type_system.astTypeToLowerName(base);
-    }
-
     pub fn collectUnionMemberNamesFromHIRType(self: *HIRGenerator, hir_type: HIRType) ![][]const u8 {
         if (hir_type != .Union) return &[_][]const u8{};
         const union_members = hir_type.Union.members;
@@ -1339,22 +1253,6 @@ pub const HIRGenerator = struct {
         };
     }
 
-    pub fn trackArrayElementType(self: *HIRGenerator, var_name: []const u8, elem_type: HIRType) !void {
-        try self.symbol_table.trackArrayElementType(var_name, elem_type);
-    }
-
-    pub fn getTrackedArrayElementType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
-        return self.symbol_table.getTrackedArrayElementType(var_name);
-    }
-
-    pub fn trackArrayStorageKind(self: *HIRGenerator, var_name: []const u8, storage: SoxaTypes.ArrayStorageKind) !void {
-        try self.symbol_table.trackArrayStorageKind(var_name, storage);
-    }
-
-    pub fn getTrackedArrayStorageKind(self: *HIRGenerator, var_name: []const u8) ?SoxaTypes.ArrayStorageKind {
-        return self.symbol_table.getTrackedArrayStorageKind(var_name);
-    }
-
     fn convertArrayStorageKind(kind: ast.ArrayStorageKind) SoxaTypes.ArrayStorageKind {
         return switch (kind) {
             .dynamic => .dynamic,
@@ -1363,42 +1261,9 @@ pub const HIRGenerator = struct {
         };
     }
 
-    fn resolveParameterType(
-        self: *HIRGenerator,
-        param: ast.FunctionParam,
-        function_body: *const FunctionBody,
-    ) !struct { param_type: HIRType, type_info: ?*ast.TypeInfo } {
-        var declared_type_info: ?*ast.TypeInfo = null;
-        var param_type: HIRType = .Unknown;
-        if (param.type_expr) |type_expr| {
-            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-            declared_type_info = type_info_ptr;
-            param_type = self.convertTypeInfo(type_info_ptr.*);
-        } else {
-            param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
-        }
-
-        try self.trackVariableType(param.name.lexeme, param_type);
-        if (declared_type_info) |info| {
-            if (self.typeKeyOf(info.*)) |key| try self.trackVariableCustomType(param.name.lexeme, key);
-        }
-
-        if (param_type == .Array) {
-            try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
-            const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
-            try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
-        }
-
-        return .{ .param_type = param_type, .type_info = declared_type_info };
-    }
-
     pub fn storageKindFromTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) SoxaTypes.ArrayStorageKind {
         _ = self;
         return convertArrayStorageKind(type_info.array_storage);
-    }
-
-    fn inferBinaryOpResultType(self: *HIRGenerator, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
-        return self.type_system.inferBinaryOpResultType(operator_type, left_expr, right_expr, &self.symbol_table);
     }
 
     /// The type of `expr`, as the semantic analyzer inferred it.
@@ -1411,9 +1276,14 @@ pub const HIRGenerator = struct {
     /// shape. An expression the analyzer never typed is a compiler bug and
     /// fails the compile here; there is no fallback type.
     pub fn typeOf(self: *HIRGenerator, expr: *ast.Expr) ErrorList!HIRType {
-        if (self.semantic.getCachedExprType(expr)) |type_info| {
-            return self.type_system.convertTypeInfo(type_info.*);
-        }
+        return self.type_system.lowerType(try self.typeInfoOf(expr));
+    }
+
+    /// The analyzer's type for `expr` as it spells it — the names a `@type`
+    /// or a peek shows, the groups a union was written with. Every read of the
+    /// analyzer's expression types in codegen goes through here.
+    pub fn typeInfoOf(self: *HIRGenerator, expr: *ast.Expr) ErrorList!*const ast.TypeInfo {
+        if (self.semantic.getCachedExprType(expr)) |type_info| return type_info;
         const location = expr.base.location();
         self.reporter.reportInternal(
             "no analyzed type for the {s} expression at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
@@ -1428,13 +1298,13 @@ pub const HIRGenerator = struct {
     /// beneath every narrowing view. A read of a name has `typeOf`; a store to
     /// it produces this. There is no fallback type.
     pub fn bindingTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
-        return self.type_system.convertTypeInfo((try self.storeTarget(node)).slot.*);
+        return self.type_system.lowerType((try self.storeTarget(node)).slot);
     }
 
     /// What the name a store through `node` writes reads at that store: the
     /// narrowed member inside a view. A read-modify-write computes in it.
     pub fn bindingReadTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
-        return self.type_system.convertTypeInfo((try self.storeTarget(node)).read.*);
+        return self.type_system.lowerType((try self.storeTarget(node)).read);
     }
 
     /// The storage the name at `node` denotes: the binding beneath every view.
@@ -1466,19 +1336,23 @@ pub const HIRGenerator = struct {
         return self.placeOf(target.storage, name, target.global);
     }
 
-    /// Push the value of the variable the name at `node` denotes.
+    /// Push the value of the variable the name at `node` denotes, as what the
+    /// name reads there. Inside a narrowing view the slot still holds the box;
+    /// the load converts it to the member (or narrower box) the view proved.
     pub fn loadName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
-        const place = try self.placeOfName(node, name);
+        const target = try self.storeTarget(node);
+        const place = try self.placeOf(target.storage, name, target.global);
         if (self.alias_params.get(place.slot)) |alias_slot| {
             try self.instructions.append(.{ .LoadAlias = .{ .slot = place.slot, .var_name = name, .slot_index = alias_slot } });
-            return;
+        } else {
+            try self.instructions.append(.{ .LoadVar = .{
+                .slot = place.slot,
+                .var_name = place.var_name,
+                .scope_kind = place.scope_kind,
+                .module_context = null,
+            } });
         }
-        try self.instructions.append(.{ .LoadVar = .{
-            .slot = place.slot,
-            .var_name = place.var_name,
-            .scope_kind = place.scope_kind,
-            .module_context = null,
-        } });
+        try self.convertValue(try self.lowerType(target.slot), try self.lowerType(target.read));
     }
 
     /// Store the top of the stack, already of `slot_type`, into the variable
@@ -1500,13 +1374,19 @@ pub const HIRGenerator = struct {
     /// Push the address of the variable the name at `node` denotes. An alias
     /// (`^`) parameter is not backed by a local slot: its storage pointer is
     /// re-passed from its alias slot.
+    /// A view that reads a box as a struct member (a narrowed receiver) pushes
+    /// the address of the box's payload word, which holds that struct.
     pub fn pushStorageOfName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
-        const place = try self.placeOfName(node, name);
+        const target = try self.storeTarget(node);
+        const place = try self.placeOf(target.storage, name, target.global);
+        const slot_type = try self.lowerType(target.slot);
+        const read_type = try self.lowerType(target.read);
         try self.instructions.append(.{ .PushStorageId = .{
             .slot = place.slot,
             .var_name = place.var_name,
             .scope_kind = place.scope_kind,
             .alias_slot = self.alias_params.get(place.slot),
+            .box_payload = if (slot_type.isBoxed() and read_type == .Struct) read_type.Struct else null,
         } });
     }
 
@@ -1609,115 +1489,6 @@ pub const HIRGenerator = struct {
         return slot_type;
     }
 
-    fn inferParameterType(self: *HIRGenerator, param_name: []const u8, function_body: []ast.Stmt, function_name: []const u8) !HIRType {
-        for (function_body) |stmt| {
-            if (self.analyzeStatementForParameterType(stmt, param_name)) |inferred_type| {
-                return inferred_type;
-            }
-        }
-
-        if (self.inferParameterTypeFromCallSites(param_name, function_name)) |inferred_type| {
-            return inferred_type;
-        }
-
-        return .Int;
-    }
-
-    fn analyzeStatementForParameterType(self: *HIRGenerator, stmt: ast.Stmt, param_name: []const u8) ?HIRType {
-        return switch (stmt.data) {
-            .Expression => |expr| {
-                if (expr) |e| {
-                    return self.analyzeExpressionForParameterType(e, param_name);
-                }
-                return null;
-            },
-            .VarDecl => |decl| {
-                if (decl.initializer) |initializer| {
-                    return self.analyzeExpressionForParameterType(initializer, param_name);
-                }
-                return null;
-            },
-            else => null,
-        };
-    }
-
-    fn analyzeExpressionForParameterType(self: *HIRGenerator, expr: *ast.Expr, param_name: []const u8) ?HIRType {
-        return switch (expr.data) {
-            .Binary => |binary| {
-                const left_uses_param = if (binary.left) |left| self.expressionUsesParameter(left, param_name) else false;
-                const right_uses_param = if (binary.right) |right| self.expressionUsesParameter(right, param_name) else false;
-
-                if (left_uses_param or right_uses_param) {
-                    return switch (binary.operator.type) {
-                        .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => .Int,
-                        .LESS, .GREATER, .LESS_EQUAL, .GREATER_EQUAL => .Int,
-                        .EQUALITY, .BANG_EQUAL => .Int,
-                        else => null,
-                    };
-                }
-                return null;
-            },
-            .FunctionCall => |call| {
-                for (call.arguments) |arg| {
-                    if (self.expressionUsesParameter(arg.expr, param_name)) {
-                        return .Int;
-                    }
-                }
-                return null;
-            },
-            .If => |if_expr| {
-                if (if_expr.condition) |cond| {
-                    if (self.analyzeExpressionForParameterType(cond, param_name)) |inferred| return inferred;
-                }
-                if (if_expr.then_branch) |then_branch| {
-                    if (self.analyzeExpressionForParameterType(then_branch, param_name)) |inferred| return inferred;
-                }
-                if (if_expr.else_branch) |else_branch| {
-                    if (self.analyzeExpressionForParameterType(else_branch, param_name)) |inferred| return inferred;
-                }
-                return null;
-            },
-            .Block => |block| {
-                for (block.statements) |stmt| {
-                    if (self.analyzeStatementForParameterType(stmt, param_name)) |inferred| {
-                        return inferred;
-                    }
-                }
-                return null;
-            },
-            else => null,
-        };
-    }
-
-    fn expressionUsesParameter(self: *HIRGenerator, expr: *ast.Expr, param_name: []const u8) bool {
-        return switch (expr.data) {
-            .Variable => |var_token| std.mem.eql(u8, var_token.lexeme, param_name),
-            .Binary => |binary| {
-                const left_uses = if (binary.left) |left| self.expressionUsesParameter(left, param_name) else false;
-                const right_uses = if (binary.right) |right| self.expressionUsesParameter(right, param_name) else false;
-                return left_uses or right_uses;
-            },
-            .FunctionCall => |call| {
-                for (call.arguments) |arg| {
-                    if (self.expressionUsesParameter(arg.expr, param_name)) return true;
-                }
-                return false;
-            },
-            else => false,
-        };
-    }
-
-    fn inferParameterTypeFromCallSites(self: *HIRGenerator, param_name: []const u8, function_name: []const u8) ?HIRType {
-        _ = param_name;
-
-        for (self.function_calls.items) |call_site| {
-            if (std.mem.eql(u8, call_site.function_name, function_name)) {
-                return .Int;
-            }
-        }
-        return null;
-    }
-
     pub fn resolveDefaultArgument(self: *HIRGenerator, function_name: []const u8, arg_index: usize) ?*ast.Expr {
         for (self.function_bodies.items) |function_body| {
             if (std.mem.eql(u8, function_body.function_name, function_name)) {
@@ -1732,10 +1503,10 @@ pub const HIRGenerator = struct {
     }
 
     /// What a resolved callee returns: its registered signature's type.
-    pub fn calleeReturnType(self: *HIRGenerator, callee: ModuleCall.Callee) HIRType {
+    pub fn calleeReturnType(self: *HIRGenerator, callee: ModuleCall.Callee) ErrorList!HIRType {
         return switch (callee.kind) {
             .DoxaFunction => self.functionInfoByLink(callee.link_name).?.return_type,
-            .ZigFunction => self.convertTypeInfo(self.zig_functions.get(callee.link_name).?.return_type),
+            .ZigFunction => try self.lowerType(&self.zig_functions.get(callee.link_name).?.return_type),
             .BuiltinFunction => unreachable, // a builtin is no resolved callee
         };
     }
@@ -1755,10 +1526,6 @@ pub const HIRGenerator = struct {
             },
             else => return null,
         }
-    }
-
-    pub fn computeNumericCommonType(self: *HIRGenerator, left_type: HIRType, right_type: HIRType, operator_type: TokenType) HIRType {
-        return self.type_system.computeNumericCommonType(left_type, right_type, operator_type);
     }
 
     pub fn isModuleContext(self: *HIRGenerator) bool {

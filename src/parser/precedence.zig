@@ -302,156 +302,54 @@ pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*
     return left;
 }
 
+/// `target op= value` is sugar for `target is target op value`: a name becomes
+/// an `Assignment`, an element an `IndexAssign`, a field a `FieldAssignment`,
+/// each storing a `Binary` whose left operand is the target read. Nothing downstream
+/// knows compound assignment exists, so it is typed, lowered and checked as
+/// the operation it spells.
 fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (left == null) return error.InvalidAssignmentTarget;
-
-    const is_valid_target = switch (left.?.data) {
-        .Variable => true,
-        .Index => true,
-        .FieldAccess => true,
-        else => false,
-    };
-
-    if (!is_valid_target) {
-        return error.InvalidAssignmentTarget;
+    const target = left orelse return error.InvalidAssignmentTarget;
+    switch (target.data) {
+        .Variable, .Index, .FieldAccess => {},
+        else => return error.InvalidAssignmentTarget,
     }
-
     const operator = self.tokens[self.current - 1];
     const value = try parsePrecedence(self, .ASSIGNMENT) orelse return error.ExpectedExpression;
 
-    const compound_expr = try self.allocator.create(ast.Expr);
+    const span = ast.SourceSpan.fromToken(operator);
 
-    compound_expr.* = switch (left.?.data) {
-        .Variable => |v| .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(operator),
+    const operation = try self.allocator.create(ast.Expr);
+    operation.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = .{ .Binary = .{
+        .left = target,
+        .operator = .{
+            .type = switch (operator.type) {
+                .PLUS_EQUAL => .PLUS,
+                .MINUS_EQUAL => .MINUS,
+                .POWER_EQUAL => .POWER,
+                .ASTERISK_EQUAL => .ASTERISK,
+                .SLASH_EQUAL => .SLASH,
+                .DOUBLE_SLASH_EQUAL => .DOUBLE_SLASH,
+                .MODULO_EQUAL => .MODULO,
+                else => unreachable, // only these tokens dispatch here
             },
-            .data = .{ .CompoundAssign = .{
-                .name = v,
-                .operator = operator,
-                .value = value,
-            } },
+            .lexeme = operator.lexeme,
+            .literal = operator.literal,
+            .line = operator.line,
+            .column = operator.column,
+            .file = operator.file,
+            .file_uri = operator.file_uri,
         },
-        .Index => |idx| .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(operator),
-            },
-            .data = .{
-                .IndexAssign = .{
-                    .array = idx.array,
-                    .index = idx.index,
-                    .value = blk: {
-                        const binary_op = switch (operator.type) {
-                            .PLUS_EQUAL => token.TokenType.PLUS,
-                            .MINUS_EQUAL => token.TokenType.MINUS,
-                            .POWER_EQUAL => token.TokenType.POWER,
-                            .ASTERISK_EQUAL => token.TokenType.ASTERISK,
-                            .SLASH_EQUAL => token.TokenType.SLASH,
-                            .DOUBLE_SLASH_EQUAL => token.TokenType.DOUBLE_SLASH,
-                            .MODULO_EQUAL => token.TokenType.MODULO,
-                            else => unreachable,
-                        };
+        .right = value,
+    } } };
 
-                        const array_access = try self.allocator.create(ast.Expr);
-                        array_access.* = .{
-                            .base = .{
-                                .id = ast.generateNodeId(),
-                                .span = ast.SourceSpan.fromToken(operator),
-                            },
-                            .data = .{ .Index = .{
-                                .array = idx.array,
-                                .index = idx.index,
-                            } },
-                        };
-
-                        const binary_expr = try self.allocator.create(ast.Expr);
-                        binary_expr.* = .{
-                            .base = .{
-                                .id = ast.generateNodeId(),
-                                .span = ast.SourceSpan.fromToken(operator),
-                            },
-                            .data = .{ .Binary = .{
-                                .left = array_access,
-                                .operator = .{
-                                    .type = binary_op,
-                                    .lexeme = operator.lexeme,
-                                    .literal = operator.literal,
-                                    .line = operator.line,
-                                    .column = operator.column,
-                                    .file = operator.file,
-                                    .file_uri = operator.file_uri,
-                                },
-                                .right = value,
-                            } },
-                        };
-
-                        break :blk binary_expr;
-                    },
-                },
-            },
-        },
-        .FieldAccess => |fa| .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(operator),
-            },
-            .data = .{
-                .FieldAssignment = .{
-                    .object = fa.object,
-                    .field = fa.field,
-                    .value = blk: {
-                        const binary_op = switch (operator.type) {
-                            .PLUS_EQUAL => token.TokenType.PLUS,
-                            .MINUS_EQUAL => token.TokenType.MINUS,
-                            .POWER_EQUAL => token.TokenType.POWER,
-                            .ASTERISK_EQUAL => token.TokenType.ASTERISK,
-                            .SLASH_EQUAL => token.TokenType.SLASH,
-                            .DOUBLE_SLASH_EQUAL => token.TokenType.DOUBLE_SLASH,
-                            .MODULO_EQUAL => token.TokenType.MODULO,
-                            else => unreachable,
-                        };
-
-                        const field_left = try self.allocator.create(ast.Expr);
-                        field_left.* = .{
-                            .base = .{
-                                .id = ast.generateNodeId(),
-                                .span = ast.SourceSpan.fromToken(operator),
-                            },
-                            .data = .{ .FieldAccess = .{ .object = fa.object, .field = fa.field } },
-                        };
-
-                        const binary_expr = try self.allocator.create(ast.Expr);
-                        binary_expr.* = .{
-                            .base = .{
-                                .id = ast.generateNodeId(),
-                                .span = ast.SourceSpan.fromToken(operator),
-                            },
-                            .data = .{ .Binary = .{
-                                .left = field_left,
-                                .operator = .{
-                                    .type = binary_op,
-                                    .lexeme = operator.lexeme,
-                                    .file_uri = operator.file_uri,
-                                    .literal = operator.literal,
-                                    .line = operator.line,
-                                    .column = operator.column,
-                                    .file = operator.file,
-                                },
-                                .right = value,
-                            } },
-                        };
-
-                        break :blk binary_expr;
-                    },
-                },
-            },
-        },
-        else => unreachable,
-    };
-
-    return compound_expr;
+    const store = try self.allocator.create(ast.Expr);
+    store.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = switch (target.data) {
+        .Variable => |name| .{ .Assignment = .{ .name = name, .value = operation } },
+        .Index => |idx| .{ .IndexAssign = .{ .array = idx.array, .index = idx.index, .value = operation } },
+        .FieldAccess => |fa| .{ .FieldAssignment = .{ .object = fa.object, .field = fa.field, .value = operation } },
+        else => unreachable, // checked above
+    } };
+    return store;
 }
 
 fn logical(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {

@@ -11,6 +11,7 @@ const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const TETRA_FALSE = @import("../soxa_generator.zig").TETRA_FALSE;
 const TETRA_TRUE = @import("../soxa_generator.zig").TETRA_TRUE;
 const CompareOp = @import("../soxa_instructions.zig").CompareOp;
+const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 
 pub const BinaryExpressionHandler = struct {
     generator: *HIRGenerator,
@@ -19,21 +20,26 @@ pub const BinaryExpressionHandler = struct {
         return .{ .generator = generator };
     }
 
-    pub fn generateBinary(self: *BinaryExpressionHandler, bin: ast.Binary, should_pop_after_use: bool) ErrorList!void {
-        const left_type = try self.generator.typeOf(bin.left.?);
-        const right_type = try self.generator.typeOf(bin.right.?);
-
+    pub fn generateBinary(self: *BinaryExpressionHandler, expr: *ast.Expr, should_pop_after_use: bool) ErrorList!void {
+        const bin = expr.data.Binary;
         try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
         try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
 
         switch (bin.operator.type) {
-            .PLUS => try self.handlePlusOperator(left_type, right_type, bin),
-            .MINUS => try self.handleMinusOperator(left_type, right_type, bin),
-            .ASTERISK => try self.handleMultiplyOperator(left_type, right_type, bin),
-            .SLASH => try self.handleDivideOperator(left_type, right_type, bin),
-            .DOUBLE_SLASH => try self.handleIntegerDivideOperator(left_type, right_type, bin),
-            .MODULO => try self.handleModuloOperator(left_type, right_type, bin),
-            .POWER => try self.handlePowerOperator(left_type, right_type, bin),
+            .PLUS => switch (try self.generator.typeOf(expr)) {
+                .String => {
+                    try self.generator.instructions.append(.Swap);
+                    try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+                },
+                .Array => try self.generator.instructions.append(.ArrayConcat),
+                else => try self.emitArith(expr, .Add),
+            },
+            .MINUS => try self.emitArith(expr, .Sub),
+            .ASTERISK => try self.emitArith(expr, .Mul),
+            .SLASH => try self.emitArith(expr, .Div),
+            .DOUBLE_SLASH => try self.emitArith(expr, .IntDiv),
+            .MODULO => try self.emitArith(expr, .Mod),
+            .POWER => try self.emitArith(expr, .Pow),
             .EQUALITY => try self.emitComparison(bin, .Eq),
             .BANG_EQUAL => try self.emitComparison(bin, .Ne),
             .LESS => try self.emitComparison(bin, .Lt),
@@ -210,116 +216,10 @@ pub const BinaryExpressionHandler = struct {
         }
     }
 
-    fn handlePlusOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        if (left_type == .String and right_type == .String) {
-            try self.generator.instructions.append(.Swap);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
-        } else if (left_type == .Array and right_type == .Array) {
-            try self.generator.instructions.append(.ArrayConcat);
-        } else {
-            const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-            if (common_type != .Unknown) {
-                try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = common_type } });
-            } else {
-                self.generator.reporter.reportCompileError(
-                    bin.left.?.base.location(),
-                    ErrorCode.TYPE_MISMATCH,
-                    "Cannot use + operator between {s} and {s}",
-                    .{ @tagName(left_type), @tagName(right_type) },
-                );
-                return ErrorList.TypeMismatch;
-            }
-        }
-    }
-
-    fn handleMinusOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use - operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
-    }
-
-    fn handleMultiplyOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use * operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
-    }
-
-    fn handleDivideOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Div, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use / operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
-    }
-
-    fn handleIntegerDivideOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use // operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
-    }
-
-    fn handleModuloOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use % operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
-    }
-
-    fn handlePowerOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
-        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
-        if (common_type != .Unknown) {
-            try self.generator.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = common_type } });
-        } else {
-            self.generator.reporter.reportCompileError(
-                bin.left.?.base.location(),
-                ErrorCode.TYPE_MISMATCH,
-                "Cannot use ** operator between {s} and {s}",
-                .{ @tagName(left_type), @tagName(right_type) },
-            );
-            return ErrorList.TypeMismatch;
-        }
+    /// Arithmetic computes in the type analysis gave the expression: the
+    /// operands' common numeric type, or `float` for `/`.
+    fn emitArith(self: *BinaryExpressionHandler, expr: *ast.Expr, op: ArithOp) ErrorList!void {
+        try self.generator.instructions.append(.{ .Arith = .{ .op = op, .operand_type = try self.generator.typeOf(expr) } });
     }
 
     /// How the two operands of a comparison are compared, decided from their
@@ -355,7 +255,7 @@ pub const BinaryExpressionHandler = struct {
 
     /// Where `member` sits among the members `boxed` can hold, or null when
     /// it is not one of them.
-    fn memberIndexIn(self: *BinaryExpressionHandler, boxed: HIRType, member: HIRType) ?u32 {
+    fn memberIndexIn(self: *BinaryExpressionHandler, boxed: HIRType, member: HIRType) ErrorList!?u32 {
         switch (boxed) {
             .Union => |u| {
                 for (u.members, 0..) |candidate, idx| {
@@ -366,7 +266,7 @@ pub const BinaryExpressionHandler = struct {
             .Group => |gid| {
                 const members = self.generator.semantic.group_table.members(gid) orelse return null;
                 for (members, 0..) |candidate, idx| {
-                    if (sameMemberType(self.generator.type_system.typeForRef(candidate.ref), member)) return @intCast(idx);
+                    if (sameMemberType(try self.generator.type_system.typeForRef(candidate.ref), member)) return @intCast(idx);
                 }
                 return null;
             },
@@ -378,7 +278,7 @@ pub const BinaryExpressionHandler = struct {
         if (isBoxed(left) != isBoxed(right)) {
             const boxed = if (isBoxed(left)) left else right;
             const member = if (isBoxed(left)) right else left;
-            if (self.memberIndexIn(boxed, member)) |member_index| {
+            if (try self.memberIndexIn(boxed, member)) |member_index| {
                 return .{ .boxed_member = .{ .boxed_on_left = isBoxed(left), .member_index = member_index, .member_type = member } };
             }
             self.generator.reporter.reportCompileError(
