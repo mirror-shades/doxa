@@ -474,10 +474,17 @@ pub export fn doxa_value_to_string(val: *const DoxaValue, out_ptr: *?[*]u8, out_
         .String => outString(stringPayload(val), out_ptr, out_len),
         .Array => doxa_array_to_string(payloadAs(val, ArrayHeader), out_ptr, out_len),
         .Struct => doxa_struct_to_string(payloadAs(val, anyopaque), out_ptr, out_len),
-        // A `DoxaValue` carries no enum type name, so a boxed enum can only
-        // show its discriminant here. Callers that know the arm statically
-        // render it with `doxa_enum_to_string` instead (see the IR printer).
-        .Enum => doxa_enum_to_string(null, 0, val.payload_bits, out_ptr, out_len),
+        // A boxed enum is named through the box registry; a bare
+        // discriminant the IR printer could not name shows its number.
+        .Enum => {
+            var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
+            defer list.deinit();
+            if (writeBoxedEnum(&list.writer, val) catch false) {
+                outString(list.written(), out_ptr, out_len);
+            } else {
+                doxa_enum_to_string(null, 0, val.payload_bits, out_ptr, out_len);
+            }
+        },
         .Function => outString("<function>", out_ptr, out_len),
         .Map => outString("<map>", out_ptr, out_len),
     }
@@ -765,12 +772,13 @@ pub const DoxaPeekInfo = extern struct {
 ///   - Boxed:   String, Array, Struct, Function, Map
 ///   - Sentinel: Nothing (tag = 8, payload_bits = 0)
 ///
-/// Union encoding:
-///   - For non-union values, `reserved == 0`.
-///   - For union values, `reserved` packs:
-///       bit 31        : is_union flag
-///       bits 16..30   : union_id (up to 32k unions)
-///       bits 0..15    : active_member_index (0-based, up to 65k members)
+/// Box encoding (a value of a union or group type):
+///   - For an unboxed value, `reserved == 0`.
+///   - For a box, `reserved` packs:
+///       bit 31        : is_boxed flag
+///       bits 16..30   : box_id — the box type, one id space for unions and
+///                       groups, indexing the box registry (`BoxDesc`)
+///       bits 0..15    : member_index — the member of that box type held
 ///   - `tag` always describes the active payload kind (Int, Float, Struct, …).
 pub const DoxaValue = extern struct {
     tag: u32,
@@ -795,33 +803,61 @@ pub const DoxaTag = enum(u32) {
     Map = 10,
 };
 
-/// Helpers for encoding and decoding union metadata into the `reserved` field
-/// of a `DoxaValue`. Kept in sync with the union encoding emitted by the IR
-/// printer (`buildDoxaValue`).
-pub const DoxaUnionMeta = struct {
-    pub const is_union_bit: u32 = 1 << 31;
-    pub const union_id_shift: u5 = 16;
-    pub const union_id_mask: u32 = 0x7FFF << union_id_shift; // 15 bits
+/// Encoding and decoding of a box's `reserved` word. Kept in sync with the
+/// IR printer, which writes it (`buildDoxaValue`, `repackBox`).
+pub const DoxaBoxMeta = struct {
+    pub const is_boxed_bit: u32 = 1 << 31;
+    pub const box_id_shift: u5 = 16;
+    pub const box_id_mask: u32 = 0x7FFF << box_id_shift; // 15 bits
+    pub const max_box_id: u32 = 0x7FFF;
     pub const member_index_mask: u32 = 0xFFFF; // 16 bits
 
-    pub fn pack(union_id: u32, member_index: u32) u32 {
-        const uid: u32 = union_id & 0x7FFF;
-        const mid: u32 = member_index & member_index_mask;
-        return is_union_bit | (uid << union_id_shift) | mid;
+    pub fn isBoxed(reserved: u32) bool {
+        return (reserved & is_boxed_bit) != 0;
     }
 
-    pub fn isUnion(reserved: u32) bool {
-        return (reserved & is_union_bit) != 0;
-    }
-
-    pub fn unionId(reserved: u32) u32 {
-        return (reserved & union_id_mask) >> union_id_shift;
+    pub fn boxId(reserved: u32) u32 {
+        return (reserved & box_id_mask) >> box_id_shift;
     }
 
     pub fn memberIndex(reserved: u32) u32 {
         return reserved & member_index_mask;
     }
 };
+
+/// A box type's members, in the order its member indexes name them. An enum
+/// member has its display name and descriptor; any other member has neither.
+pub const BoxDesc = extern struct {
+    member_count: u64,
+    member_names: [*]const ?[*:0]const u8,
+    member_enums: [*]const ?*const EnumDesc,
+};
+
+/// Every box type of the program, indexed by box id. Set once at startup.
+var box_registry: []const *const BoxDesc = &.{};
+
+pub export fn doxa_box_registry_init(descs: [*]const *const BoxDesc, count: *const u64) callconv(.c) void {
+    box_registry = descs[0..@intCast(count.*)];
+}
+
+/// Write a boxed enum as `Type.Variant`, naming it through the box registry.
+/// False when the box names no enum member the registry knows.
+fn writeBoxedEnum(out: *std.Io.Writer, val: *const DoxaValue) !bool {
+    if (!DoxaBoxMeta.isBoxed(val.reserved)) return false;
+    const box_id = DoxaBoxMeta.boxId(val.reserved);
+    if (box_id >= box_registry.len) return false;
+    const desc = box_registry[box_id];
+    const member = DoxaBoxMeta.memberIndex(val.reserved);
+    if (member >= desc.member_count) return false;
+    const type_name = desc.member_names[member] orelse return false;
+    const enum_desc = desc.member_enums[member] orelse return false;
+    const variant: u64 = @bitCast(val.payload_bits);
+    if (variant >= enum_desc.variant_count) return false;
+    const names = enum_desc.variant_names orelse return false;
+    const variant_name = names[@intCast(variant)] orelse return false;
+    try out.print("{s}.{s}", .{ std.mem.span(type_name), std.mem.span(variant_name) });
+    return true;
+}
 
 /// Re-home the heap payload of a boxed `DoxaValue` (String/Array/Struct) into
 /// `scope`. Unboxed payloads (Int, Float, Byte, Tetra, Enum, Nothing) are left
@@ -2470,8 +2506,14 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
             doxaWrite(fbs.buffered());
         },
         .Enum => {
-            // Enum printing is now handled natively by the IR printer
-            doxaWrite("<enum>");
+            var buf: [256]u8 = undefined;
+            var fbs: std.Io.Writer = .fixed(&buf);
+            if (writeBoxedEnum(&fbs, val) catch false) {
+                doxaWrite(fbs.buffered());
+            } else {
+                printTaggedBitsImpl(&fbs, 8, val.payload_bits) catch return;
+                doxaWrite(fbs.buffered());
+            }
         },
         .Tetra => {
             const t: u2 = asTetra(val.payload_bits);

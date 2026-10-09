@@ -390,6 +390,7 @@ pub fn Methods(comptime Ctx: type) type {
             // Type check ABI (i64 payload + type tag + target type string).
             try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");
             try w.writeAll("declare void @doxa_print_value(ptr)\n");
+            try w.writeAll("declare void @doxa_box_registry_init(ptr, ptr)\n");
             try w.writeAll("declare void @doxa_clone_doxa_value_at(i64, ptr)\n");
             try w.writeAll("declare void @doxa_clone_doxa_value_root(ptr)\n");
             try w.writeAll("declare i64 @doxa_find_array(ptr, i64)\n");
@@ -680,6 +681,7 @@ pub fn Methods(comptime Ctx: type) type {
             for (hir.function_table, dead_scopes) |func, scope_dead| {
                 try self.writeFunction(hir, w, func, scope_dead, &func_start_labels, &peek_state);
             }
+            try self.emitBoxRegistry(&peek_state);
 
             if (peek_state.globals.items.len > 0) {
                 try w.writeAll("\n");
@@ -755,6 +757,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer stack.deinit();
 
             try self.emitEnumInitCalls(w, peek_state, &id);
+            try self.emitBoxRegistryInit(w);
 
             var merge_map = std.StringHashMap(StackMergeState).init(self.allocator);
             defer {

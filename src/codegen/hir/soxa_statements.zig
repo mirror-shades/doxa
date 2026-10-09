@@ -257,43 +257,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
             try self.instructions.append(.{ .Label = .{ .name = success_label } });
         },
-        .MapLiteral => |map_literal| {
-            // Generate else value first if it exists
-            if (map_literal.else_value) |else_expr| {
-                try self.generateExpression(else_expr, true, false);
-            }
-
-            var reverse_i = map_literal.entries.len;
-            while (reverse_i > 0) {
-                reverse_i -= 1;
-                const entry = map_literal.entries[reverse_i];
-                try self.generateExpression(entry.key, true, false);
-                try self.generateExpression(entry.value, true, false);
-            }
-
-            const dummy_entries = try self.allocator.alloc(HIRMapEntry, map_literal.entries.len);
-            for (dummy_entries) |*entry| {
-                const nothing_key = try self.allocator.create(HIRValue);
-                nothing_key.* = .{ .nothing = .{} };
-                const nothing_value = try self.allocator.create(HIRValue);
-                nothing_value.* = .{ .nothing = .{} };
-                entry.* = HIRMapEntry{
-                    .key = nothing_key,
-                    .value = nothing_value,
-                };
-            }
-
-            const map_instruction = HIRInstruction{
-                .Map = .{
-                    .entries = dummy_entries,
-                    .key_type = .String,
-                    .value_type = .Unknown,
-                    .has_else_value = map_literal.else_value != null,
-                },
-            };
-
-            try self.instructions.append(map_instruction);
-        },
         // Imports were bound by the module loader: compile time only.
         .Import => {},
     }

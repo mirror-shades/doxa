@@ -85,7 +85,6 @@ pub const ErrorList = error{
     MissingEntryPointFunction,
     FunctionNotFound,
     UnsupportedFunctionCallType,
-    MapLiteralsMustBeStatements,
     ExpectedMapKeyword,
     ExpectedReturnsKeyword,
     ExpectedMethod,

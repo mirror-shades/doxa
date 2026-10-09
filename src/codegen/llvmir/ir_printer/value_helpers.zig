@@ -1,7 +1,7 @@
 const std = @import("std");
 const doxa_rt = @import("../../../runtime/doxa_rt.zig");
 const DoxaTag = doxa_rt.DoxaTag;
-const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
+const DoxaBoxMeta = doxa_rt.DoxaBoxMeta;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -120,32 +120,13 @@ pub fn Methods(comptime Ctx: type) type {
         return box_name;
     }
 
-    /// The enum type a value of `hir_type` renders as: an enum itself, or — when
-    /// the value is still boxed — the single enum arm of a union. A union's arm
-    /// list describes the box, not a member that has since been narrowed out of
-    /// it, so `boxed` is what lets it speak. Null when the type names no enum,
-    /// or names more than one, where only narrowing can say which is live, and
-    /// then nothing but the storage is left to render with.
-    pub fn enumTypeNameFor(self: *IRPrinter, hir_type: HIR.HIRType, boxed: bool) ?[]const u8 {
-        const eid: HIR.EnumId = switch (hir_type) {
-            .Enum => |e| e,
-            .Union => |u| blk: {
-                if (!boxed) return null;
-                var found: ?HIR.EnumId = null;
-                for (u.members) |member| {
-                    switch (member.*) {
-                        .Enum => |e| {
-                            if (found != null) return null;
-                            found = e;
-                        },
-                        else => continue,
-                    }
-                }
-                break :blk found orelse return null;
-            },
-            else => return null,
+    /// The canonical key of the enum a value of `hir_type` renders as. A boxed
+    /// enum is named by the runtime through the box registry instead.
+    pub fn enumTypeNameFor(self: *IRPrinter, hir_type: HIR.HIRType) ?[]const u8 {
+        return switch (hir_type) {
+            .Enum => |eid| self.enum_table.keyOf(eid),
+            else => null,
         };
-        return self.enum_table.keyOf(eid);
     }
 
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
@@ -550,12 +531,26 @@ pub fn Methods(comptime Ctx: type) type {
     }
 
     /// The type id packed beside the member index: a union's id or a group's id.
-    fn boxedTypeId(t: HIR.HIRType) ?u32 {
-        return switch (t) {
-            .Union => t.Union.id,
-            .Group => t.Group,
-            else => null,
+    /// The `reserved` word of a box of type `boxed` before its member index
+    /// is or-ed in: the boxed flag and the type's box id, numbered here the
+    /// first time the type is boxed.
+    pub fn boxHeader(self: *IRPrinter, boxed: HIR.HIRType) !u32 {
+        const key: IRPrinter.BoxKey = switch (boxed) {
+            .Union => |u| .{ .kind = .Union, .id = u.id },
+            .Group => |gid| .{ .kind = .Group, .id = gid },
+            else => return self.hirFault("boxes a {s}, which is not a union or a group", .{@tagName(boxed)}),
         };
+        const entry = try self.box_ids.getOrPut(self.allocator, key);
+        if (!entry.found_existing) {
+            const box_id: u32 = @intCast(self.boxed_types.items.len);
+            if (box_id > DoxaBoxMeta.max_box_id) {
+                _ = self.box_ids.remove(key);
+                return self.hirFault("boxes more than {d} union and group types", .{DoxaBoxMeta.max_box_id + 1});
+            }
+            try self.boxed_types.append(self.allocator, boxed);
+            entry.value_ptr.* = box_id;
+        }
+        return DoxaBoxMeta.is_boxed_bit | (entry.value_ptr.* << DoxaBoxMeta.box_id_shift);
     }
 
     /// Re-pack a box for another box type: `int | string` stored into
@@ -565,14 +560,12 @@ pub fn Methods(comptime Ctx: type) type {
     /// target's index for the same member type. A source member the target
     /// does not hold is one a type test has already excluded.
     fn repackBox(self: *IRPrinter, w: anytype, value: StackVal, source: HIR.HIRType, target: HIR.HIRType, id: *usize) !StackVal {
-        const type_id = boxedTypeId(target).?;
-        const uid = type_id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
-        const header: u32 = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift);
+        const header = try self.boxHeader(target);
 
         const reserved = try self.nextTemp(id);
         try w.print("  {s} = extractvalue %DoxaValue {s}, 1\n", .{ reserved, value.name });
         const member = try self.nextTemp(id);
-        try w.print("  {s} = and i32 {s}, {d}\n", .{ member, reserved, DoxaUnionMeta.member_index_mask });
+        try w.print("  {s} = and i32 {s}, {d}\n", .{ member, reserved, DoxaBoxMeta.member_index_mask });
 
         var acc: ?[]const u8 = null;
         for (0..self.boxMemberCount(source)) |source_idx| {
@@ -580,7 +573,7 @@ pub fn Methods(comptime Ctx: type) type {
             const target_idx = for (0..self.boxMemberCount(target)) |idx| {
                 if (source_member.eql(self.boxMember(target, idx).?)) break idx;
             } else continue;
-            const repacked = header | (@as(u32, @intCast(target_idx)) & DoxaUnionMeta.member_index_mask);
+            const repacked = header | (@as(u32, @intCast(target_idx)) & DoxaBoxMeta.member_index_mask);
             if (acc) |previous| {
                 const is_member = try self.nextTemp(id);
                 const next = try self.nextTemp(id);
@@ -645,15 +638,12 @@ pub fn Methods(comptime Ctx: type) type {
             .Value => tag_const = @intFromEnum(tag.Nothing),
         }
 
-        // Compute reserved bits when the destination is a boxed member type.
-        // Unions and groups pack `reserved` identically; only the id that sits
-        // beside the member index differs.
+        // A box's reserved word names its box type and the member it holds.
         var reserved_const: u32 = 0;
         if (target_union) |ut| {
-            if (boxedTypeId(ut)) |type_id| {
+            if (isBoxedMemberType(ut)) {
                 const idx = self.findMemberIndex(ut, value);
-                const uid = type_id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
-                reserved_const = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift) | (idx & DoxaUnionMeta.member_index_mask);
+                reserved_const = try self.boxHeader(ut) | (idx & DoxaBoxMeta.member_index_mask);
             }
         }
 

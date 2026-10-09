@@ -1123,17 +1123,6 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            for (self.group_table.entries.items) |group_entry| {
-                const group_name = group_entry.key.?;
-                for (group_entry.members) |member| {
-                    if (member.kind != .Enum) continue;
-                    const variants = self.enum_table.variants(member.id) orelse continue;
-                    for (variants) |variant| {
-                        try registerVariant.add(self, group_name, variant.index, variant.name);
-                    }
-                }
-            }
-
             // Seed every declared enum's variants under its own name, not just
             // those that appeared as a literal in the constant pool. A value
             // produced across the inline-Zig boundary (a discriminant) has no

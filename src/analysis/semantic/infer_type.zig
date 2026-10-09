@@ -1520,6 +1520,16 @@ const op: []const u8 = switch (bin.operator.type) {
             if (array_type.array_type) |elem_type| {
                 try helpers.unifyElement(self, elem_type, value_type, index_assign.value, .{ .location = getLocationFromBase(expr.base) });
             }
+            // A map entry is an element store too: its key and its value fill
+            // the map's key and value slots.
+            if (array_type.base == .Map) {
+                if (array_type.map_key_type) |key_type| {
+                    try helpers.unifyElement(self, key_type, index_type, index_assign.index, .{ .location = getLocationFromBase(index_assign.index.base) });
+                }
+                if (array_type.map_value_type) |map_value_type| {
+                    try helpers.unifyElement(self, map_value_type, value_type, index_assign.value, .{ .location = getLocationFromBase(index_assign.value.base) });
+                }
+            }
 
             type_info.* = .{ .base = .Nothing };
         },

@@ -332,6 +332,7 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
             } else {
+                try self.generator.convertValue(try self.generator.typeOf(args[1]), target_type.Array.*);
                 try self.generator.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
             }
             if (args[0].data == .Variable) {
@@ -389,6 +390,7 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.generateExpression(args[2], true, false);
+            if (target_type != .String) try self.generator.convertValue(try self.generator.typeOf(args[2]), target_type.Array.*);
             try self.generator.instructions.append(.ArrayInsert);
             if (args[0].data == .Variable) {
                 // A string insert produces a fresh immutable buffer, so an alias

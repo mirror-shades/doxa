@@ -129,6 +129,7 @@ pub const IRPrinter = struct {
     pub const unwrapDoxaValueToType = ValueHelperMethods.unwrapDoxaValueToType;
     pub const boxMember = ValueHelperMethods.boxMember;
     pub const boxMemberCount = ValueHelperMethods.boxMemberCount;
+    pub const boxHeader = ValueHelperMethods.boxHeader;
     pub const findMemberIndex = ValueHelperMethods.findMemberIndex;
     pub const isBoxedMemberType = ValueHelperMethods.isBoxedMemberType;
     pub const buildDoxaValue = ValueHelperMethods.buildDoxaValue;
@@ -198,7 +199,7 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     pub const emitSetField = StructsEnumsEmitMethods.emitSetField;
     pub const canBoxFixedArrayField = StructsEnumsEmitMethods.canBoxFixedArrayField;
     pub const boxFixedArrayField = StructsEnumsEmitMethods.boxFixedArrayField;
-    pub const boxBoxedMemberField = StructsEnumsEmitMethods.boxBoxedMemberField;
+    pub const placeFieldBox = StructsEnumsEmitMethods.placeFieldBox;
     pub const structFieldDescTag = StructsEnumsEmitMethods.structFieldDescTag;
     pub const boxFixedStructArrayField = StructsEnumsEmitMethods.boxFixedStructArrayField;
     pub const fixedStructElementInfo = StructsEnumsEmitMethods.fixedStructElementInfo;
@@ -215,6 +216,8 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     pub const getOrCreateStructDescGlobal = StructsEnumsEmitMethods.getOrCreateStructDescGlobal;
     pub const getOrCreateStructDescGlobalByName = StructsEnumsEmitMethods.getOrCreateStructDescGlobalByName;
     pub const getOrCreateEnumDescGlobal = StructsEnumsEmitMethods.getOrCreateEnumDescGlobal;
+    pub const emitBoxRegistry = StructsEnumsEmitMethods.emitBoxRegistry;
+    pub const emitBoxRegistryInit = StructsEnumsEmitMethods.emitBoxRegistryInit;
     pub const emitEnumInitCalls = StructsEnumsEmitMethods.emitEnumInitCalls;
     pub const hirTypeToStackType = StructsEnumsEmitMethods.hirTypeToStackType;
     pub const hirTypeToTypeString = StructsEnumsEmitMethods.hirTypeToTypeString;
@@ -251,6 +254,11 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     enum_desc_globals_by_type: std.StringHashMap([]const u8),
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
+    /// Every union and group type the program boxes, numbered in one id
+    /// space: the box id in a `%DoxaValue`'s `reserved` word and the index of
+    /// its entry in the runtime box registry (`emitBoxRegistry`).
+    box_ids: std.AutoHashMapUnmanaged(BoxKey, u32) = .empty,
+    boxed_types: std.ArrayListUnmanaged(HIR.HIRType) = .empty,
     /// The analyzer's type tables: canonical keys, layouts, and members.
     group_table: *const GroupTable,
     enum_table: *const EnumTable,
@@ -373,6 +381,13 @@ pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
         /// that consumes the call, so store decisions stay conservative.
         Caller,
         Unknown,
+    };
+
+    /// A box type's compile-time identity: a union id and a group id may be
+    /// equal, so the kind is part of it.
+    pub const BoxKey = struct {
+        kind: enum { Union, Group },
+        id: u32,
     };
 
     pub const StackVal = struct {

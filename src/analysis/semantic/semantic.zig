@@ -989,7 +989,7 @@ pub const SemanticAnalyzer = struct {
                         else => _ = try infer_type.inferTypeFromExpr(self, expr),
                     }
                 },
-                .FunctionDecl, .EnumDecl, .GroupDecl, .Import, .ZigDecl, .MapLiteral => {},
+                .FunctionDecl, .EnumDecl, .GroupDecl, .Import, .ZigDecl => {},
                 .Return, .Continue, .Break, .Assert, .Defer, .Lift => {},
             }
         }
@@ -1340,13 +1340,6 @@ pub const SemanticAnalyzer = struct {
                         try self.validateFunctionBodyWithStruct(func, location, return_type.*, null);
                     } else {
                         try self.validateFunctionBodyWithStruct(func, location, func.return_type_info, null);
-                    }
-                },
-                .MapLiteral => |map_entries| {
-                    // Validate map literal entries
-                    for (map_entries.entries) |entry| {
-                        _ = try infer_type.inferTypeFromExpr(self, entry.key);
-                        _ = try infer_type.inferTypeFromExpr(self, entry.value);
                     }
                 },
                 .Break, .Continue, .Lift => {

@@ -124,7 +124,7 @@ pub fn Methods(comptime Ctx: type) type {
                 if (value.ty != .Value) {
                     return self.hirFault("stores an unboxed {s} into a {s} slot", .{ @tagName(value.ty), @tagName(slot) });
                 }
-                // TODO(type-authority Phase C): a box whose type the stack
+                // TODO(explicit-representation step 4): a box whose type the stack
                 // simulation lost (`boxed_type == null`) is accepted unchecked.
                 if (value.boxed_type) |boxed| if (!boxed.eql(slot)) {
                     return self.hirFault("stores a box of another {s} into a {s} slot without re-packing it", .{ @tagName(boxed), @tagName(slot) });

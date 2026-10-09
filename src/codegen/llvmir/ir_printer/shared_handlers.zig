@@ -1,7 +1,7 @@
 const std = @import("std");
 const ast = @import("../../../ast/ast.zig");
 const builtin_methods = @import("../../../runtime/builtin_methods.zig");
-const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
+const DoxaBoxMeta = @import("../../../runtime/doxa_rt.zig").DoxaBoxMeta;
 const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
 
 fn isQuantifierName(name: []const u8) bool {
@@ -590,9 +590,27 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(trunc);
                     try stack.append(.{ .name = out, .ty = .I8 });
                 },
-                else => {
-                    try stack.append(arg);
+                // A byte is unsigned; an int is signed.
+                .Float => switch (arg.ty) {
+                    .F64 => try stack.append(arg),
+                    .I64, .I8 => {
+                        const out = try self.nextTemp(id);
+                        const op = if (arg.ty == .I8) "uitofp" else "sitofp";
+                        try w.print("  {s} = {s} {s} {s} to double\n", .{ out, op, if (arg.ty == .I8) "i8" else "i64", arg.name });
+                        try stack.append(.{ .name = out, .ty = .F64 });
+                    },
+                    else => return self.hirFault("converts a {s} to float", .{@tagName(arg.ty)}),
                 },
+                .Int => switch (arg.ty) {
+                    .I64 => try stack.append(arg),
+                    .I8 => {
+                        const out = try self.nextTemp(id);
+                        try w.print("  {s} = zext i8 {s} to i64\n", .{ out, arg.name });
+                        try stack.append(.{ .name = out, .ty = .I64 });
+                    },
+                    else => return self.hirFault("converts a {s} to int", .{@tagName(arg.ty)}),
+                },
+                else => return self.hirFault("converts to {s}, which has no numeric conversion", .{@tagName(conv.to_type)}),
             }
         }
 
@@ -855,10 +873,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .ToString => {
                     // A bare discriminant is storage, not the value: when the
                     // declared type names an enum, render the variant by name.
-                    // Only a still-boxed operand may borrow its union's arm
-                    // list — a narrowed member is that member, and the union
-                    // no longer describes it.
-                    const enum_type_name = arg.enum_type_name orelse self.enumTypeNameFor(sop.value_type, arg.ty == .Value);
+                    const enum_type_name = arg.enum_type_name orelse self.enumTypeNameFor(sop.value_type);
                     switch (arg.ty) {
                         .STRING => {
                             try stack.append(arg);
@@ -926,7 +941,7 @@ pub fn Methods(comptime Ctx: type) type {
                             try self.emitRTCallReturningString(w, stack, id, "doxa_tetra_to_string", args_line);
                         },
                         .Value => {
-                            try self.emitBoxedToString(w, stack, id, arg, enum_type_name, peek_state);
+                            try self.emitBoxedToString(w, stack, id, arg);
                         },
                         .Nothing => {
                             const args_line = try std.fmt.allocPrint(self.allocator, "", .{});
@@ -1069,80 +1084,20 @@ pub fn Methods(comptime Ctx: type) type {
         /// printing whatever address its payload happens to hold. The box alone
         /// is deliberately never enough: narrowing may have re-ordered the union
         /// members, so the tag, not a member index, decides.
+        /// The runtime renders every member of a box, naming a boxed enum
+        /// through the box registry.
         pub fn emitBoxedToString(
             self: *IRPrinter,
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
             val: StackVal,
-            enum_type_name: ?[]const u8,
-            peek_state: *PeekEmitState,
         ) !void {
-            // Taken before the branch so the slots dominate every arm.
-                const slots = self.strOutSlots();
-
-            const enum_name = enum_type_name orelse {
-                const box = try self.boxDoxaValue(w, val);
-                const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{box});
-                defer self.allocator.free(args_line);
-                try self.callReturningString(w, "doxa_value_to_string", args_line, slots);
-                try self.pushStringResult(w, stack, id, slots);
-                return;
-            };
-
-            // 6 == DoxaTag.Enum (see runtime/doxa_rt.zig).
-            const value_tag = try self.nextTemp(id);
-            const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ value_tag, val.name });
-            defer self.allocator.free(tag_line);
-            try w.writeAll(tag_line);
-            const is_enum = try self.nextTemp(id);
-            const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, 6\n", .{ is_enum, value_tag });
-            defer self.allocator.free(cmp_line);
-            try w.writeAll(cmp_line);
-
-            const enum_label = try std.fmt.allocPrint(self.allocator, "tostr_enum_{d}", .{id.*});
-            id.* += 1;
-            defer self.allocator.free(enum_label);
-            const other_label = try std.fmt.allocPrint(self.allocator, "tostr_other_{d}", .{id.*});
-            id.* += 1;
-            defer self.allocator.free(other_label);
-            const merge_label = try std.fmt.allocPrint(self.allocator, "tostr_merge_{d}", .{id.*});
-            id.* += 1;
-            defer self.allocator.free(merge_label);
-
-            const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_enum, enum_label, other_label });
-            defer self.allocator.free(br_line);
-            try w.writeAll(br_line);
-
-            const enum_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{enum_label});
-            defer self.allocator.free(enum_label_line);
-            try w.writeAll(enum_label_line);
-            const payload = try self.nextTemp(id);
-            const payload_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, val.name });
-            defer self.allocator.free(payload_line);
-            try w.writeAll(payload_line);
-            const enum_args = try self.enumToStringArgs(w, id, peek_state, enum_name, payload);
-            defer self.allocator.free(enum_args);
-            try self.callReturningString(w, "doxa_enum_to_string", enum_args, slots);
-            const enum_br = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
-            defer self.allocator.free(enum_br);
-            try w.writeAll(enum_br);
-
-            const other_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{other_label});
-            defer self.allocator.free(other_label_line);
-            try w.writeAll(other_label_line);
-            const other_box = try self.boxDoxaValue(w, val);
-            const other_args = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{other_box});
-            defer self.allocator.free(other_args);
-            try self.callReturningString(w, "doxa_value_to_string", other_args, slots);
-            const other_br = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
-            defer self.allocator.free(other_br);
-            try w.writeAll(other_br);
-
-            const merge_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{merge_label});
-            defer self.allocator.free(merge_label_line);
-            try w.writeAll(merge_label_line);
-
+            const slots = self.strOutSlots();
+            const box = try self.boxDoxaValue(w, val);
+            const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{box});
+            defer self.allocator.free(args_line);
+            try self.callReturningString(w, "doxa_value_to_string", args_line, slots);
             try self.pushStringResult(w, stack, id, slots);
         }
 
@@ -1248,84 +1203,12 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(call_val);
                 try w.writeAll(call_val);
             } else if (val.ty == .Value) {
-                var printed_union_enum = false;
-                if (pk.value_type == .Union) {
-                    // A union with a single enum arm can name the variant.
-                    if (self.enumTypeNameFor(pk.value_type, true)) |enum_name| {
-                        // Decide whether the active union member is the enum by
-                        // inspecting the canonical value's runtime tag rather than
-                        // the baked member index. Narrowing (`as`) re-presents the
-                        // union with a different member ordering inside then/else
-                        // branches, so the baked index no longer lines up with the
-                        // member list; the tag is order-independent.
-                        const value_tag = try self.nextTemp(id);
-                        const value_tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ value_tag, val.name });
-                        defer self.allocator.free(value_tag_line);
-                        try w.writeAll(value_tag_line);
-
-                        // 6 == DoxaTag.Enum (see runtime/doxa_rt.zig).
-                        const is_enum_member = try self.nextTemp(id);
-                        const is_enum_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, 6\n", .{ is_enum_member, value_tag });
-                        defer self.allocator.free(is_enum_member_line);
-                        try w.writeAll(is_enum_member_line);
-
-                        const enum_label = try std.fmt.allocPrint(self.allocator, "peek_union_enum_{d}", .{id.*});
-                        id.* += 1;
-                        defer self.allocator.free(enum_label);
-                        const fallback_label = try std.fmt.allocPrint(self.allocator, "peek_union_fallback_{d}", .{id.*});
-                        id.* += 1;
-                        defer self.allocator.free(fallback_label);
-                        const merge_label = try std.fmt.allocPrint(self.allocator, "peek_union_merge_{d}", .{id.*});
-                        id.* += 1;
-                        defer self.allocator.free(merge_label);
-
-                        const branch_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_enum_member, enum_label, fallback_label });
-                        defer self.allocator.free(branch_line);
-                        try w.writeAll(branch_line);
-
-                        const enum_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{enum_label});
-                        defer self.allocator.free(enum_label_line);
-                        try w.writeAll(enum_label_line);
-
-                        const payload_bits = try self.nextTemp(id);
-                        const payload_bits_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload_bits, val.name });
-                        defer self.allocator.free(payload_bits_line);
-                        try w.writeAll(payload_bits_line);
-
-                        try self.emitEnumPrint(peek_state, w, id, enum_name, payload_bits);
-
-                        const enum_br_merge_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
-                        defer self.allocator.free(enum_br_merge_line);
-                        try w.writeAll(enum_br_merge_line);
-
-                        const fallback_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{fallback_label});
-                        defer self.allocator.free(fallback_label_line);
-                        try w.writeAll(fallback_label_line);
-
-                        const tmp_ptr = try self.boxDoxaValue(w, val);
-                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
-                        defer self.allocator.free(call_line);
-                        try w.writeAll(call_line);
-
-                        const fallback_br_merge_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
-                        defer self.allocator.free(fallback_br_merge_line);
-                        try w.writeAll(fallback_br_merge_line);
-
-                        const merge_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{merge_label});
-                        defer self.allocator.free(merge_label_line);
-                        try w.writeAll(merge_label_line);
-
-                        printed_union_enum = true;
-                    }
-                }
-
-                if (!printed_union_enum) {
-                    // Store to stack and pass pointer to avoid ABI quirks
-                    const tmp_ptr = try self.boxDoxaValue(w, val);
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
-                    defer self.allocator.free(call_line);
-                    try w.writeAll(call_line);
-                }
+                // The runtime names every member, a boxed enum through the
+                // box registry.
+                const tmp_ptr = try self.boxDoxaValue(w, val);
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                defer self.allocator.free(call_line);
+                try w.writeAll(call_line);
             } else if (should_print_as_float and val.ty == .I64) {
                 // Float stored as I64 bit pattern - convert to double for printing
                 const double_val = try self.nextTemp(id);
@@ -1657,19 +1540,19 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(extract_line);
 
                 const member_i32 = try self.nextTemp(id);
-                const mask_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i32 {s}, {d}\n", .{ member_i32, reserved_i32, DoxaUnionMeta.member_index_mask });
+                const mask_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i32 {s}, {d}\n", .{ member_i32, reserved_i32, DoxaBoxMeta.member_index_mask });
                 defer self.allocator.free(mask_line);
                 try w.writeAll(mask_line);
 
                 // Every member this check names is a boxed union/group value,
-                // so its `reserved` word carries `is_union_bit`. A `nothing`
+                // so its `reserved` word carries `is_boxed_bit`. A `nothing`
                 // that a union stores unboxed (`reserved == 0`) reports member
                 // index 0 and would otherwise satisfy the check for whichever
                 // member the union happens to lay down first. Require the bit
                 // before the index compare so a success arm cannot be read as a
                 // boxed member.
                 const union_bit = try self.nextTemp(id);
-                try w.print("  {s} = and i32 {s}, {d}\n", .{ union_bit, reserved_i32, DoxaUnionMeta.is_union_bit });
+                try w.print("  {s} = and i32 {s}, {d}\n", .{ union_bit, reserved_i32, DoxaBoxMeta.is_boxed_bit });
                 const is_boxed = try self.nextTemp(id);
                 try w.print("  {s} = icmp ne i32 {s}, 0\n", .{ is_boxed, union_bit });
 
@@ -2000,8 +1883,7 @@ pub fn Methods(comptime Ctx: type) type {
                 else => unreachable,
             }
 
-            const union_id = ut.Union.id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
-            const header: u32 = DoxaUnionMeta.is_union_bit | (union_id << DoxaUnionMeta.union_id_shift);
+            const header = try self.boxHeader(ut);
             const ok_tag: u32 = switch (payload_ty) {
                 .Nothing => @intFromEnum(DoxaTag.Nothing),
                 .String => @intFromEnum(DoxaTag.String),
@@ -2613,7 +2495,7 @@ pub fn Methods(comptime Ctx: type) type {
                 // An inline-Zig enum return carries its id in the HIR type; the
                 // enum table names it so printing/narrowing can render variants.
                 if (actual_return_type == .Enum) {
-                    if (self.enumTypeNameFor(actual_return_type, false)) |enum_name| {
+                    if (self.enumTypeNameFor(actual_return_type)) |enum_name| {
                         pushed.enum_type_name = enum_name;
                     }
                 }

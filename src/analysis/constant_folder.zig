@@ -494,15 +494,6 @@ pub const ConstantFolder = struct {
             },
             .EnumDecl => {},
             .GroupDecl => {},
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.key = try self.foldExpr(entry.key);
-                    entry.value = try self.foldExpr(entry.value);
-                }
-                if (map_literal.else_value) |else_value| {
-                    map_literal.else_value = try self.foldExpr(else_value);
-                }
-            },
             .Import => {},
             .Continue => {},
             .Break => {},

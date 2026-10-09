@@ -173,10 +173,12 @@ pub const StructsHandler = struct {
     ) ErrorList!void {
         try self.generator.generateExpression(value_expr, true, false);
 
+        const value_type = try self.generator.typeOf(value_expr);
         field_types[reverse_i] = if (field_type != .Unknown and field_type != .Nothing)
             field_type
         else
-            try self.generator.typeOf(value_expr);
+            value_type;
+        try self.generator.convertValue(value_type, field_types[reverse_i]);
         field_names[reverse_i] = field_name;
 
         // Push field name as constant
@@ -381,6 +383,7 @@ pub const StructsHandler = struct {
 
             // Set the inner field (age) on the duplicate
             const inner_slot = try self.fieldSlot(assign_data.object, assign_data.field);
+            try self.generator.convertValue(try self.generator.typeOf(assign_data.value), inner_slot.hir_type);
             const inner_container_type = try self.generator.typeOf(assign_data.object);
             try self.generator.instructions.append(.{
                 .SetField = .{
@@ -419,17 +422,20 @@ pub const StructsHandler = struct {
             }
         } else {
             const is_this_target = assign_data.object.data == .This;
+            const slot = try self.fieldSlot(assign_data.object, assign_data.field);
+            const value_type = try self.generator.typeOf(assign_data.value);
 
             if (is_this_target) {
                 try self.generator.generateExpression(assign_data.value, true, false);
+                try self.generator.convertValue(value_type, slot.hir_type);
                 try self.generator.generateExpression(assign_data.object, true, false);
                 try self.generator.instructions.append(.Swap);
             } else {
                 try self.generator.generateExpression(assign_data.object, true, false);
                 try self.generator.generateExpression(assign_data.value, true, false);
+                try self.generator.convertValue(value_type, slot.hir_type);
             }
 
-            const slot = try self.fieldSlot(assign_data.object, assign_data.field);
             const assign_container_type = try self.generator.typeOf(assign_data.object);
             try self.generator.instructions.append(.{
                 .SetField = .{

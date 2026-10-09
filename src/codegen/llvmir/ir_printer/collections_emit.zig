@@ -137,9 +137,10 @@ pub fn Methods(comptime Ctx: type) type {
         /// Store `value` as element `idx_name` of a union or group array: boxed
         /// as the element type and passed by address. `doxa_array_set_value`
         /// re-homes its payload into the array's arena.
-        fn emitBoxedElementStore(self: *IRPrinter, w: anytype, id: *usize, hdr_name: []const u8, idx_name: []const u8, value: StackVal, element_type: HIR.HIRType) !void {
-            const boxed = try self.buildDoxaValue(w, value, element_type, id);
-            const slot = try self.boxDoxaValue(w, boxed);
+        /// The generator boxed `value` as the element type (`convertValue`);
+        /// the store only places the box.
+        fn emitBoxedElementStore(self: *IRPrinter, w: anytype, hdr_name: []const u8, idx_name: []const u8, value: StackVal) !void {
+            const slot = try self.boxDoxaValue(w, value);
             try w.print("  call void @doxa_array_set_value(ptr {s}, i64 {s}, ptr {s})\n", .{ hdr_name, idx_name, slot });
         }
 
@@ -443,6 +444,7 @@ pub fn Methods(comptime Ctx: type) type {
                 if (inst.has_else_value) {
                     const else_val = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    try self.verifyStore(else_val, inst.value_type);
                     else_storage = try self.convertValueToArrayStorage(w, else_val, inst.value_type, id);
                 }
 
@@ -486,6 +488,8 @@ pub fn Methods(comptime Ctx: type) type {
                 const key = stack.items[stack.items.len - 2];
                 stack.items.len -= 2;
 
+                try self.verifyStore(key, inst.key_type);
+                try self.verifyStore(value, inst.value_type);
                 const key_storage = try self.convertValueToArrayStorage(w, key, inst.key_type, id);
                 const val_storage = try self.convertValueToArrayStorage(w, value, inst.value_type, id);
 
@@ -501,6 +505,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (inst.has_else_value) {
                 const else_val = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
+                try self.verifyStore(else_val, inst.value_type);
                 else_storage = try self.convertValueToArrayStorage(w, else_val, inst.value_type, id);
 
                 if (else_storage) |else_bits| {
@@ -536,6 +541,7 @@ pub fn Methods(comptime Ctx: type) type {
                 map_val = try self.ensurePointer(w, map_val, id);
             }
 
+            try self.verifyStore(key_val, inst.key_type);
             const key_storage = try self.convertValueToArrayStorage(w, key_val, inst.key_type, id);
 
             // Retrieve the value and whether the key existed
@@ -751,13 +757,10 @@ pub fn Methods(comptime Ctx: type) type {
                 map_val = try self.ensurePointer(w, map_val, id);
             }
 
-            // Infer key type from the map's tracked element type when possible;
-            // fall back to string keys for safety.
-            const key_type: HIR.HIRType = inst.key_type;
-            const key_storage = try self.convertValueToArrayStorage(w, key_val, key_type, id);
-
-            const value_type = map_val.array_type orelse HIR.HIRType.Int;
-            const val_storage = try self.convertValueToArrayStorage(w, value, value_type, id);
+            try self.verifyStore(key_val, inst.key_type);
+            try self.verifyStore(value, inst.value_type);
+            const key_storage = try self.convertValueToArrayStorage(w, key_val, inst.key_type, id);
+            const val_storage = try self.convertValueToArrayStorage(w, value, inst.value_type, id);
 
             const set_line = try std.fmt.allocPrint(
                 self.allocator,
@@ -790,6 +793,13 @@ pub fn Methods(comptime Ctx: type) type {
                 const element_type = hdr_val.array_type orelse HIR.HIRType.Int;
                 const idx_i64 = try self.ensureI64(w, idx_val, id);
                 const depth = hdr_val.fixed_array_depth;
+                // A fixed array's `array_type` is its outermost element type; a
+                // depth-1 store writes the innermost one.
+                if (depth == 1) {
+                    var innermost_type = element_type;
+                    while (innermost_type == .Array) innermost_type = innermost_type.Array.*;
+                    try self.verifyStore(value, innermost_type);
+                }
                 const struct_elem = depth == 1 and element_type == .Struct and hdr_val.struct_field_types != null;
                 var struct_elem_ty: []const u8 = "";
                 var level_type: []const u8 = undefined;
@@ -851,27 +861,14 @@ pub fn Methods(comptime Ctx: type) type {
                         return;
                     }
                     const innermost = self.fixedArrayInnermostLLVMType(element_type);
+                    // `verifyStore` admitted the value in the element's own
+                    // representation; only a comparison's `i1` widens to a
+                    // tetra's `i2`.
                     var store_val = value;
-                    if (!std.mem.eql(u8, innermost, "i64") and store_val.ty == .I64) {
-                        if (std.mem.eql(u8, innermost, "double")) {
-                            const tmp = try self.nextTemp(id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ tmp, store_val.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            store_val = .{ .name = tmp, .ty = .F64 };
-                        } else if (std.mem.eql(u8, innermost, "i8")) {
-                            const tmp = try self.nextTemp(id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ tmp, store_val.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            store_val = .{ .name = tmp, .ty = .I8 };
-                        } else if (std.mem.eql(u8, innermost, "i2")) {
-                            const tmp = try self.nextTemp(id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ tmp, store_val.name });
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            store_val = .{ .name = tmp, .ty = .I2 };
-                        }
+                    if (store_val.ty == .I1) {
+                        const tmp = try self.nextTemp(id);
+                        try w.print("  {s} = zext i1 {s} to i2\n", .{ tmp, store_val.name });
+                        store_val = .{ .name = tmp, .ty = .I2 };
                     }
                     const store_line = try std.fmt.allocPrint(self.allocator,
                         "  store {s} {s}, ptr {s}\n",
@@ -899,8 +896,9 @@ pub fn Methods(comptime Ctx: type) type {
             const element_type = arr_ptr.array_type orelse HIR.HIRType{ .Int = {} };
             const idx_i64 = try self.ensureI64(w, idx_val, id);
 
+            try self.verifyStore(value, element_type);
             if (IRPrinter.isBoxedMemberType(element_type)) {
-                try emitBoxedElementStore(self, w, id, arr_ptr.name, idx_i64.name, value, element_type);
+                try emitBoxedElementStore(self, w, arr_ptr.name, idx_i64.name, value);
             } else if (element_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
                 const str_ptr_ext = try self.nextTemp(id);
@@ -1405,8 +1403,9 @@ pub fn Methods(comptime Ctx: type) type {
                     else => .Int,
                 };
             }
+            try self.verifyStore(value, element_type);
             if (IRPrinter.isBoxedMemberType(element_type)) {
-                try emitBoxedElementStore(self, w, id, len_info.array.name, len_info.len_value.name, value, element_type);
+                try emitBoxedElementStore(self, w, len_info.array.name, len_info.len_value.name, value);
                 try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type, .region = array_region });
                 return;
             }
@@ -1581,9 +1580,9 @@ pub fn Methods(comptime Ctx: type) type {
                     };
                 }
                 const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+                try self.verifyStore(value, elem_type);
                 if (IRPrinter.isBoxedMemberType(elem_type)) {
-                    const boxed = try self.buildDoxaValue(w, value, elem_type, id);
-                    const slot = try self.boxDoxaValue(w, boxed);
+                    const slot = try self.boxDoxaValue(w, value);
                     const out = try self.nextTemp(id);
                     try w.print("  {s} = call ptr @doxa_array_insert_value(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, slot });
                     try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });

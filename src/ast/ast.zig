@@ -304,12 +304,6 @@ pub const Stmt = struct {
         },
         EnumDecl: EnumDecl,
         GroupDecl: GroupDecl,
-        MapLiteral: struct {
-            entries: []*MapEntry,
-            key_type: ?TypeInfo = null,
-            value_type: ?TypeInfo = null,
-            else_value: ?*Expr = null,
-        },
         Import: ImportInfo,
         Continue: void,
         Break: void,
@@ -382,17 +376,6 @@ pub const Stmt = struct {
                     allocator.free(member.qualifier);
                 }
                 allocator.free(decl.members);
-            },
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.deinit(allocator);
-                    allocator.destroy(entry);
-                }
-                allocator.free(map_literal.entries);
-                if (map_literal.else_value) |else_val| {
-                    else_val.deinit(allocator);
-                    allocator.destroy(else_val);
-                }
             },
             .Assert => |*a| {
                 a.condition.deinit(allocator);
@@ -1287,15 +1270,6 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: *const Stmt, depth: u32) std.Io.Writer
         },
         .EnumDecl => |e| try writer.print("Stmt.EnumDecl name={s}\n", .{e.name.lexeme}),
         .GroupDecl => |g| try writer.print("Stmt.GroupDecl name={s}\n", .{g.name.lexeme}),
-        .MapLiteral => |*ml| {
-            try writer.print("Stmt.MapLiteral\n", .{});
-            for (ml.entries) |entry| {
-                try dumpIndent(writer, depth + 1);
-                try writer.print("entry\n", .{});
-                try dumpExpr(writer, entry.key, depth + 2);
-                try dumpExpr(writer, entry.value, depth + 2);
-            }
-        },
         .Import => try writer.print("Stmt.Import\n", .{}),
         .Continue => try writer.print("Stmt.Continue\n", .{}),
         .Break => try writer.print("Stmt.Break\n", .{}),

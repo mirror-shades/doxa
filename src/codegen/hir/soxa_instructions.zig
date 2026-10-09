@@ -485,6 +485,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate map update
     MapSet: struct {
         key_type: HIRType,
+        value_type: HIRType,
     },
 
     /// Assertion failure with formatted error message

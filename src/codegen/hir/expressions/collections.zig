@@ -33,12 +33,6 @@ fn collectLiteralNestedSizes(
     collectLiteralNestedSizes(inner, sizes, depth);
 }
 
-/// How a runtime map stores a key of type `key_type`: a string by its bytes,
-/// every other key (an int, an enum's discriminant) as an `i64` word.
-fn mapKeyRepresentation(key_type: HIRType) HIRType {
-    return if (key_type == .String) .String else .Int;
-}
-
 /// Handle collection operations: arrays, maps, indexing
 pub const CollectionsHandler = struct {
     generator: *HIRGenerator,
@@ -90,9 +84,7 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = index_value, .constant_id = index_const } });
 
             try self.generator.generateExpression(element, true, false);
-            // A member of a union or group element is boxed by the element
-            // store itself (Phase C makes it explicit).
-            if (!element_type.isBoxed()) try self.generator.convertValue(try self.generator.typeOf(element), element_type);
+            try self.generator.convertValue(try self.generator.typeOf(element), element_type);
 
             // ArraySet pops: value, index, array; and pushes updated array back
             try self.generator.instructions.append(.{ .ArraySet = .{ .bounds_check = false } }); // No bounds check for initialization
@@ -125,8 +117,11 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for map literals
     pub fn generateMap(self: *CollectionsHandler, map_expr: *ast.Expr, entries: []*ast.MapEntry, else_expr: ?*ast.Expr) !void {
+        // The map's key and value types, as analysis typed the literal.
+        const map_type = (try self.generator.typeOf(map_expr)).Map;
         if (else_expr) |expr| {
             try self.generator.generateExpression(expr, true, false);
+            try self.generator.convertValue(try self.generator.typeOf(expr), map_type.value.*);
         }
 
         // Generate key-value pairs in reverse order so the VM pops in source order
@@ -135,7 +130,9 @@ pub const CollectionsHandler = struct {
             reverse_i -= 1;
             const entry = entries[reverse_i];
             try self.generator.generateExpression(entry.key, true, false);
+            try self.generator.convertValue(try self.generator.typeOf(entry.key), map_type.key.*);
             try self.generator.generateExpression(entry.value, true, false);
+            try self.generator.convertValue(try self.generator.typeOf(entry.value), map_type.value.*);
         }
 
         // Prepare dummy HIRMapEntry slice; VM will read actual values from stack
@@ -148,12 +145,10 @@ pub const CollectionsHandler = struct {
             e.* = HIRMapEntry{ .key = nothing_key, .value = nothing_value };
         }
 
-        // The map's key and value types, as analysis typed the literal.
-        const map_type = (try self.generator.typeOf(map_expr)).Map;
         const map_instruction = HIRInstruction{
             .Map = .{
                 .entries = dummy_entries,
-                .key_type = mapKeyRepresentation(map_type.key.*),
+                .key_type = map_type.key.*,
                 .value_type = map_type.value.*,
                 .has_else_value = else_expr != null,
             },
@@ -171,14 +166,15 @@ pub const CollectionsHandler = struct {
         // The container as analysis typed it; a narrowed name has already
         // been read as its member.
         switch (try self.generator.typeOf(index.array)) {
-            .Map => {
+            .Map => |map_type| {
                 // Generate index expression
                 try self.generator.generateExpression(index.index, true, false);
+                try self.generator.convertValue(try self.generator.typeOf(index.index), map_type.key.*);
 
                 // The read is the map's value, or `value | nothing` for a map
                 // without an `else`.
                 try self.generator.instructions.append(.{ .MapGet = .{
-                    .key_type = mapKeyRepresentation(try self.generator.typeOf(index.index)),
+                    .key_type = map_type.key.*,
                     .value_type = try self.generator.typeOf(expr),
                 } });
             },
@@ -277,15 +273,19 @@ pub const CollectionsHandler = struct {
             // Generate array expression
             try self.generator.generateExpression(assign_data.array, true, false);
 
-            // Generate index expression
+            // The receiver is a map (MapSet) or an array (ArraySet); either
+            // way the key and the value are converted to the slot they fill.
+            const receiver_type = try self.generator.typeOf(assign_data.array);
+            const key_type: HIRType = if (receiver_type == .Map) receiver_type.Map.key.* else .Int;
+            const value_type: HIRType = if (receiver_type == .Map) receiver_type.Map.value.* else receiver_type.Array.*;
+
             try self.generator.generateExpression(assign_data.index, true, false);
-
-            // Generate value expression
+            try self.generator.convertValue(try self.generator.typeOf(assign_data.index), key_type);
             try self.generator.generateExpression(assign_data.value, true, false);
+            try self.generator.convertValue(try self.generator.typeOf(assign_data.value), value_type);
 
-            // If the receiver is a map, emit MapSet; otherwise ArraySet
-            if (try self.generator.typeOf(assign_data.array) == .Map) {
-                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = mapKeyRepresentation(try self.generator.typeOf(assign_data.index)) } });
+            if (receiver_type == .Map) {
+                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type, .value_type = value_type } });
             } else {
                 // Generate ArraySet instruction
                 // Stack order expected by VM (top to bottom): value, index, array

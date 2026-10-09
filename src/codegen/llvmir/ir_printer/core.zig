@@ -750,6 +750,8 @@ pub fn Methods(comptime Ctx: type) type {
                 entry.value_ptr.deinit(self.allocator);
             }
             self.enum_print_map.deinit();
+            self.box_ids.deinit(self.allocator);
+            self.boxed_types.deinit(self.allocator);
 
             var loop_it = self.loop_head_envs.iterator();
             while (loop_it.next()) |entry| {

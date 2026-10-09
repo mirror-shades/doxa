@@ -1,6 +1,6 @@
 const std = @import("std");
 const module_graph = @import("../../../module/graph.zig");
-const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
+const DoxaBoxMeta = @import("../../../runtime/doxa_rt.zig").DoxaBoxMeta;
 
 fn resolveStructFieldIndex(field_name: []const u8, field_names: ?[]const []const u8, hir_index: u32) u32 {
     if (field_names) |names| {
@@ -332,7 +332,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const member_line = try std.fmt.allocPrint(
                         self.allocator,
                         "  {s} = and i32 {s}, {d}\n",
-                        .{ member_bits, reserved, DoxaUnionMeta.member_index_mask },
+                        .{ member_bits, reserved, DoxaBoxMeta.member_index_mask },
                     );
                     defer self.allocator.free(member_line);
                     try w.writeAll(member_line);
@@ -673,6 +673,7 @@ pub fn Methods(comptime Ctx: type) type {
 
                 // Field type for this index
                 const field_type = sn.field_types[idx_usize];
+                try self.verifyStore(field_val, field_type);
                 switch (field_type) {
                     .Enum => pending_enum_type_names[idx_usize] = field_val.enum_type_name,
                     else => {},
@@ -736,7 +737,7 @@ pub fn Methods(comptime Ctx: type) type {
                             else
                                 try self.allocator.dupe(u8, "0");
                             defer self.allocator.free(levels);
-                            break :blk_box try self.boxBoxedMemberField(w, field_val, field_type, levels, id);
+                            break :blk_box try self.placeFieldBox(w, field_val, levels, id);
                         },
                         else => try self.convertValueToArrayStorage(w, field_val, field_type, id),
                     };
@@ -985,6 +986,7 @@ pub fn Methods(comptime Ctx: type) type {
             };
 
             const word_offset = structFieldWordOffset(set_field_types, @intCast(set_field_index));
+            try self.verifyStore(value, field_type);
 
             if (field_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
@@ -1076,11 +1078,11 @@ pub fn Methods(comptime Ctx: type) type {
                             const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {d}, {s}\n", .{ lvl, base_levels + 1, depth });
                             defer self.allocator.free(add_line);
                             try w.writeAll(add_line);
-                            break :blk_box try self.boxBoxedMemberField(w, value, field_type, lvl, id);
+                            break :blk_box try self.placeFieldBox(w, value, lvl, id);
                         }
                         const lvl = try std.fmt.allocPrint(self.allocator, "{d}", .{base_levels});
                         defer self.allocator.free(lvl);
-                        break :blk_box try self.boxBoxedMemberField(w, value, field_type, lvl, id);
+                        break :blk_box try self.placeFieldBox(w, value, lvl, id);
                     },
                     else => try self.convertValueToArrayStorage(w, value, field_type, id),
                 };
@@ -1187,32 +1189,31 @@ pub fn Methods(comptime Ctx: type) type {
             return StackVal{ .name = bits, .ty = .I64 };
         }
 
-        /// Build a `%DoxaValue` box for a union/group-typed struct field and
-        /// return the box pointer as i64 storage bits. A union field is one i64
-        /// word holding a pointer to a heap `%DoxaValue` (the field has no room
-        /// for the box inline, and the tag/member metadata must survive), so the
-        /// member is boxed first, then written into an arena-owned box.
+        /// Place a union/group-typed struct field's box and return the box
+        /// pointer as i64 storage bits. A union field is one i64 word holding a
+        /// pointer to a heap `%DoxaValue` (the field has no room for the box
+        /// inline, and the tag/member metadata must survive). The generator
+        /// boxed the value as the field's type (`convertValue`); this writes it
+        /// into an arena-owned cell.
         ///
         /// `levels` is the owning arena as a runtime level expression (0 is the
         /// current scope); the box must live in the same arena as the struct.
-        /// TODO: `buildDoxaValue` clones a string/array payload into the current
-        /// scope, so a boxed member with a heap payload under a caller placement
-        /// is not yet re-homed to `levels`.
-        pub fn boxBoxedMemberField(
+        /// TODO: the `Box` instruction clones a string/array payload into the
+        /// current scope, so a boxed member with a heap payload under a caller
+        /// placement is not yet re-homed to `levels`.
+        pub fn placeFieldBox(
             self: *IRPrinter,
             w: anytype,
             value: StackVal,
-            field_type: HIR.HIRType,
             levels: []const u8,
             id: *usize,
         ) !StackVal {
-            const dv = try self.buildDoxaValue(w, value, field_type, id);
             const box = try self.nextTemp(id);
             const alloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc_at(i64 {s}, i64 24, i64 8)\n", .{ box, levels });
             defer self.allocator.free(alloc_line);
             try w.writeAll(alloc_line);
 
-            const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ dv.name, box });
+            const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ value.name, box });
             defer self.allocator.free(store_line);
             try w.writeAll(store_line);
 
@@ -1894,6 +1895,54 @@ pub fn Methods(comptime Ctx: type) type {
 
             try self.enum_desc_globals_by_type.put(type_name, desc_global);
             return desc_global;
+        }
+
+        /// The runtime box registry: one `BoxDesc` per box id, listing each
+        /// member's display name and enum descriptor (`null` for a member that
+        /// is not an enum), so the runtime names a boxed enum `Type.Variant`.
+        /// Emitted once every function is written, when every box id is
+        /// known; `main` registers it at startup (`emitBoxRegistryInit`).
+        pub fn emitBoxRegistry(self: *IRPrinter, peek_state: *PeekEmitState) !void {
+            var descs = std.ArrayListUnmanaged(u8).empty;
+            defer descs.deinit(self.allocator);
+            for (self.boxed_types.items, 0..) |boxed, box_id| {
+                const count = self.boxMemberCount(boxed);
+                var names = std.ArrayListUnmanaged(u8).empty;
+                defer names.deinit(self.allocator);
+                var enums = std.ArrayListUnmanaged(u8).empty;
+                defer enums.deinit(self.allocator);
+                for (0..count) |index| {
+                    if (index != 0) {
+                        try names.appendSlice(self.allocator, ", ");
+                        try enums.appendSlice(self.allocator, ", ");
+                    }
+                    const member = self.boxMember(boxed, index).?;
+                    if (member != .Enum) {
+                        try names.appendSlice(self.allocator, "ptr null");
+                        try enums.appendSlice(self.allocator, "ptr null");
+                        continue;
+                    }
+                    const display = self.enum_table.displayName(member.Enum) orelse return error.UnknownEnum;
+                    const key = self.enum_table.keyOf(member.Enum) orelse return error.UnknownEnum;
+                    const name_info = try internPeekString(self.allocator, &peek_state.string_map, &peek_state.strings, peek_state.next_id_ptr, &peek_state.globals, display);
+                    try names.print(self.allocator, "ptr {s}", .{name_info.name});
+                    try enums.print(self.allocator, "ptr {s}", .{try self.getOrCreateEnumDescGlobal(peek_state, key)});
+                }
+                try peek_state.globals.append(try std.fmt.allocPrint(self.allocator, "@.doxa.box.names.{d} = private constant [{d} x ptr] [{s}]\n", .{ box_id, count, names.items }));
+                try peek_state.globals.append(try std.fmt.allocPrint(self.allocator, "@.doxa.box.enums.{d} = private constant [{d} x ptr] [{s}]\n", .{ box_id, count, enums.items }));
+                try peek_state.globals.append(try std.fmt.allocPrint(self.allocator, "@.doxa.box.desc.{d} = private constant {{ i64, ptr, ptr }} {{ i64 {d}, ptr @.doxa.box.names.{d}, ptr @.doxa.box.enums.{d} }}\n", .{ box_id, count, box_id, box_id }));
+                if (box_id != 0) try descs.appendSlice(self.allocator, ", ");
+                try descs.print(self.allocator, "ptr @.doxa.box.desc.{d}", .{box_id});
+            }
+            const box_count = self.boxed_types.items.len;
+            try peek_state.globals.append(try std.fmt.allocPrint(self.allocator, "@.doxa.boxes = private constant [{d} x ptr] [{s}]\n", .{ box_count, descs.items }));
+            try peek_state.globals.append(try std.fmt.allocPrint(self.allocator, "@.doxa.box.count = private constant i64 {d}\n", .{box_count}));
+        }
+
+        /// Register the box registry, which `emitBoxRegistry` defines after
+        /// every function is written.
+        pub fn emitBoxRegistryInit(_: *IRPrinter, w: anytype) !void {
+            try w.writeAll("  call void @doxa_box_registry_init(ptr @.doxa.boxes, ptr @.doxa.box.count)\n");
         }
 
         pub fn emitEnumInitCalls(self: *IRPrinter, w: anytype, peek_state: *PeekEmitState, id: *usize) !void {
