@@ -319,6 +319,13 @@ fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *co
     return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, graph, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, profiler);
 }
 
+/// Each of `paths` resolved against `base`; an absolute path is kept as is.
+fn resolveAll(allocator: std.mem.Allocator, base: []const u8, paths: []const []const u8) ![]const []const u8 {
+    const resolved = try allocator.alloc([]const u8, paths.len);
+    for (paths, resolved) |path, *out| out.* = try std.fs.path.resolve(allocator, &.{ base, path });
+    return resolved;
+}
+
 fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
     return if (std.fs.path.isAbsolute(path))
         std.Io.Dir.openDirAbsolute(io, path, opts)
@@ -674,6 +681,21 @@ fn compileToNative(
     if (std.fs.path.dirname(exe_path)) |dir| {
         try std.Io.Dir.cwd().createDirPath(io, dir);
     }
+
+    // Every toolchain step runs inside the cache directory and is handed only
+    // absolute paths. Zig's key for the C runtime it builds and caches depends
+    // on the working directory (one that contains the Zig install, such as the
+    // doxa checkout, keys it differently from any other), so spawning from the
+    // user's directory made where `doxa` was invoked decide whether a full
+    // C-runtime build was a cache hit.
+    var paths_arena = std.heap.ArenaAllocator.init(allocator);
+    defer paths_arena.deinit();
+    const paths = paths_arena.allocator();
+    const invocation_dir = try std.Io.Dir.cwd().realPathFileAlloc(io, ".", paths);
+    const cache_dir = try std.fs.path.resolve(paths, &.{ invocation_dir, cli_options.cache_dir });
+    const exe = try std.fs.path.resolve(paths, &.{ invocation_dir, exe_path });
+    const include_dirs = try resolveAll(paths, invocation_dir, cli_options.include_dirs.items);
+    const lib_dirs = try resolveAll(paths, invocation_dir, cli_options.lib_dirs.items);
     profiler.end();
 
     const stem_for_derivatives = blk: {
@@ -693,20 +715,20 @@ fn compileToNative(
     defer allocator.free(target_arg);
     const obj_ext: []const u8 = if (target.isWindows()) "obj" else "o";
 
-    const artifacts_dir = try std.fs.path.join(allocator, &.{ cli_options.cache_dir, "artifacts" });
+    const artifacts_dir = try std.fs.path.join(allocator, &.{ cache_dir, "artifacts" });
     defer allocator.free(artifacts_dir);
     var artifact_cache = try ArtifactCache.init(io, allocator, artifacts_dir);
     defer artifact_cache.deinit();
 
     var ir_path_buf: [512]u8 = undefined;
-    const ir_path = try std.fmt.bufPrint(&ir_path_buf, "{s}/{s}.ll", .{ cli_options.cache_dir, stem_for_derivatives });
+    const ir_path = try std.fmt.bufPrint(&ir_path_buf, "{s}/{s}.ll", .{ cache_dir, stem_for_derivatives });
     {
         profiler.begin("emit-ir");
         defer profiler.end();
         const emit_alloc = memoryManager.getExecutionAllocator();
         if (cli_options.emit_hir) {
             var hir_path_buf: [512]u8 = undefined;
-            const hir_path = try std.fmt.bufPrint(&hir_path_buf, "{s}/{s}.hir", .{ cli_options.cache_dir, stem_for_derivatives });
+            const hir_path = try std.fmt.bufPrint(&hir_path_buf, "{s}/{s}.hir", .{ cache_dir, stem_for_derivatives });
             try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = hir_path, .data = try writeHirText(emit_alloc, module) });
         }
         var emitter = try llvm_emit.Emitter.init(emit_alloc, module, cli_options.opt.arithOverflow());
@@ -722,7 +744,7 @@ fn compileToNative(
     const obj_path = blk: {
         const ll_source = try std.Io.Dir.cwd().readFileAlloc(io, ir_path, allocator, .unlimited);
         defer allocator.free(ll_source);
-        const key = userObjectKey(ll_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.clangFlag(), cli_options.include_dirs.items);
+        const key = userObjectKey(ll_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.clangFlag(), include_dirs);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
@@ -744,14 +766,14 @@ fn compileToNative(
             for (include_flags.items) |f| std.heap.page_allocator.free(f);
             include_flags.deinit();
         }
-        for (cli_options.include_dirs.items) |dir| {
+        for (include_dirs) |dir| {
             const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
             try include_flags.append(flag);
             try args.append(flag);
         }
         var child = try std.process.spawn(io, .{
             .argv = args.items,
-            .cwd = .{ .path = "." },
+            .cwd = .{ .path = cache_dir },
             .stdout = .inherit,
             .stderr = .inherit,
         });
@@ -783,7 +805,7 @@ fn compileToNative(
     }
 
     profiler.begin("inline-zig");
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, semantic_analyzer.graph, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, profiler);
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, semantic_analyzer.graph, reporter, cache_dir, cli_options.opt.zigFlag(), target, include_dirs, toolchain, profiler);
     profiler.end();
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
@@ -802,13 +824,13 @@ fn compileToNative(
         const root_source = try buildRootSource(allocator);
         defer allocator.free(root_source);
 
-        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.zigFlag(), cli_options.include_dirs.items);
+        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.zigFlag(), include_dirs);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         profiler.begin("runtime-stage");
-        const runtime_dst = try stageRuntimeSources(io, allocator, runtime_sources, cli_options.cache_dir);
+        const runtime_dst = try stageRuntimeSources(io, allocator, runtime_sources, cache_dir);
         defer allocator.free(runtime_dst);
-        const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cli_options.cache_dir});
+        const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cache_dir});
         defer allocator.free(root_path);
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = root_path, .data = root_source });
         profiler.end();
@@ -831,14 +853,14 @@ fn compileToNative(
             for (include_flags.items) |f| std.heap.page_allocator.free(f);
             include_flags.deinit();
         }
-        for (cli_options.include_dirs.items) |dir| {
+        for (include_dirs) |dir| {
             const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
             try include_flags.append(flag);
             try args.append(flag);
         }
         var child = try std.process.spawn(io, .{
             .argv = args.items,
-            .cwd = .{ .path = "." },
+            .cwd = .{ .path = cache_dir },
             .stdout = .inherit,
             .stderr = .inherit,
         });
@@ -870,7 +892,7 @@ fn compileToNative(
         for (inline_zig_wrapper_paths) |p| {
             try args_ln.append(p);
         }
-        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe_path});
+        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe});
         defer std.heap.page_allocator.free(emit_flag);
         try args_ln.append(emit_flag);
         try target.appendTargetArg(&args_ln);
@@ -886,7 +908,7 @@ fn compileToNative(
             for (manifest_link_flags.items) |f| std.heap.page_allocator.free(f);
             manifest_link_flags.deinit();
         }
-        for (cli_options.lib_dirs.items) |dir| {
+        for (lib_dirs) |dir| {
             const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-L{s}", .{dir});
             try manifest_link_flags.append(flag);
             try args_ln.append(flag);
@@ -903,7 +925,7 @@ fn compileToNative(
 
         var child_ln = try std.process.spawn(io, .{
             .argv = args_ln.items,
-            .cwd = .{ .path = "." },
+            .cwd = .{ .path = cache_dir },
             .stdout = .inherit,
             .stderr = .inherit,
         });
@@ -919,16 +941,6 @@ fn compileToNative(
             },
         }
     }
-
-    const pdb_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.pdb", .{stem_for_derivatives});
-    defer std.heap.page_allocator.free(pdb_filename);
-    const pdb_out_path = try std.fmt.allocPrint(std.heap.page_allocator, "{s}/{s}.pdb", .{ cli_options.cache_dir, stem_for_derivatives });
-    defer std.heap.page_allocator.free(pdb_out_path);
-
-    std.Io.Dir.rename(std.Io.Dir.cwd(), pdb_filename, std.Io.Dir.cwd(), pdb_out_path, io) catch |err| switch (err) {
-        error.FileNotFound => {},
-        else => {},
-    };
 }
 
 // Spawn the native binary produced for `doxa run`. `program_args[0]` is the

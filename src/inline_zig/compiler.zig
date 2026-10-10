@@ -295,8 +295,8 @@ fn generateWrapperZigFile(
     const hex_buf = std.fmt.bytesToHex(h, .lower);
     const short_hex = hex_buf[0..16];
 
-    var zig_path_buf: [256]u8 = undefined;
-    const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, short_hex });
+    const zig_path = try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, short_hex });
+    errdefer allocator.free(zig_path);
 
     var file_buf = std.array_list.Managed(u8).init(allocator);
     defer file_buf.deinit();
@@ -553,11 +553,12 @@ fn generateWrapperZigFile(
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = zig_path, .data = file_buf.items });
 
-    return .{
-        .zig_path = try allocator.dupe(u8, zig_path),
-    };
+    return .{ .zig_path = zig_path };
 }
 
+/// Compile every inline-Zig unit of the program to an object. `cache_dir` and
+/// `include_dirs` are absolute: each `zig build-obj` runs inside the cache
+/// directory, as every toolchain step does (`compileToNative`).
 pub fn compileInlineZigObjects(
     io: std.Io,
     memoryManager: *MemoryManager,
@@ -612,8 +613,9 @@ pub fn compileInlineZigObjects(
         }
         const key_hex = hashing.shortHexOf(kb.finish());
 
-        var obj_path_buf: [320]u8 = undefined;
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.{s}.{s}", .{ zig_dir, zig_stem, key_hex[0..], obj_ext });
+        try out_paths.ensureUnusedCapacity(1);
+        const obj_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/{s}.{s}.{s}", .{ zig_dir, zig_stem, key_hex[0..], obj_ext });
+        out_paths.appendAssumeCapacity(obj_path);
 
         const obj_already_compiled = blk: {
             const f = std.Io.Dir.cwd().openFile(io, obj_path, .{}) catch break :blk false;
@@ -663,7 +665,7 @@ pub fn compileInlineZigObjects(
 
             var child = try std.process.spawn(io, .{
                 .argv = args_list.items,
-                .cwd = .{ .path = "." },
+                .cwd = .{ .path = cache_dir },
                 .stdout = .inherit,
                 .stderr = .inherit,
             });
@@ -673,8 +675,6 @@ pub fn compileInlineZigObjects(
                 else => return error.Unexpected,
             }
         }
-
-        try out_paths.append(try memoryManager.getAllocator().dupe(u8, obj_path));
     }
 
     return try out_paths.toOwnedSlice();
