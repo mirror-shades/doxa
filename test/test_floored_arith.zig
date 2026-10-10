@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 
-const ir = @import("../src/codegen/llvmir/ir_printer/int_range.zig");
+const ir = @import("../src/codegen/llvm/int_range.zig");
 
 const IntRange = ir.IntRange;
 const ModShape = ir.ModShape;

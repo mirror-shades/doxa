@@ -12,8 +12,8 @@ test {
     _ = @import("test/test_artifact_cache.zig");
     _ = @import("test/test_floored_arith.zig");
     _ = @import("test/test_overflow.zig");
+    _ = @import("test/test_register_hir.zig");
     _ = @import("test/test_stdlib_catalog.zig");
-    _ = @import("test/test_struct_table_lifetimes.zig");
     _ = @import("test/test_module_graph.zig");
     _ = @import("src/lsp/server.zig");
     _ = @import("src/lsp/internal_methods.zig");

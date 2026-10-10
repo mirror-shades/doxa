@@ -153,6 +153,11 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_union_narrow_results[0..],
     },
     .{
+        .name = "uninitialized union holds its first member's default",
+        .path = "./test/misc/union_default.doxa",
+        .expected_print = answers.expected_union_default_results[0..],
+    },
+    .{
         .name = "union stringify before narrowing",
         .path = "./test/misc/union_stringify.doxa",
         .expected_print = answers.expected_union_stringify_results[0..],

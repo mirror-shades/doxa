@@ -73,6 +73,12 @@ pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "strings ints" },
 };
 
+pub const expected_union_default_results = [_]print_result{
+    .{ .value = "0" },
+    .{ .value = "[]" },
+    .{ .value = "0.0" },
+};
+
 pub const expected_union_stringify_results = [_]print_result{
     .{ .value = "string arm: hello world" },
     .{ .value = "int arm: 42" },

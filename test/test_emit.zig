@@ -269,7 +269,8 @@ test "emit: a general constant divisor keeps the remainder but drops the xor" {
     // unknown sign and the signed remainder has to stay. What the constant
     // still buys is the settled divisor sign: the sign-difference `xor`
     // disappears, leaving the dividend's own sign test.
-    const source = try loopSource(allocator, "i % 997");
+    // The dividend's sign is unknown: `i - 5` ranges below zero.
+    const source = try loopSource(allocator, "(i - 5) % 997");
     defer allocator.free(source);
     const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
@@ -391,14 +392,13 @@ test "descriptor skip: a local scalar struct clones with the typed word copy" {
     const ir_text = try emitIrFor(allocator, &tmp, descriptorFreeSource, "--opt=0");
     defer allocator.free(ir_text);
 
-    // The scope-crossing store is the typed clone, not the descriptor walk.
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_clone_scalar_at") != null);
-    // Construction never registers it, and no clone consults the registry.
-    // Match the call form with its `(` so the `_at` variant is not confused for
-    // the plain `doxa_struct_register` name.
+    // The scope-crossing store is the typed clone, decided statically, not
+    // the descriptor walk or a runtime rehome.
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_clone_scalar(") != null);
+    // Construction never registers it, and no copy consults the registry.
     try testing.expect(std.mem.indexOf(u8, ir_text, "call void @doxa_struct_register(") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_rehome_at") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_clone_at") == null);
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_rehome") == null);
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call ptr @doxa_struct_clone(") == null);
 }
 
 /// The counter-case: a struct that reaches `@string` must keep its descriptor,
@@ -501,11 +501,11 @@ test "scope elision: a function that only reads a heap parameter drops its scope
     try testing.expect(std.mem.indexOf(u8, mutator, "@doxa_scope_enter") != null);
 }
 
-// A method takes its receiver as a `^` alias, which names the caller's storage
-// and allocates nothing. Lending it is safe exactly when the callee's own scope
-// is dead, so a read-only method, a function calling it on a parameter, and a
-// method calling it on a field all drop their scopes; a method that stores into
-// its receiver keeps its scope, and so does every caller lending it one.
+// A method takes its receiver as a value, so lending one allocates nothing:
+// a read-only method, a function calling it on a parameter, and a method
+// calling it on a field all drop their scopes. A field store places its value
+// in the receiver's own arena, so it needs no scope either; a method that
+// builds a value of its own keeps its scope.
 const methodReaderSource =
     \\struct Board {
     \\    public cells :: int[],
@@ -516,6 +516,10 @@ const methodReaderSource =
     \\    public method rename(name :: string) returns int {
     \\        this.label is name
     \\        return 0
+    \\    }
+    \\    public method shout() returns int {
+    \\        const loud is this.label + "!"
+    \\        return @length(loud)
     \\    }
     \\}
     \\struct Game {
@@ -532,11 +536,11 @@ const methodReaderSource =
     \\}
     \\public entry function main() {
     \\    var g is $Game { board is $Board { cells is [1, 2, 1], label is "a" } }
-    \\    @print("{isFlankedBy(g.board, 1)} {g.evaluate()} {g.relabel()}\n")
+    \\    @print("{isFlankedBy(g.board, 1)} {g.evaluate()} {g.relabel()} {g.board.shout()}\\n")
     \\}
 ;
 
-test "scope elision: a read-only method and every caller lending it a receiver drop their scopes" {
+test "scope elision: a method and every caller lending it a receiver drop their scopes unless they allocate" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const allocator = testing.allocator;
@@ -544,14 +548,12 @@ test "scope elision: a read-only method and every caller lending it a receiver d
     const ir_text = try emitIrFor(allocator, &tmp, methodReaderSource, "--opt=0");
     defer allocator.free(ir_text);
 
-    for ([_][]const u8{ "spaceAt", "isFlankedBy", "evaluate" }) |name| {
+    for ([_][]const u8{ "spaceAt", "isFlankedBy", "evaluate", "rename", "relabel" }) |name| {
         const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
         try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_enter") == null);
     }
-    for ([_][]const u8{ "rename", "relabel" }) |name| {
-        const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
-        try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_enter") != null);
-    }
+    const builder = functionBody(ir_text, "shout") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, builder, "@doxa_scope_enter") != null);
 }
 
 test "module: every function carries the tune-cpu attribute group" {
