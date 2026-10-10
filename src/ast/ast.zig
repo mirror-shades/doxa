@@ -4,7 +4,7 @@ pub const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 const Location = @import("../utils/reporting.zig").Location;
 const Reporter = @import("../utils/reporting.zig").Reporter;
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const HIRType = @import("../codegen/hir/types.zig").HIRType;
 const ids = @import("../module/ids.zig");
 
 pub const TypeRef = ids.TypeRef;
@@ -610,11 +610,17 @@ pub const Expr = struct {
             variable: Token,
             array: *Expr,
             condition: *Expr,
+            /// The bound variable's binding, filled in place by analysis.
+            /// Codegen binds each element to it.
+            storage: ?u32 = null,
         },
         ForAll: struct {
             variable: Token,
             array: *Expr,
             condition: *Expr,
+            /// The bound variable's binding, filled in place by analysis.
+            /// Codegen binds each element to it.
+            storage: ?u32 = null,
         },
         ArrayType: struct {
             element_type: *TypeExpr,
@@ -665,6 +671,8 @@ pub const Expr = struct {
             /// narrowed subject into it as the branch begins.
             decl_then: ?CastBinding = null,
             decl_else: ?CastBinding = null,
+            /// The type `target_type` names, filled in place by analysis.
+            target: ?*TypeInfo = null,
         },
         ReturnExpr: struct { value: ?*Expr },
         Unreachable: struct {

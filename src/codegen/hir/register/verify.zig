@@ -44,6 +44,39 @@ pub fn verify(alloc: std.mem.Allocator, program: *const ir.Program, f: *const ir
     return null;
 }
 
+/// What the verifier proves about a function's arenas and heap values: the
+/// arena each arena value is, and the region each heap value lives in. Passes
+/// that refine copies and drop dead arenas (`arenas.zig`) decide by these, so
+/// they agree with the checks their output must pass.
+pub const Facts = struct {
+    v: Verifier,
+
+    /// Where the heap value `value` lives; null for a value that is not heap.
+    pub fn region(self: *const Facts, value: ValueId) ?Region {
+        return self.v.region[@intFromEnum(value)];
+    }
+
+    /// Whether a value living in `r` is sure to outlive the arena `dest`.
+    pub fn outlives(self: *const Facts, r: Region, dest: ValueId) bool {
+        return self.v.outlives(r, dest);
+    }
+
+    /// The arena `arena` was opened in, if this function opened it.
+    pub fn parentOf(self: *const Facts, arena: ValueId) ?ValueId {
+        return self.v.parentOf(arena);
+    }
+};
+
+/// The facts of a function that passes verification; null when it does not.
+pub fn facts(alloc: std.mem.Allocator, program: *const ir.Program, f: *const ir.Function) std.mem.Allocator.Error!?Facts {
+    var v = Verifier{ .alloc = alloc, .program = program, .f = f };
+    v.run() catch |err| switch (err) {
+        error.Fault => return null,
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    return .{ .v = v };
+}
+
 /// The fault, then the textual form of the block it is in.
 pub fn writeFault(w: *std.Io.Writer, program: *const ir.Program, f: *const ir.Function, fault: Fault) std.Io.Writer.Error!void {
     try w.print("malformed HIR in '{s}'", .{f.name});
@@ -60,7 +93,7 @@ pub fn writeFault(w: *std.Io.Writer, program: *const ir.Program, f: *const ir.Fu
 const Error = std.mem.Allocator.Error || error{Fault};
 
 /// Where a heap value lives.
-const Region = union(enum) {
+pub const Region = union(enum) {
     /// Static storage (a string literal); outlives every arena.
     static,
     /// The program root arena: a global's value.
@@ -88,6 +121,15 @@ const ArenaKind = union(enum) {
     /// Opened in this function, as a child of `parent`.
     opened: ValueId,
 };
+
+/// Whether a fixed array's elements of `from` become `to` when
+/// `array.from_fixed` copies them: equal, or a nested fixed array the copy
+/// turns dynamic.
+fn fixedConverts(from: HIRType, to: HIRType) bool {
+    if (from.eql(to)) return true;
+    if (from != .Array or to != .Array or from.Array.size == null or to.Array.size != null) return false;
+    return fixedConverts(from.Array.element.*, to.Array.element.*);
+}
 
 const Verifier = struct {
     alloc: std.mem.Allocator,
@@ -156,8 +198,10 @@ const Verifier = struct {
             };
             if (!defined_here) return self.fail("value %{d} is not defined where its definition says", .{n});
         }
-        for (f.blocks, 0..) |block, b| {
+        for (f.blocks[1..], 1..) |block, b| {
             self.block = @enumFromInt(b);
+            // The entry block's parameters are the function's, where a ref
+            // is what a `^` parameter is.
             for (block.params) |param| {
                 if (self.typeOf(param) == .ref) return self.fail("block parameter %{d} is a ref", .{@intFromEnum(param)});
             }
@@ -360,6 +404,14 @@ const Verifier = struct {
         return @field(t, @tagName(tag));
     }
 
+    /// The element type of a dynamic array: the only kind whose length an
+    /// instruction may change.
+    fn expectDynamicArray(self: *Verifier, v: ValueId) Error!HIRType {
+        const array = try self.expectTag(v, .Array);
+        if (array.size) |size| return self.fail("%{d} is a fixed array of {d}; its length cannot change", .{ @intFromEnum(v), size });
+        return array.element.*;
+    }
+
     fn result(self: *Verifier, inst: *const ir.Inst) Error!Type {
         const r = inst.result orelse return self.fail("defines no value, but this instruction yields one", .{});
         return self.typeOf(r);
@@ -529,6 +581,19 @@ const Verifier = struct {
                 try self.expectDoxa(s.string, .String);
                 try self.resultIs(inst, .{ .doxa = .String });
             },
+            .str_insert => |s| {
+                try self.expectArena(s.arena);
+                try self.expectDoxa(s.string, .String);
+                try self.expectDoxa(s.index, .Int);
+                try self.expectDoxa(s.insert, .String);
+                try self.resultIs(inst, .{ .doxa = .String });
+            },
+            .str_remove, .str_char => |s| {
+                try self.expectArena(s.arena);
+                try self.expectDoxa(s.string, .String);
+                try self.expectDoxa(s.index, .Int);
+                try self.resultIs(inst, .{ .doxa = .String });
+            },
             .str_find => |s| {
                 try self.expectDoxa(s.string, .String);
                 try self.expectDoxa(s.needle, .String);
@@ -545,15 +610,15 @@ const Verifier = struct {
             },
             .str_pack => |s| {
                 try self.expectArena(s.arena);
-                const element = try self.expectTag(s.bytes, .Array);
-                if (element.* != .Byte) return self.fail("packs an array that is not a byte[]", .{});
+                const bytes = try self.expectTag(s.bytes, .Array);
+                if (bytes.element.* != .Byte) return self.fail("packs an array that is not a byte[]", .{});
                 try self.resultIs(inst, .{ .doxa = .String });
             },
             .str_unpack => |s| {
                 try self.expectArena(s.arena);
                 try self.expectDoxa(s.string, .String);
                 const element = (try self.resultDoxa(inst));
-                if (element != .Array or element.Array.* != .Byte) return self.fail("unpacks to something other than a byte[]", .{});
+                if (element != .Array or element.Array.size != null or element.Array.element.* != .Byte) return self.fail("unpacks to something other than a byte[]", .{});
             },
             .to_string => |s| {
                 try self.expectArena(s.arena);
@@ -562,31 +627,37 @@ const Verifier = struct {
             },
             .array_new => |a| {
                 try self.expectArena(a.arena);
-                if (a.length) |len| try self.expectDoxa(len, .Int);
-                if (try self.resultDoxa(inst) != .Array) return self.fail("array.new yields a non-array", .{});
+                const t = try self.resultDoxa(inst);
+                if (t != .Array) return self.fail("array.new yields a non-array", .{});
+                // A fixed array's length is its type's; a dynamic one's is an operand.
+                if (t.Array.size == null) {
+                    if (a.length) |len| try self.expectDoxa(len, .Int);
+                } else if (a.length != null) return self.fail("array.new of a fixed array takes no length", .{});
             },
             .array_from_fixed => |a| {
                 try self.expectArena(a.arena);
                 const from = try self.expectTag(a.operand, .Array);
+                if (from.size == null) return self.fail("array.from_fixed of a dynamic array", .{});
                 const to = try self.resultDoxa(inst);
-                if (to != .Array or !to.Array.eql(from.*)) return self.fail("array.from_fixed changes the element type", .{});
+                if (to != .Array or to.Array.size != null) return self.fail("array.from_fixed yields something other than a dynamic array", .{});
+                if (!fixedConverts(from.element.*, to.Array.element.*)) return self.fail("array.from_fixed changes the element type", .{});
             },
             .array_range => |a| {
                 try self.expectArena(a.arena);
                 try self.expectDoxa(a.start, .Int);
                 try self.expectDoxa(a.end, .Int);
                 const t = try self.resultDoxa(inst);
-                if (t != .Array or t.Array.* != .Int) return self.fail("a range yields something other than an int[]", .{});
+                if (t != .Array or t.Array.size != null or t.Array.element.* != .Int) return self.fail("a range yields something other than an int[]", .{});
             },
             .array_get => |a| {
-                const element = try self.expectTag(a.array, .Array);
+                const array = try self.expectTag(a.array, .Array);
                 try self.expectDoxa(a.index, .Int);
-                try self.resultIs(inst, .{ .doxa = element.* });
+                try self.resultIs(inst, .{ .doxa = array.element.* });
             },
             .array_set => |a| {
-                const element = try self.expectTag(a.array, .Array);
+                const array = try self.expectTag(a.array, .Array);
                 try self.expectDoxa(a.index, .Int);
-                try self.storesAs(a.value, element.*);
+                try self.storesAs(a.value, array.element.*);
                 try self.noResult(inst);
             },
             .array_len => |u| {
@@ -594,27 +665,27 @@ const Verifier = struct {
                 try self.resultIs(inst, .{ .doxa = .Int });
             },
             .array_push => |a| {
-                const element = try self.expectTag(a.array, .Array);
-                try self.storesAs(a.value, element.*);
+                const element = try self.expectDynamicArray(a.array);
+                try self.storesAs(a.value, element);
                 try self.noResult(inst);
             },
             .array_pop => |u| {
-                const element = try self.expectTag(u.operand, .Array);
-                try self.resultIs(inst, .{ .doxa = element.* });
+                const element = try self.expectDynamicArray(u.operand);
+                try self.resultIs(inst, .{ .doxa = element });
             },
             .array_insert => |a| {
-                const element = try self.expectTag(a.array, .Array);
+                const element = try self.expectDynamicArray(a.array);
                 try self.expectDoxa(a.index, .Int);
-                try self.storesAs(a.value, element.*);
+                try self.storesAs(a.value, element);
                 try self.noResult(inst);
             },
             .array_remove => |a| {
-                const element = try self.expectTag(a.array, .Array);
+                const element = try self.expectDynamicArray(a.array);
                 try self.expectDoxa(a.index, .Int);
-                try self.resultIs(inst, .{ .doxa = element.* });
+                try self.resultIs(inst, .{ .doxa = element });
             },
             .array_clear => |u| {
-                _ = try self.expectTag(u.operand, .Array);
+                _ = try self.expectDynamicArray(u.operand);
                 try self.noResult(inst);
             },
             .array_slice => |a| {
@@ -622,19 +693,19 @@ const Verifier = struct {
                 const t = try self.doxa(a.array);
                 if (t != .Array) return self.fail("slices a {s}", .{@tagName(t)});
                 try self.expectDoxa(a.start, .Int);
-                try self.expectDoxa(a.end, .Int);
-                try self.resultIs(inst, .{ .doxa = t });
+                try self.expectDoxa(a.length, .Int);
+                try self.resultIs(inst, .{ .doxa = .{ .Array = .{ .element = t.Array.element } } });
             },
             .array_concat => |a| {
                 try self.expectArena(a.arena);
                 const t = try self.doxa(a.lhs);
-                if (t != .Array) return self.fail("concatenates a {s}", .{@tagName(t)});
+                if (t != .Array or t.Array.size != null) return self.fail("concatenates a {s}", .{@tagName(t)});
                 try self.expectDoxa(a.rhs, t);
                 try self.resultIs(inst, .{ .doxa = t });
             },
             .array_find => |a| {
-                const element = try self.expectTag(a.array, .Array);
-                try self.expectDoxa(a.value, element.*);
+                const array = try self.expectTag(a.array, .Array);
+                try self.expectDoxa(a.value, array.element.*);
                 try self.resultIs(inst, .{ .doxa = .Int });
             },
             .map_new => |m| {
@@ -683,6 +754,19 @@ const Verifier = struct {
             .slot_addr => |s| {
                 if (@intFromEnum(s) >= self.f.slots.len) return self.fail("addresses slot s{d}, which does not exist", .{@intFromEnum(s)});
                 try self.resultIs(inst, .{ .ref = self.f.slots[@intFromEnum(s)].ty });
+            },
+            .global_addr => |g| {
+                if (@intFromEnum(g.global) >= self.program.globals.len) return self.fail("addresses global {d}, which does not exist", .{@intFromEnum(g.global)});
+                try self.expectArena(g.root);
+                try self.resultIs(inst, .{ .ref = self.program.globals[@intFromEnum(g.global)].ty });
+            },
+            .array_copy_to_fixed => |c| {
+                const fixed = try self.expectTag(c.fixed, .Array);
+                const array = try self.expectTag(c.array, .Array);
+                if (fixed.size == null or array.size != null or !fixedConverts(fixed.element.*, array.element.*)) {
+                    return self.fail("copies a dynamic array into an array that is not its fixed form", .{});
+                }
+                try self.noResult(inst);
             },
             .load => |u| {
                 const t = switch (self.typeOf(u.operand)) {
@@ -742,10 +826,6 @@ const Verifier = struct {
             .peek => |p| {
                 _ = try self.doxa(p.operand);
                 try self.noResult(inst);
-            },
-            .read_line => |r| {
-                try self.expectArena(r.arena);
-                try self.resultIs(inst, .{ .doxa = .String });
             },
         }
     }
@@ -967,6 +1047,8 @@ const Verifier = struct {
             .str_concat => |s| .{ .arena = s.arena },
             .str_substring => |s| .{ .arena = s.arena },
             .str_last, .str_drop_last => |s| .{ .arena = s.arena },
+            .str_insert => |s| .{ .arena = s.arena },
+            .str_remove, .str_char => |s| .{ .arena = s.arena },
             .str_pack => |s| .{ .arena = s.arena },
             .str_unpack => |s| .{ .arena = s.arena },
             .to_string => |s| .{ .arena = s.arena },
@@ -978,7 +1060,6 @@ const Verifier = struct {
             .map_new => |m| .{ .arena = m.arena },
             .struct_new => |s| .{ .arena = s.arena },
             .clone, .rehome => |c| .{ .arena = c.arena },
-            .read_line => |r| .{ .arena = r.arena },
             // An element lives in its container's arena.
             .array_get => |a| self.region[@intFromEnum(a.array)],
             .array_pop => |u| self.region[@intFromEnum(u.operand)],
@@ -995,8 +1076,12 @@ const Verifier = struct {
         };
     }
 
+    /// Where a call's heap result lives: the `@caller` arena it was given.
+    /// A callee given none allocated nothing its result could hold, so the
+    /// result has no heap storage of its own (a box of scalars).
     fn callResultRegion(self: *Verifier, sig: ir.Signature, args: []const ValueId) Error!Region {
-        const index = sig.callerArena() orelse return self.fail("calls a function returning a heap value that takes no @caller arena", .{});
+        _ = self;
+        const index = sig.callerArena() orelse return .static;
         return .{ .arena = args[index] };
     }
 
@@ -1004,7 +1089,11 @@ const Verifier = struct {
     fn refArena(self: *const Verifier, ref: ValueId) ValueId {
         return switch (self.f.values[@intFromEnum(ref)].def) {
             .param => |p| self.f.params()[self.f.roles[p.index].alias.arena],
-            .inst => |d| self.f.slots[@intFromEnum(self.f.blocks[@intFromEnum(d.block)].insts[d.index].op.slot_addr)].arena,
+            .inst => |d| switch (self.f.blocks[@intFromEnum(d.block)].insts[d.index].op) {
+                .slot_addr => |s| self.f.slots[@intFromEnum(s)].arena,
+                .global_addr => |g| g.root,
+                else => unreachable, // a ref is a parameter or an address
+            },
         };
     }
 
@@ -1172,12 +1261,16 @@ const Verifier = struct {
 
     /// Which storage a ref names: a slot of this function, or a `^`
     /// parameter (passed on unchanged).
-    const Storage = union(enum) { slot: ir.SlotId, param: u32 };
+    const Storage = union(enum) { slot: ir.SlotId, param: u32, global: ir.GlobalId };
 
     fn storageOf(self: *const Verifier, ref: ValueId) Storage {
         return switch (self.f.values[@intFromEnum(ref)].def) {
             .param => |p| .{ .param = p.index },
-            .inst => |d| .{ .slot = self.f.blocks[@intFromEnum(d.block)].insts[d.index].op.slot_addr },
+            .inst => |d| switch (self.f.blocks[@intFromEnum(d.block)].insts[d.index].op) {
+                .slot_addr => |s| .{ .slot = s },
+                .global_addr => |g| .{ .global = g.global },
+                else => unreachable, // a ref is a parameter or an address
+            },
         };
     }
 

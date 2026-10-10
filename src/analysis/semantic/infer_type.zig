@@ -1589,7 +1589,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
             type_info.* = .{ .base = .Nothing };
         },
-        .Exists => |exists| {
+        .Exists => |*exists| {
             const array_type = try inferTypeFromExpr(self, exists.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -1604,7 +1604,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 ast.TypeInfo{ .base = .Int };
 
             self.checkFreshName(quantifier_scope, exists.variable);
-            _ = quantifier_scope.createValueBinding(
+            const bound = quantifier_scope.createValueBinding(
                 exists.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
@@ -1627,6 +1627,8 @@ const op: []const u8 = switch (bin.operator.type) {
                     return err;
                 }
             };
+
+            exists.storage = bound.storage_id;
 
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
@@ -1663,7 +1665,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
             type_info.* = .{ .base = .Tetra };
         },
-        .ForAll => |for_all| {
+        .ForAll => |*for_all| {
             const array_type = try inferTypeFromExpr(self, for_all.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -1678,7 +1680,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 ast.TypeInfo{ .base = .Int };
 
             self.checkFreshName(quantifier_scope, for_all.variable);
-            _ = quantifier_scope.createValueBinding(
+            const bound = quantifier_scope.createValueBinding(
                 for_all.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
@@ -1701,6 +1703,8 @@ const op: []const u8 = switch (bin.operator.type) {
                     return err;
                 }
             };
+
+            for_all.storage = bound.storage_id;
 
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
@@ -1880,6 +1884,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
             const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
             type_info.* = target_type_info.*;
+            expr.data.Cast.target = target_type_info;
 
             const value_type = try inferTypeFromExpr(self, cast.value);
             const group_cast = classifyGroupCast(self, value_type, target_type_info);

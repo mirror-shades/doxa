@@ -98,6 +98,7 @@ pub fn writeInst(w: *Writer, program: *const ir.Program, f: *const ir.Function, 
         .slot_addr => |s| try w.print(" s{d}", .{@intFromEnum(s)}),
         .global_load => |g| try w.print(" {s}", .{program.globals[@intFromEnum(g)].name}),
         .global_store => |g| try w.print(" {s}", .{program.globals[@intFromEnum(g.global)].name}),
+        .global_addr => |g| try w.print(" {s}", .{program.globals[@intFromEnum(g.global)].name}),
         .call => |c| try w.print(" {s}", .{program.function_names[@intFromEnum(c.callee)]}),
         .call_zig => |c| try w.print(" {s}", .{program.zig_function_names[@intFromEnum(c.callee)]}),
         .peek => |p| if (p.display.path) |path| try w.print(" \"{s}\"", .{path}),
@@ -149,6 +150,9 @@ fn opName(op: ir.Op) []const u8 {
         .str_last => "str.last",
         .str_drop_last => "str.drop_last",
         .str_find => "str.find",
+        .str_insert => "str.insert",
+        .str_remove => "str.remove",
+        .str_char => "str.char",
         .str_to_int => "str.to_int",
         .str_to_float => "str.to_float",
         .str_to_byte => "str.to_byte",
@@ -169,6 +173,7 @@ fn opName(op: ir.Op) []const u8 {
         .array_slice => "array.slice",
         .array_concat => "array.concat",
         .array_find => "array.find",
+        .array_copy_to_fixed => "array.copy_to_fixed",
         .map_new => "map.new",
         .map_get => "map.get",
         .map_set => "map.set",
@@ -180,6 +185,7 @@ fn opName(op: ir.Op) []const u8 {
         .store => "store",
         .global_load => "global.load",
         .global_store => "global.store",
+        .global_addr => "global.addr",
         .root_arena => "root_arena",
         .scope_enter => "scope.enter",
         .scope_exit => "scope.exit",
@@ -190,7 +196,6 @@ fn opName(op: ir.Op) []const u8 {
         .call_zig => "call.zig",
         .print => "print",
         .peek => "peek",
-        .read_line => "read_line",
     };
 }
 
@@ -281,9 +286,9 @@ pub fn writeHIRType(w: *Writer, program: *const ir.Program, t: ir.HIRType) Write
         .Nothing => try w.writeAll("nothing"),
         .Unknown => try w.writeAll("?unknown"),
         .Poison => try w.writeAll("?poison"),
-        .Array => |element| {
-            try writeHIRType(w, program, element.*);
-            try w.writeAll("[]");
+        .Array => |array| {
+            try writeHIRType(w, program, array.element.*);
+            if (array.size) |size| try w.print("[{d}]", .{size}) else try w.writeAll("[]");
         },
         .Map => |m| {
             try w.writeAll("map ");

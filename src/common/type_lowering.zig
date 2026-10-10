@@ -12,7 +12,7 @@
 
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const HIRType = @import("../codegen/hir/types.zig").HIRType;
 const ModuleGraph = @import("../module/graph.zig").ModuleGraph;
 const StructTable = @import("struct_table.zig").StructTable;
 const EnumTable = @import("enum_table.zig").EnumTable;
@@ -45,7 +45,12 @@ pub const TypeLowering = struct {
             .String => .String,
             .Tetra => .Tetra,
             .Nothing => .Nothing,
-            .Array => .{ .Array = try self.lowered(ti.array_type orelse return error.IncompleteType) },
+            .Array => .{ .Array = .{
+                .element = try self.lowered(ti.array_type orelse return error.IncompleteType),
+                // Only a fixed array is sized; a `const` bound to a literal
+                // is a dynamic array the analyzer tags `const_literal`.
+                .size = if (ti.array_storage == .fixed) @intCast(ti.array_size.?) else null,
+            } },
             .Map => .{ .Map = .{
                 .key = try self.lowered(ti.map_key_type orelse return error.IncompleteType),
                 .value = try self.lowered(ti.map_value_type orelse return error.IncompleteType),

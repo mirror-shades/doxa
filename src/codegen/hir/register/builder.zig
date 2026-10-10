@@ -518,32 +518,7 @@ pub const FunctionBuilder = struct {
         }
 
         fn op(self: Remap, original: ir.Op) Error!ir.Op {
-            var result = original;
-            switch (result) {
-                inline else => |*payload| {
-                    const P = @TypeOf(payload.*);
-                    if (P == ValueId) {
-                        payload.* = try self.value(payload.*);
-                    } else if (@typeInfo(P) == .@"struct") {
-                        inline for (std.meta.fields(P)) |field| {
-                            const slot = &@field(payload.*, field.name);
-                            switch (field.type) {
-                                ValueId => slot.* = try self.value(slot.*),
-                                ?ValueId => if (slot.*) |v| {
-                                    slot.* = try self.value(v);
-                                },
-                                []const ValueId => {
-                                    const out = try self.alloc.alloc(ValueId, slot.len);
-                                    for (slot.*, out) |v, *o| o.* = try self.value(v);
-                                    slot.* = out;
-                                },
-                                else => {},
-                            }
-                        }
-                    }
-                },
-            }
-            return result;
+            return ir.mapOperands(self.alloc, original, self, Remap.value);
         }
     };
 

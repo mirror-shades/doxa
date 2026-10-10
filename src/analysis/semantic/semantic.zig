@@ -21,14 +21,14 @@ const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const GroupTable = @import("../../common/group_table.zig").GroupTable;
 const UnionTable = @import("../../common/union_table.zig").UnionTable;
 const TypeLowering = @import("../../common/type_lowering.zig").TypeLowering;
-const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
+const StructId = @import("../../codegen/hir/types.zig").StructId;
 
 const Types = @import("../../types/types.zig");
 const CustomTypeInfo = Types.CustomTypeInfo;
 const TokenLiteral = Types.TokenLiteral;
 const StructField = Types.StructField;
 
-const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
+const HIRType = @import("../../codegen/hir/types.zig").HIRType;
 
 const TokenImport = @import("../../types/token.zig");
 const TokenType = TokenImport.TokenType;
@@ -1076,7 +1076,7 @@ pub const SemanticAnalyzer = struct {
         for (decl.fields, fields) |field, *struct_field| {
             struct_field.* = .{
                 .name = field.name.lexeme,
-                .type_info = try self.typeExprToTypeInfo(field.type_expr),
+                .type_info = try self.fieldStorageType(try self.typeExprToTypeInfo(field.type_expr)),
                 .is_public = field.is_public,
             };
         }
@@ -1087,6 +1087,21 @@ pub const SemanticAnalyzer = struct {
         try self.bindTypeName(scope, decl.name, .STRUCT, type_info, base);
         try self.checkStructMemberNames(decl);
         try self.registerStructMethods(decl, ref);
+    }
+
+    /// The type a struct field written as `type` holds. A field is one word
+    /// of its struct, so an array field holds a dynamic array: a fixed array
+    /// stored into it is converted (`array.from_fixed`), and the field reads
+    /// as `T[]` (`plan/register-hir.md`, Q2).
+    fn fieldStorageType(self: *SemanticAnalyzer, written: *ast.TypeInfo) ErrorList!*ast.TypeInfo {
+        if (written.base != .Array) return written;
+        const element = written.array_type orelse return written;
+        const out = try self.allocator.create(ast.TypeInfo);
+        out.* = written.*;
+        out.array_size = null;
+        out.array_storage = .dynamic;
+        out.array_type = try self.fieldStorageType(element);
+        return out;
     }
 
     /// A struct names each member once: no two fields, no two methods or

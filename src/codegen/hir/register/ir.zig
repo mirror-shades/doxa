@@ -8,15 +8,17 @@
 //! (`FunctionBuilder.finish`), so a function is freed as a whole.
 
 const std = @import("std");
-const soxa_types = @import("../soxa_types.zig");
-const soxa_instructions = @import("../soxa_instructions.zig");
+const hir_types = @import("../types.zig");
 const Reporting = @import("../../../utils/reporting.zig");
 
-pub const HIRType = soxa_types.HIRType;
-pub const StructId = soxa_types.StructId;
-pub const EnumId = soxa_types.EnumId;
-pub const ArithOp = soxa_instructions.ArithOp;
-pub const CompareOp = soxa_instructions.CompareOp;
+pub const HIRType = hir_types.HIRType;
+pub const StructId = hir_types.StructId;
+pub const EnumId = hir_types.EnumId;
+
+/// `IntDiv` and `Mod` are floored (`docs/math.md`); `Div` of two ints is a
+/// float division the generator converts into.
+pub const ArithOp = enum { Add, Sub, Mul, Div, IntDiv, Mod, Pow };
+pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 pub const Location = Reporting.Location;
 
 pub const ValueId = enum(u32) { _ };
@@ -97,6 +99,9 @@ pub const Unary = struct { operand: ValueId };
 /// A string and the arena a result derived from it is allocated in.
 pub const ArenaString = struct { arena: ValueId, string: ValueId };
 
+/// A string, a byte index into it, and the arena the result is allocated in.
+pub const StringIndex = struct { arena: ValueId, string: ValueId, index: ValueId };
+
 /// A value and the arena a copy or conversion of it is allocated in.
 pub const ArenaOperand = struct { arena: ValueId, operand: ValueId };
 
@@ -147,6 +152,15 @@ pub const Op = union(enum) {
     /// A string without its last character.
     str_drop_last: ArenaString,
     str_find: struct { string: ValueId, needle: ValueId },
+    /// `string` with `insert` placed before byte `index`, clamped to the
+    /// string's bounds.
+    str_insert: struct { arena: ValueId, string: ValueId, index: ValueId, insert: ValueId },
+    /// `string` without the byte at `index`; an index out of range leaves it
+    /// whole.
+    str_remove: StringIndex,
+    /// The byte at `index`, as a one-byte string. Unchecked, like an array
+    /// element read (`docs/methods.md`).
+    str_char: StringIndex,
     str_to_int: Unary,
     str_to_float: Unary,
     str_to_byte: Unary,
@@ -169,9 +183,13 @@ pub const Op = union(enum) {
     array_insert: struct { array: ValueId, index: ValueId, value: ValueId },
     array_remove: struct { array: ValueId, index: ValueId },
     array_clear: Unary,
-    array_slice: struct { arena: ValueId, array: ValueId, start: ValueId, end: ValueId },
+    /// `length` elements from `start`, clamped to the array's bounds.
+    array_slice: struct { arena: ValueId, array: ValueId, start: ValueId, length: ValueId },
     array_concat: struct { arena: ValueId, lhs: ValueId, rhs: ValueId },
     array_find: struct { array: ValueId, value: ValueId },
+    /// Copy a dynamic array's elements back into a fixed one, as many as both
+    /// hold: a fixed array lent to a dynamic `^` parameter took a copy.
+    array_copy_to_fixed: struct { fixed: ValueId, array: ValueId },
 
     // ── Maps ── (entry stores re-home into the map's arena, as arrays do)
     map_new: struct { arena: ValueId, else_value: ?ValueId },
@@ -188,6 +206,9 @@ pub const Op = union(enum) {
     load: Unary,
     store: struct { ref: ValueId, value: ValueId },
     global_load: GlobalId,
+    /// The address of a global, lent as `^`: a ref whose storage lives in
+    /// `root`, the root arena.
+    global_addr: struct { global: GlobalId, root: ValueId },
     global_store: struct { global: GlobalId, value: ValueId },
 
     // ── Arenas ──
@@ -214,7 +235,6 @@ pub const Op = union(enum) {
     // ── Input and output ──
     print: Unary,
     peek: struct { operand: ValueId, display: PeekDisplay },
-    read_line: struct { arena: ValueId },
 };
 
 /// What a peek shows beside the value.
@@ -372,6 +392,14 @@ pub const Program = struct {
     struct_names: []const []const u8 = &.{},
     enum_names: []const []const u8 = &.{},
     group_names: []const []const u8 = &.{},
+    /// Canonical keys (`ModuleGraph.typeKey`) by id: the identity a runtime
+    /// lookup by type uses.
+    struct_keys: []const []const u8 = &.{},
+    enum_keys: []const []const u8 = &.{},
+    /// Field names by `StructId`, in declaration order.
+    struct_field_names: []const []const []const u8 = &.{},
+    /// Variant names by `EnumId`, by variant index.
+    enum_variants: []const []const []const u8 = &.{},
 
     /// The members of a union or group, in the order its box indexes them.
     pub fn boxMembers(self: *const Program, boxed: HIRType, buf: []HIRType) ?[]const HIRType {
@@ -385,6 +413,25 @@ pub const Program = struct {
             else => return null,
         }
     }
+};
+
+/// A lowered program: every function, the program around them, and what the
+/// emitter needs beyond the functions.
+pub const Module = struct {
+    program: Program,
+    /// By `FunctionId`; `program.functions[i]` is `functions[i]`'s signature.
+    functions: []const Function,
+    /// By `ZigFunctionId`: whether the wrapper takes the caller's arena as a
+    /// hidden first argument (`inline_zig.takesArena`).
+    zig_takes_arena: []const bool,
+    /// `__doxa_init`: the globals' initializers and the entry program.
+    init: FunctionId,
+    /// Canonical keys of the struct types a reflection site reaches, sorted;
+    /// those keep their runtime descriptor.
+    reflected_structs: []const []const u8,
+    /// A reflection site whose struct types cannot be enumerated: every
+    /// struct keeps its descriptor.
+    force_struct_descriptors: bool,
 };
 
 /// Call `f` with every operand of `op`, in field order.
@@ -405,6 +452,41 @@ pub fn forEachOperand(op: *const Op, ctx: anytype, comptime f: anytype) ReturnOf
             }
         },
     }
+}
+
+/// `op` with every operand replaced by `map(ctx, operand)`. Operand slices are
+/// copied into `alloc`.
+pub fn mapOperands(alloc: std.mem.Allocator, op: Op, ctx: anytype, comptime map: anytype) (std.mem.Allocator.Error || ErrorOf(map))!Op {
+    var result = op;
+    switch (result) {
+        inline else => |*payload| {
+            const P = @TypeOf(payload.*);
+            if (P == ValueId) {
+                payload.* = try map(ctx, payload.*);
+            } else if (@typeInfo(P) == .@"struct") {
+                inline for (std.meta.fields(P)) |field| {
+                    const slot = &@field(payload.*, field.name);
+                    switch (field.type) {
+                        ValueId => slot.* = try map(ctx, slot.*),
+                        ?ValueId => if (slot.*) |v| {
+                            slot.* = try map(ctx, v);
+                        },
+                        []const ValueId => {
+                            const out = try alloc.alloc(ValueId, slot.len);
+                            for (slot.*, out) |v, *o| o.* = try map(ctx, v);
+                            slot.* = out;
+                        },
+                        else => {},
+                    }
+                }
+            }
+        },
+    }
+    return result;
+}
+
+fn ErrorOf(comptime f: anytype) type {
+    return @typeInfo(@typeInfo(@TypeOf(f)).@"fn".return_type.?).error_union.error_set;
 }
 
 /// Call `f` with every operand of `term`, block arguments included.

@@ -1,9 +1,12 @@
 const std = @import("std");
 
-/// Scope-arena stack backing the language's "every block is an arena" memory
-/// model. `enter` pushes a child arena; `exit` reclaims the top arena in O(1).
-/// Heap values are allocated from the current (top) arena and are reclaimed
-/// when the scope that allocated them exits.
+/// Scope arenas, the runtime half of the arena memory model
+/// (`docs/memory.md`). A scope is a value the program holds: `enter(parent)`
+/// opens a child of `parent`, `exit` reclaims it in O(1), and `reset` reclaims
+/// everything allocated in it while keeping it open (a loop body). Every
+/// allocation names the scope it is made in; there is no implicit current
+/// scope. The register HIR states each arena (`plan/register-hir.md`, "Arenas")
+/// and its verifier checks that scopes open and close innermost first.
 ///
 /// Exited nodes are kept on a spare list instead of being returned to the OS,
 /// so a scoped call costs no page-allocator round trip. A spare node's arena is
@@ -12,7 +15,12 @@ const std = @import("std");
 /// by their product however deep the program once recursed.
 const ScopeNode = struct {
     arena: std.heap.ArenaAllocator,
-    prev: ?*ScopeNode,
+    /// The scope this one was opened in; null for the root.
+    parent: ?*ScopeNode,
+    /// The set of open scopes, for `ownerOf`, linked through every node
+    /// between its `enter` and its `exit`.
+    live_prev: ?*ScopeNode,
+    live_next: ?*ScopeNode,
 };
 
 /// One Windows allocation granule; the page allocator reserves no less.
@@ -20,27 +28,39 @@ const retained_bytes = 64 * 1024;
 /// Comfortably past ordinary call depth.
 const max_spare_nodes = 64;
 
-var head: ?*ScopeNode = null;
 var spare: ?*ScopeNode = null;
 var spare_count: usize = 0;
+var live: ?*ScopeNode = null;
+var root_node: ?*ScopeNode = null;
 
-/// Allocator for the current scope. Lazily creates a root scope so allocations
-/// emitted before the first explicit `enter` (e.g. module-level globals) are
-/// valid for the program's lifetime.
-pub fn allocator() std.mem.Allocator {
-    if (head == null) enter();
-    return head.?.arena.allocator();
+/// Opaque handle to a scope: what an `Arena` value of the register HIR is at
+/// runtime. Containers record the scope they were allocated in, so a heap
+/// element stored into them can be re-homed to the same arena.
+pub const Scope = opaque {};
+
+fn nodeOf(scope: *Scope) *ScopeNode {
+    return @ptrCast(@alignCast(scope));
 }
 
-/// Allocator for a scope that is still live on the scope stack.
-pub fn allocatorInScope(scope: ?*Scope) std.mem.Allocator {
-    const node: *ScopeNode = @ptrCast(@alignCast(scope orelse return allocator()));
-    return node.arena.allocator();
+fn scopeOf(node: *ScopeNode) *Scope {
+    return @ptrCast(node);
 }
 
-pub fn enter() void {
+/// The program root scope, where globals live. Created on first use and never
+/// exited.
+pub fn root() *Scope {
+    if (root_node == null) root_node = nodeOf(open(null));
+    return scopeOf(root_node.?);
+}
+
+/// Open a child of `parent`.
+pub fn enter(parent: *Scope) *Scope {
+    return open(nodeOf(parent));
+}
+
+fn open(parent: ?*ScopeNode) *Scope {
     const node = if (spare) |reused| blk: {
-        spare = reused.prev;
+        spare = reused.parent;
         spare_count -= 1;
         break :blk reused;
     } else blk: {
@@ -48,13 +68,19 @@ pub fn enter() void {
         fresh.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         break :blk fresh;
     };
-    node.prev = head;
-    head = node;
+    node.parent = parent;
+    node.live_prev = null;
+    node.live_next = live;
+    if (live) |first| first.live_prev = node;
+    live = node;
+    return scopeOf(node);
 }
 
-pub fn exit() void {
-    const node = head orelse return;
-    head = node.prev;
+/// Close `scope`, reclaiming everything allocated in it.
+pub fn exit(scope: *Scope) void {
+    const node = nodeOf(scope);
+    if (node.live_prev) |prev| prev.live_next = node.live_next else live = node.live_next;
+    if (node.live_next) |next| next.live_prev = node.live_prev;
     if (spare_count == max_spare_nodes) {
         node.arena.deinit();
         std.heap.page_allocator.destroy(node);
@@ -65,16 +91,16 @@ pub fn exit() void {
     if (!isRewound(&node.arena) or node.arena.queryCapacity() > retained_bytes) {
         _ = node.arena.reset(.{ .retain_with_limit = retained_bytes });
     }
-    node.prev = spare;
+    node.parent = spare;
     spare = node;
     spare_count += 1;
 }
 
-/// Reclaim every allocation in the current scope while keeping the scope node
-/// and its arena available for reuse. This is the physical implementation of a
-/// lexical scope whose lifetime repeats (for example, a loop body).
-pub fn reset() void {
-    const node = head orelse return;
+/// Reclaim every allocation in `scope` while keeping it open, with its
+/// buffers, for reuse: the physical form of a scope whose lifetime repeats
+/// (a loop body).
+pub fn reset(scope: *Scope) void {
+    const node = nodeOf(scope);
     if (!isRewound(&node.arena)) _ = node.arena.reset(.retain_capacity);
 }
 
@@ -89,183 +115,149 @@ fn isRewound(arena: *const std.heap.ArenaAllocator) bool {
     return first.next == null and first.end_index == 0;
 }
 
-/// Opaque handle to a scope. Arrays record the scope they were allocated in so
-/// heap elements pushed into them can be re-homed to the same arena.
-pub const Scope = opaque {};
-
-pub fn currentScope() ?*Scope {
-    return if (head) |h| @ptrCast(h) else null;
+pub fn allocator(scope: *Scope) std.mem.Allocator {
+    return nodeOf(scope).arena.allocator();
 }
 
-/// The program-root arena: the oldest node on the scope stack. Globals live
-/// here; `doxa_program_main` never exits this scope.
-pub fn rootScope() ?*Scope {
-    if (head == null) enter();
-    var node = head;
-    while (node) |n| {
-        if (n.prev == null) return @ptrCast(n);
-        node = n.prev;
-    }
-    return null;
-}
-
-/// True when `child` is `ancestor` or a nested arena under it. Used to skip
-/// identity-breaking clones when a heap value already lives in a scope that
-/// outlives the destination.
-pub fn isEqualOrDescendant(child: ?*Scope, ancestor: ?*Scope) bool {
-    const anc: ?*ScopeNode = @ptrCast(@alignCast(ancestor orelse return child == null));
-    var node: ?*ScopeNode = @ptrCast(@alignCast(child));
-    while (node) |n| {
+/// True when `child` is `ancestor` or a scope opened inside it: a value in
+/// `ancestor` outlives `child`. This is `rehome`'s test, the one copy decided
+/// at runtime — for a value whose arena the compiler cannot name.
+pub fn isEqualOrDescendant(child: *Scope, ancestor: ?*Scope) bool {
+    const anc = nodeOf(ancestor orelse return false);
+    var node: ?*ScopeNode = nodeOf(child);
+    while (node) |n| : (node = n.parent) {
         if (n == anc) return true;
-        node = n.prev;
     }
     return false;
 }
 
-/// The live scope whose arena holds `ptr`, or null when no live scope does
-/// (the address is on the stack, in a global, inside another allocation such
-/// as a fixed array's buffer that was not handed out by an arena, or already
-/// freed). Walks every live scope's buffers, so it is for the rare paths that
-/// need an owner they were not told, not for every allocation.
+/// The open scope whose arena holds `ptr`, or null when none does (the
+/// address is on the stack, in a global, or inside an allocation such as a
+/// fixed array's buffer that was not handed out by an arena). Walks every open
+/// scope's buffers, so it is for the rare paths that need an owner they were
+/// not told, not for every allocation.
 pub fn ownerOf(ptr: *const anyopaque) ?*Scope {
     const addr = @intFromPtr(ptr);
-    var node = head;
-    while (node) |n| : (node = n.prev) {
+    var node = live;
+    while (node) |n| : (node = n.live_next) {
         var buf = n.arena.state.used_list;
         while (buf) |b| : (buf = b.next) {
             // The low bit of `size` is the arena's resize flag, not size.
             const size = @as(usize, @bitCast(b.size)) & ~@as(usize, 1);
             const start = @intFromPtr(b);
-            if (addr >= start and addr < start + size) return @ptrCast(n);
+            if (addr >= start and addr < start + size) return scopeOf(n);
         }
     }
     return null;
 }
 
-pub fn scopeAt(levels: usize) ?*Scope {
-    var node = head;
-    var i: usize = 0;
-    while (i < levels) : (i += 1) {
-        node = (node orelse return null).prev;
-    }
-    return if (node) |n| @ptrCast(n) else null;
+pub fn alloc(scope: *Scope, len: usize, alignment: std.mem.Alignment, ret_addr: usize) [*]u8 {
+    // An empty allocation owns no bytes: any aligned, non-null address will
+    // do, and the arena is not asked for one.
+    if (len == 0) return @ptrFromInt(alignment.toByteUnits());
+    return allocator(scope).rawAlloc(len, alignment, ret_addr) orelse @panic("scope_arena: OOM");
 }
 
-pub fn allocInScope(scope: ?*Scope, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
-    const node: *ScopeNode = @ptrCast(@alignCast(scope orelse return null));
-    return node.arena.allocator().rawAlloc(len, alignment, ret_addr);
+pub fn create(scope: *Scope, comptime T: type) *T {
+    return @ptrCast(@alignCast(alloc(scope, @sizeOf(T), .fromByteUnits(@alignOf(T)), @returnAddress())));
 }
 
-/// Allocate from the arena `levels` above the current scope (0 = current).
-/// Used to clone a heap value into the scope that a variable was declared in,
-/// so it survives the exit of the intervening scopes.
-pub fn allocAt(levels: usize, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
-    var node = head;
-    var i: usize = 0;
-    while (i < levels) : (i += 1) {
-        node = (node orelse return null).prev;
-    }
-    const target = node orelse return null;
-    return target.arena.allocator().rawAlloc(len, alignment, ret_addr);
-}
-
-pub fn createAt(levels: usize, comptime T: type) *T {
-    const raw = allocAt(levels, @sizeOf(T), .fromByteUnits(@alignOf(T)), @returnAddress()) orelse @panic("scope_arena: OOM");
-    return @ptrCast(@alignCast(raw));
-}
-
-pub fn allocSliceAt(levels: usize, comptime T: type, n: usize) []T {
-    const raw = allocAt(levels, @sizeOf(T) * n, .fromByteUnits(@alignOf(T)), @returnAddress()) orelse @panic("scope_arena: OOM");
+pub fn allocSlice(scope: *Scope, comptime T: type, n: usize) []T {
+    const raw = alloc(scope, @sizeOf(T) * n, .fromByteUnits(@alignOf(T)), @returnAddress());
     return @as([*]T, @ptrCast(@alignCast(raw)))[0..n];
 }
 
-pub fn createInScope(scope: ?*Scope, comptime T: type) *T {
-    const raw = allocInScope(scope, @sizeOf(T), .fromByteUnits(@alignOf(T)), @returnAddress()) orelse @panic("scope_arena: OOM");
-    return @ptrCast(@alignCast(raw));
-}
+test "reset keeps the scope open for reuse" {
+    const scope = enter(root());
+    defer exit(scope);
 
-pub fn allocSliceInScope(scope: ?*Scope, comptime T: type, n: usize) []T {
-    const raw = allocInScope(scope, @sizeOf(T) * n, .fromByteUnits(@alignOf(T)), @returnAddress()) orelse @panic("scope_arena: OOM");
-    return @as([*]T, @ptrCast(@alignCast(raw)))[0..n];
-}
-
-test "reset reuses the current scope node" {
-    enter();
-    defer exit();
-
-    const scope = currentScope();
-    _ = allocator().alloc(u8, 128) catch unreachable;
-    reset();
-
-    try std.testing.expectEqual(scope, currentScope());
-    _ = allocator().alloc(u8, 128) catch unreachable;
+    _ = allocSlice(scope, u8, 128);
+    reset(scope);
+    try std.testing.expect(isRewound(&nodeOf(scope).arena));
+    _ = allocSlice(scope, u8, 128);
 }
 
 test "ownerOf finds the scope whose arena holds an allocation" {
-    enter();
-    defer exit();
-    const outer = currentScope();
-    const in_outer = allocator().create(u64) catch unreachable;
+    const outer = enter(root());
+    defer exit(outer);
+    const in_outer = create(outer, u64);
 
-    enter();
-    defer exit();
-    const in_inner = allocator().create(u64) catch unreachable;
+    const inner = enter(outer);
+    defer exit(inner);
+    const in_inner = create(inner, u64);
 
-    try std.testing.expectEqual(outer, ownerOf(in_outer));
-    try std.testing.expectEqual(currentScope(), ownerOf(in_inner));
+    try std.testing.expectEqual(@as(?*Scope, outer), ownerOf(in_outer));
+    try std.testing.expectEqual(@as(?*Scope, inner), ownerOf(in_inner));
     var on_stack: u64 = 0;
     try std.testing.expectEqual(@as(?*Scope, null), ownerOf(&on_stack));
 }
 
-test "an exited scope node is reused by the next enter" {
-    enter();
-    const first = currentScope();
-    exit();
+test "an exited scope is not an owner" {
+    const outer = enter(root());
+    defer exit(outer);
+    const inner = enter(outer);
+    const in_inner = create(inner, u64);
+    exit(inner);
+    // The exited node keeps its rewound buffer on the spare list, but it is
+    // no longer open, so nothing in it has an owner.
+    try std.testing.expectEqual(@as(?*Scope, null), ownerOf(in_inner));
+}
 
-    enter();
-    defer exit();
-    try std.testing.expectEqual(first, currentScope());
+test "a child descends from its parent and the root" {
+    const outer = enter(root());
+    defer exit(outer);
+    const inner = enter(outer);
+    defer exit(inner);
+
+    try std.testing.expect(isEqualOrDescendant(inner, outer));
+    try std.testing.expect(isEqualOrDescendant(inner, root()));
+    try std.testing.expect(isEqualOrDescendant(inner, inner));
+    try std.testing.expect(!isEqualOrDescendant(outer, inner));
+}
+
+test "an exited scope node is reused by the next enter" {
+    const first = enter(root());
+    exit(first);
+
+    const second = enter(root());
+    defer exit(second);
+    try std.testing.expectEqual(first, second);
 }
 
 test "a reused scope keeps at most retained_bytes" {
-    enter();
-    _ = allocator().alloc(u8, 4 * retained_bytes) catch unreachable;
-    exit();
+    const first = enter(root());
+    _ = allocSlice(first, u8, 4 * retained_bytes);
+    exit(first);
 
-    enter();
-    defer exit();
-    const node: *ScopeNode = @ptrCast(@alignCast(currentScope().?));
-    try std.testing.expect(node.arena.queryCapacity() <= retained_bytes);
-}
-
-test "an untouched scope is rewound and a used one is not" {
-    enter();
-    defer exit();
-    const node: *ScopeNode = @ptrCast(@alignCast(currentScope().?));
-    reset();
-    try std.testing.expect(isRewound(&node.arena));
-    _ = allocator().alloc(u8, 16) catch unreachable;
-    try std.testing.expect(!isRewound(&node.arena));
-    reset();
-    try std.testing.expect(isRewound(&node.arena));
+    const second = enter(root());
+    defer exit(second);
+    try std.testing.expect(nodeOf(second).arena.queryCapacity() <= retained_bytes);
 }
 
 test "a scope rewound by a loop reset still sheds its excess on exit" {
-    enter();
-    _ = allocator().alloc(u8, 4 * retained_bytes) catch unreachable;
-    reset();
-    exit();
+    const first = enter(root());
+    _ = allocSlice(first, u8, 4 * retained_bytes);
+    reset(first);
+    exit(first);
 
-    enter();
-    defer exit();
-    const node: *ScopeNode = @ptrCast(@alignCast(currentScope().?));
-    try std.testing.expect(node.arena.queryCapacity() <= retained_bytes);
+    const second = enter(root());
+    defer exit(second);
+    try std.testing.expect(nodeOf(second).arena.queryCapacity() <= retained_bytes);
 }
 
 test "the spare list never grows past max_spare_nodes" {
     const depth = max_spare_nodes + 16;
-    for (0..depth) |_| enter();
-    for (0..depth) |_| exit();
+    var scopes: [depth]*Scope = undefined;
+    var parent = root();
+    for (&scopes) |*scope| {
+        scope.* = enter(parent);
+        parent = scope.*;
+    }
+    var i: usize = depth;
+    while (i > 0) {
+        i -= 1;
+        exit(scopes[i]);
+    }
 
     try std.testing.expectEqual(@as(usize, max_spare_nodes), spare_count);
 }

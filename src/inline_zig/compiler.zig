@@ -140,6 +140,18 @@ fn errorUnionRef(t: ast.TypeInfo) ?ast.TypeRef {
 
 /// The success member of a fallible return. `!void` gives `nothing`, so the
 /// union is `nothing | <enum>` and the payload carries no bytes.
+/// Whether the wrapper for `sig` takes the caller's arena as a hidden first
+/// argument: it does exactly when its result — or a fallible result's payload
+/// — is a heap value, which the wrapper builds in that arena
+/// (`docs/zig.md`, "ABI"). The emitter passes it by the same rule.
+pub fn takesArena(sig: *const ast.ZigFnSig) bool {
+    const result = if (errorUnionRef(sig.return_type) != null)
+        errorUnionPayload(sig.return_type) orelse return false
+    else
+        sig.return_type;
+    return result.base == .String or result.base == .Array;
+}
+
 fn errorUnionPayload(t: ast.TypeInfo) ?ast.TypeInfo {
     if (t.base != .Union) return null;
     for (t.union_type.?.types) |member| {
@@ -210,8 +222,8 @@ fn appendArrayAdapters(buf: *std.array_list.Managed(u8)) !void {
         "        else => @compileError(\"unsupported inline-zig array element\"),\n" ++
         "    };\n" ++
         "}\n\n" ++
-        "fn __doxa_build(comptime __T: type, comptime __depth: usize, comptime __tag: u64, comptime __esize: u64, __value: __DoxaArrayType(__T, __depth)) *__DoxaArrayHeader {\n" ++
-        "    const __h = if (__depth == 1) doxa_array_new(__esize, __tag, __value.len) else doxa_array_new(8, 6, __value.len);\n" ++
+        "fn __doxa_build(__scope: *__DoxaScope, comptime __T: type, comptime __depth: usize, comptime __tag: u64, comptime __esize: u64, __value: __DoxaArrayType(__T, __depth)) *__DoxaArrayHeader {\n" ++
+        "    const __h = if (__depth == 1) doxa_array_new(__scope, __esize, __tag, __value.len) else doxa_array_new(__scope, 8, 6, __value.len);\n" ++
         "    var __i: usize = 0;\n" ++
         "    while (__i < __value.len) : (__i += 1) {\n" ++
         "        if (__depth == 1) {\n" ++
@@ -221,7 +233,7 @@ fn appendArrayAdapters(buf: *std.array_list.Managed(u8)) !void {
         "                doxa_array_set_i64(__h, @intCast(__i), __doxa_scalar_bits(__T, __value[__i]));\n" ++
         "            }\n" ++
         "        } else {\n" ++
-        "            const __inner = __doxa_build(__T, __depth - 1, __tag, __esize, __value[__i]);\n" ++
+        "            const __inner = __doxa_build(__scope, __T, __depth - 1, __tag, __esize, __value[__i]);\n" ++
         "            doxa_array_set_i64(__h, @intCast(__i), @intCast(@intFromPtr(__inner)));\n" ++
         "        }\n" ++
         "    }\n" ++
@@ -239,10 +251,10 @@ fn arrayParamPrelude(allocator: std.mem.Allocator, i: usize, arg_name: []const u
 }
 
 /// Copy the user function's returned slice into a fresh `ArrayHeader` in the
-/// call-site arena; string elements are cloned into that arena by
+/// caller's arena; string elements are cloned into that arena by
 /// `doxa_array_set_str`.
 fn arrayReturnPostlude(allocator: std.mem.Allocator, info: ArrayInfo) ![]u8 {
-    return std.fmt.allocPrint(allocator, "    const __doxa_arr = __doxa_build({s}, {d}, {d}, {d}, __doxa_out);\n" ++
+    return std.fmt.allocPrint(allocator, "    const __doxa_arr = __doxa_build(__doxa_scope, {s}, {d}, {d}, {d}, __doxa_out);\n" ++
         "    return __doxa_arr;\n", .{ info.zig_type, info.depth, info.elem_tag, info.elem_size });
 }
 
@@ -291,18 +303,20 @@ fn generateWrapperZigFile(
     try appendZigSourceSanitized(&file_buf, unit.source);
     try file_buf.appendSlice("\n\n");
 
-    // Inline-Zig ABI prologue. String returns are cloned into the call-site
-    // scope arena by the runtime; array returns are materialized as a fresh
-    // `ArrayHeader` in that same arena by `doxa_array_new`, so both follow the
-    // ordinary arena ownership rules in docs/memory.md with no free hook.
+    // Inline-Zig ABI prologue. A wrapper returning a heap value takes the
+    // caller's arena as a hidden first argument (`takesArena`): a string
+    // return is cloned into it by the runtime and an array return is
+    // materialized there as a fresh `ArrayHeader`, so both follow the ordinary
+    // arena ownership rules in docs/memory.md with no free hook.
     // `DoxaByte` is the marker a signature uses to spell `byte[]`: a bare
     // `[]const u8` is unambiguously a `string`, so bytes need their own name.
     try file_buf.appendSlice(
         "const __doxa_std = @import(\"std\");\n\n" ++
         "const DoxaByte = u8;\n\n" ++
         "const __DoxaArrayHeader = opaque {};\n\n" ++
-        "extern fn doxa_str_clone_current(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void;\n" ++
-        "extern fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *__DoxaArrayHeader;\n" ++
+        "const __DoxaScope = opaque {};\n\n" ++
+        "extern fn doxa_str_clone(scope: *__DoxaScope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void;\n" ++
+        "extern fn doxa_array_new(scope: *__DoxaScope, elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *__DoxaArrayHeader;\n" ++
         "extern fn doxa_array_len(hdr: *__DoxaArrayHeader) callconv(.c) u64;\n" ++
         "extern fn doxa_array_data(hdr: ?*__DoxaArrayHeader) callconv(.c) ?[*]u8;\n" ++
         "extern fn doxa_array_get_i64(hdr: *__DoxaArrayHeader, idx: u64) callconv(.c) i64;\n" ++
@@ -378,6 +392,11 @@ fn generateWrapperZigFile(
         try native_buf.appendSlice("pub fn ");
         try native_buf.appendSlice(native_ident);
         try native_buf.appendSlice("(");
+        const takes_arena = takesArena(&sig);
+        if (takes_arena) {
+            try native_buf.appendSlice("__doxa_scope: *__DoxaScope");
+            if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
+        }
 
         var native_prelude = std.array_list.Managed(u8).init(allocator);
         defer native_prelude.deinit();
@@ -431,8 +450,9 @@ fn generateWrapperZigFile(
             }
         }
 
+        const has_params = sig.param_types.len > 0 or takes_arena;
         if (sig.return_type.base == .String) {
-            if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
+            if (has_params) try native_buf.appendSlice(", ");
             try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *u64");
         }
         // A fallible payload crosses through trailing out-parameters, so the
@@ -451,7 +471,7 @@ fn generateWrapperZigFile(
                 },
             };
             if (out_params) |decl| {
-                if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
+                if (has_params) try native_buf.appendSlice(", ");
                 try native_buf.appendSlice(decl);
             }
         }
@@ -466,7 +486,7 @@ fn generateWrapperZigFile(
             try native_buf.appendSlice(native_call.items);
             try native_buf.appendSlice(";\n");
             try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return; }\n");
-            try native_buf.appendSlice("    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n");
+            try native_buf.appendSlice("    doxa_str_clone(__doxa_scope, __doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n");
         } else if (errorUnionRef(sig.return_type)) |ref| {
             // Success crosses as -1 (`nothing`), a caught error as its variant
             // discriminant; a payload, if any, is written to the out-params.
@@ -488,13 +508,13 @@ fn generateWrapperZigFile(
             switch (payload.base) {
                 .Nothing => {},
                 .String => try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return -1; }\n" ++
-                    "    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n"),
+                    "    doxa_str_clone(__doxa_scope, __doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n"),
                 .Array => {
                     const elem = arrayInfoFor(payload) orelse {
                         reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported fallible array payload for '{s}.{s}'", .{ unit.name, sig.name });
                         return error.NotImplemented;
                     };
-                    const postlude = try std.fmt.allocPrint(allocator, "    out_array.* = __doxa_build({s}, {d}, {d}, {d}, __doxa_out);\n", .{ elem.zig_type, elem.depth, elem.elem_tag, elem.elem_size });
+                    const postlude = try std.fmt.allocPrint(allocator, "    out_array.* = __doxa_build(__doxa_scope, {s}, {d}, {d}, {d}, __doxa_out);\n", .{ elem.zig_type, elem.depth, elem.elem_tag, elem.elem_size });
                     defer allocator.free(postlude);
                     try native_buf.appendSlice(postlude);
                 },

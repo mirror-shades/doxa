@@ -13,8 +13,12 @@ const Token = @import("./types/token.zig").Token;
 const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const AST = @import("./ast/ast.zig");
-const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
-const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
+const Generator = @import("./codegen/hir/generator.zig").Generator;
+const hir = @import("./codegen/hir/register/ir.zig");
+const hir_verify = @import("./codegen/hir/register/verify.zig");
+const hir_arenas = @import("./codegen/hir/register/arenas.zig");
+const hir_print = @import("./codegen/hir/register/print.zig");
+const llvm_emit = @import("./codegen/llvm/emit.zig");
 
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -71,6 +75,7 @@ const CLI = struct {
     include_dirs: std.array_list.Managed([]const u8),
     emit_opt_ir: bool,
     emit_asm: bool,
+    emit_hir: bool,
     lsp_mode: LspMode,
     lsp_debug_file: ?[]const u8,
     lsp_io_trace: bool,
@@ -243,19 +248,18 @@ fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: 
     return withExeSuffix(allocator, raw, is_windows);
 }
 
-/// Lower the program. Lowering first fixes the program's link identities, then
-/// the generator binds every global site to its link name; only then are
-/// constants folded in place — folding rewrites a reference's node, so no site
-/// may still point into it — and each file gets its own folder, which is
-/// syntax-local.
-fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
+/// Lower the program to the register HIR and verify every function.
+/// Lowering first fixes the program's link identities, then the generator
+/// binds every global site to its link name; only then are constants folded
+/// in place — folding rewrites a reference's node, so no site may still point
+/// into it — and each file gets its own folder, which is syntax-local.
+fn lowerProgram(memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !hir.Module {
     const allocator = memoryManager.getAnalysisAllocator();
 
     profiler.begin("hir-lower");
     defer profiler.end();
     try semantic_analyzer.finalizeLinkIdentities();
-    var hir_generator = try HIRGenerator.init(io, allocator, reporter, semantic_analyzer);
-    defer hir_generator.deinit();
+    var generator = try Generator.init(allocator, reporter, semantic_analyzer);
 
     profiler.begin("constant-fold");
     for (semantic_analyzer.graph.records.items) |record| {
@@ -266,7 +270,33 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, semantic_analyz
     }
     profiler.end();
 
-    return hir_generator.generateProgram();
+    var module = try generator.generate();
+    profiler.begin("hir-arenas");
+    try hir_arenas.run(allocator, &module);
+    profiler.end();
+
+    // The verifier runs in every build mode: a fault is a compiler bug, and
+    // it quotes the block it rejected.
+    profiler.begin("hir-verify");
+    defer profiler.end();
+    for (module.functions) |*f| {
+        const fault = try hir_verify.verify(allocator, &module.program, f) orelse continue;
+        var text = std.Io.Writer.Allocating.init(allocator);
+        try hir_verify.writeFault(&text.writer, &module.program, f, fault);
+        reporter.reportInternal("the register HIR failed verification. This is a compiler bug, not an error in the program\n{s}", .{text.written()}, @src());
+        return error.InvalidHir;
+    }
+    return module;
+}
+
+/// The textual register HIR of every function (`--emit-hir`).
+fn writeHirText(allocator: std.mem.Allocator, module: *const hir.Module) ![]const u8 {
+    var text = std.Io.Writer.Allocating.init(allocator);
+    for (module.functions) |*f| {
+        try hir_print.writeFunction(&text.writer, &module.program, f);
+        try text.writer.writeAll("\n");
+    }
+    return text.written();
 }
 
 fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *const module_graph.ModuleGraph, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
@@ -473,7 +503,6 @@ fn toolchainIdentity(io: std.Io, allocator: std.mem.Allocator, zig_exe_path: []c
 // The named `--opt-mode=` presets tie the axes together the way zig's C code
 // does (`safe` == `-O2`, `fast` == `-O3`, `small` == `-Oz`); the numeric form
 // picks a clang level and the zig mode that suits it.
-const OverflowBehavior = @import("./codegen/hir/soxa_instructions.zig").OverflowBehavior;
 
 const OptLevel = enum {
     o0,
@@ -530,10 +559,10 @@ const Opt = struct {
     // `small`) wrap, matching the C twins the benchmark suite compares against.
     // `--opt=2`/`-O2` and up select `fast`, so the benchmark canaries see
     // wrapping arithmetic exactly as C does.
-    fn arithOverflow(self: Opt) OverflowBehavior {
+    fn arithOverflow(self: Opt) llvm_emit.OverflowPolicy {
         return switch (self.mode) {
-            .debug, .safe => .Trap,
-            .fast, .small => .Wrap,
+            .debug, .safe => .trap,
+            .fast, .small => .wrap,
         };
     }
 
@@ -622,7 +651,7 @@ fn compileToNative(
     cli_options: *const CLI,
     reporter: *Reporter,
     semantic_analyzer: *const SemanticAnalyzer,
-    hir_program: *const HIRProgram,
+    module: *const hir.Module,
     exe_path: []const u8,
     target: TargetTriple,
     profiler: *Profiler,
@@ -670,10 +699,19 @@ fn compileToNative(
     {
         profiler.begin("emit-ir");
         defer profiler.end();
-        const reflected_structs_ptr: ?*const std.StringHashMap(void) = if (hir_program.reflected_structs) |*reflected| reflected else null;
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), semantic_analyzer.getGroupTable(), semantic_analyzer.getEnumTable(), semantic_analyzer.getStructTable(), reflected_structs_ptr, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
-        printer.reporter = reporter;
-        try printer.emitToFile(hir_program, ir_path);
+        const emit_alloc = memoryManager.getExecutionAllocator();
+        if (cli_options.emit_hir) {
+            var hir_path_buf: [512]u8 = undefined;
+            const hir_path = try std.fmt.bufPrint(&hir_path_buf, "{s}/{s}.hir", .{ cli_options.cache_dir, stem_for_derivatives });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = hir_path, .data = try writeHirText(emit_alloc, module) });
+        }
+        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, cli_options.opt.arithOverflow());
+        var ll = std.Io.Writer.Allocating.init(emit_alloc);
+        emitter.emit(&ll.writer) catch |err| {
+            if (err == error.EmitFault) reporter.reportInternal("the emitter rejected the register HIR: {s}. This is a compiler bug, not an error in the program", .{emitter.fault.?}, @src());
+            return err;
+        };
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ir_path, .data = ll.written() });
     }
 
     profiler.begin("cc-object");
@@ -948,6 +986,7 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         .include_dirs = std.array_list.Managed([]const u8).init(allocator),
         .emit_opt_ir = false,
         .emit_asm = false,
+        .emit_hir = false,
         .lsp_mode = .none,
         .lsp_debug_file = null,
         .lsp_io_trace = false,
@@ -1063,9 +1102,6 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         } else if (stringEquals(arg, "--debug-semantic")) {
             options.reporter_options.debug_semantic = true;
             continue;
-        } else if (stringEquals(arg, "--debug-hir")) {
-            options.reporter_options.debug_hir = true;
-            continue;
         } else if (stringEquals(arg, "--debug-memory")) {
             options.reporter_options.debug_memory = true;
             continue;
@@ -1133,6 +1169,9 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
             continue;
         } else if (stringEquals(arg, "--emit-asm")) {
             options.emit_asm = true;
+            continue;
+        } else if (stringEquals(arg, "--emit-hir")) {
+            options.emit_hir = true;
             continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
             printUsage();
@@ -1303,6 +1342,7 @@ fn printUsage() void {
     std.debug.print("  -O0..-O3 | --opt=0..3             # clang -O level for the program (-O2 == zig cc -O2)\n", .{});
     std.debug.print("  --emit-opt-ir                     # Also write optimized LLVM IR (<stem>.opt.ll) to cache\n", .{});
     std.debug.print("  --emit-asm                        # Also write target assembly (<stem>.s) to cache\n", .{});
+    std.debug.print("  --emit-hir                        # Also write the register HIR (<stem>.hir) to cache\n", .{});
     std.debug.print("  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp\n", .{});
     std.debug.print("\nExamples:\n", .{});
     std.debug.print("  doxa run file.doxa\n", .{});
@@ -1563,21 +1603,13 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
 
     profiler.begin("hir");
 
-    const hir_program = generateHIRProgram(io, memoryManager, &semantic_analyzer, reporter, profiler) catch |err| {
+    const module = lowerProgram(memoryManager, &semantic_analyzer, reporter, profiler) catch |err| {
         if (!reporter.hasCompileErrors()) {
             reportPhaseFailure(reporter, "hir", err);
         }
         exitIfCompileErrors(reporter);
         return err;
     };
-
-    // `--debug-hir`: one line per instruction, numbered the way the emitter's
-    // verifier (`ir_printer/verify.zig`) names the instruction it rejected.
-    if (cli_options.reporter_options.debug_hir or cli_options.reporter_options.debug_verbose) {
-        for (hir_program.instructions, 0..) |inst, index| {
-            std.debug.print("#{d} {any}\n", .{ index, inst });
-        }
-    }
     exitIfCompileErrors(reporter);
     profiler.end();
 
@@ -1603,7 +1635,7 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         &cli_options,
         reporter,
         &semantic_analyzer,
-        &hir_program,
+        &module,
         exe_path,
         target,
         profiler,
