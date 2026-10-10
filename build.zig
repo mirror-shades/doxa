@@ -532,6 +532,11 @@ const TestWiring = struct {
 /// lowers that answer. So under `src/codegen/` no function is named `infer…`,
 /// and each of the analyzer's per-node tables is read in exactly one place —
 /// the accessor that fails the compile when the analyzer has no answer.
+///
+/// The emitter (`src/codegen/llvm/`) lowers register HIR one value per
+/// `ValueId`, so it keeps no simulation of its own (plan/register-hir.md,
+/// "The emitter"): it declares no `…Stack…` or `…Merge…` state and no
+/// `push…`/`pop…` function.
 const TypeAuthority = struct {
     step: std.Build.Step,
 
@@ -570,6 +575,7 @@ const TypeAuthority = struct {
 
     /// Tokenizes `source`, so comments and string contents never count.
     fn scan(step: *std.Build.Step, path: []const u8, source: [:0]const u8) !void {
+        const emitter = std.mem.startsWith(u8, path, "src/codegen/llvm/");
         var tokens: std.zig.Tokenizer = .init(source);
         // The outermost function whose body the scan is in, and the brace
         // depth of that body; a declared function whose body is still ahead.
@@ -605,8 +611,16 @@ const TypeAuthority = struct {
                         if (std.mem.startsWith(u8, text, "infer")) {
                             try step.addError("{s}: codegen declares `{s}`; a type comes from the analyzer (`typeOf`), never from codegen inference", .{ path, text });
                         }
+                        if (emitter and (std.mem.startsWith(u8, text, "push") or std.mem.startsWith(u8, text, "pop"))) {
+                            try step.addError("{s}: the emitter declares `{s}`; it lowers one value per `ValueId` and keeps no operand stack", .{ path, text });
+                        }
                         declared = text;
                         continue;
+                    }
+                    if (emitter and (previous == .keyword_const or previous == .keyword_var) and
+                        (std.mem.indexOf(u8, text, "Stack") != null or std.mem.indexOf(u8, text, "Merge") != null))
+                    {
+                        try step.addError("{s}: the emitter declares `{s}`; a block parameter is its merge, and no stack is simulated", .{ path, text });
                     }
                     for (accessors) |accessor| {
                         if (!std.mem.eql(u8, text, accessor.read)) continue;
