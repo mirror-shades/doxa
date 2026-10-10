@@ -4,7 +4,7 @@ pub const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Reporting = @import("../utils/reporting.zig");
 const Location = @import("../utils/reporting.zig").Location;
 const Reporter = @import("../utils/reporting.zig").Reporter;
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const HIRType = @import("../codegen/hir/types.zig").HIRType;
 const ids = @import("../module/ids.zig");
 
 pub const TypeRef = ids.TypeRef;
@@ -304,12 +304,6 @@ pub const Stmt = struct {
         },
         EnumDecl: EnumDecl,
         GroupDecl: GroupDecl,
-        MapLiteral: struct {
-            entries: []*MapEntry,
-            key_type: ?TypeInfo = null,
-            value_type: ?TypeInfo = null,
-            else_value: ?*Expr = null,
-        },
         Import: ImportInfo,
         Continue: void,
         Break: void,
@@ -382,17 +376,6 @@ pub const Stmt = struct {
                     allocator.free(member.qualifier);
                 }
                 allocator.free(decl.members);
-            },
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.deinit(allocator);
-                    allocator.destroy(entry);
-                }
-                allocator.free(map_literal.entries);
-                if (map_literal.else_value) |else_val| {
-                    else_val.deinit(allocator);
-                    allocator.destroy(else_val);
-                }
             },
             .Assert => |*a| {
                 a.condition.deinit(allocator);
@@ -627,11 +610,17 @@ pub const Expr = struct {
             variable: Token,
             array: *Expr,
             condition: *Expr,
+            /// The bound variable's binding, filled in place by analysis.
+            /// Codegen binds each element to it.
+            storage: ?u32 = null,
         },
         ForAll: struct {
             variable: Token,
             array: *Expr,
             condition: *Expr,
+            /// The bound variable's binding, filled in place by analysis.
+            /// Codegen binds each element to it.
+            storage: ?u32 = null,
         },
         ArrayType: struct {
             element_type: *TypeExpr,
@@ -661,8 +650,6 @@ pub const Expr = struct {
             arguments: []const *Expr,
         },
 
-        Increment: *Expr,
-        Decrement: *Expr,
         Assert: struct {
             condition: *Expr,
             location: Location,
@@ -682,6 +669,8 @@ pub const Expr = struct {
             /// narrowed subject into it as the branch begins.
             decl_then: ?CastBinding = null,
             decl_else: ?CastBinding = null,
+            /// The type `target_type` names, filled in place by analysis.
+            target: ?*TypeInfo = null,
         },
         ReturnExpr: struct { value: ?*Expr },
         Unreachable: struct {
@@ -814,14 +803,6 @@ pub const Expr = struct {
                 allocator.destroy(l.left);
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
-            },
-            .Increment => |*i| {
-                i.*.deinit(allocator);
-                allocator.destroy(i);
-            },
-            .Decrement => |*i| {
-                i.*.deinit(allocator);
-                allocator.destroy(i);
             },
             .Peek => |i| {
                 i.expr.deinit(allocator);
@@ -1287,15 +1268,6 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: *const Stmt, depth: u32) std.Io.Writer
         },
         .EnumDecl => |e| try writer.print("Stmt.EnumDecl name={s}\n", .{e.name.lexeme}),
         .GroupDecl => |g| try writer.print("Stmt.GroupDecl name={s}\n", .{g.name.lexeme}),
-        .MapLiteral => |*ml| {
-            try writer.print("Stmt.MapLiteral\n", .{});
-            for (ml.entries) |entry| {
-                try dumpIndent(writer, depth + 1);
-                try writer.print("entry\n", .{});
-                try dumpExpr(writer, entry.key, depth + 2);
-                try dumpExpr(writer, entry.value, depth + 2);
-            }
-        },
         .Import => try writer.print("Stmt.Import\n", .{}),
         .Continue => try writer.print("Stmt.Continue\n", .{}),
         .Break => try writer.print("Stmt.Break\n", .{}),
@@ -1491,14 +1463,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
             try writer.print("Expr.InternalCall .{s}\n", .{c.method.lexeme});
             try dumpExpr(writer, c.receiver, depth + 1);
             for (c.arguments) |arg| try dumpExpr(writer, arg, depth + 1);
-        },
-        .Increment => |e| {
-            try writer.print("Expr.Increment\n", .{});
-            try dumpExpr(writer, e, depth + 1);
-        },
-        .Decrement => |e| {
-            try writer.print("Expr.Decrement\n", .{});
-            try dumpExpr(writer, e, depth + 1);
         },
         .Assert => |a| {
             try writer.print("Expr.Assert\n", .{});

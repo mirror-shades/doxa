@@ -10,7 +10,7 @@
 //! and a box always names the concrete type it holds.
 
 const std = @import("std");
-const HIRTypes = @import("../codegen/hir/soxa_types.zig");
+const HIRTypes = @import("../codegen/hir/types.zig");
 const StructTable = @import("struct_table.zig").StructTable;
 const EnumTable = @import("enum_table.zig").EnumTable;
 const GroupTable = @import("group_table.zig").GroupTable;
@@ -194,9 +194,10 @@ pub const UnionTable = struct {
             .Nothing => try key.append(allocator, 'n'),
             .Unknown => try key.append(allocator, '?'),
             .Poison => try key.append(allocator, '!'),
-            .Array => |element| {
+            .Array => |array| {
                 try key.appendSlice(allocator, "A(");
-                try appendKey(allocator, key, element.*);
+                try appendKey(allocator, key, array.element.*);
+                if (array.size) |size| try key.print(allocator, ";{d}", .{size});
                 try key.append(allocator, ')');
             },
             .Map => |map| {

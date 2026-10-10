@@ -74,9 +74,6 @@ fn exprMutates(expr: *const ast.Expr, name: []const u8) bool {
         .FieldAssignment => |fa| {
             if (rootVariableIs(fa.object, name)) return true;
         },
-        .Increment, .Decrement => |operand| {
-            if (rootVariableIs(operand, name)) return true;
-        },
 
 
         // In-place intrinsic calls (`@push`, `@insert`, `@remove`, `@pop`,
@@ -167,7 +164,6 @@ fn forEachChild(
         .Assignment => |a| {
             if (a.value) |v| visit(v, name, found);
         },
-        .Increment, .Decrement => |operand| visit(operand, name, found),
         .FunctionCall => |fc| {
             visit(fc.callee, name, found);
             for (fc.arguments) |arg| visit(arg.expr, name, found);
@@ -308,15 +304,6 @@ fn stmtMutates(stmt: ast.Stmt, name: []const u8) bool {
         },
         .Lift => |l| {
             if (exprMutates(l.value, name)) found = true;
-        },
-        .MapLiteral => |m| {
-            for (m.entries) |entry| {
-                if (exprMutates(entry.key, name)) found = true;
-                if (exprMutates(entry.value, name)) found = true;
-            }
-            if (m.else_value) |ev| {
-                if (exprMutates(ev, name)) found = true;
-            }
         },
 
         // A nested function has its own parameter bindings and cannot reach this

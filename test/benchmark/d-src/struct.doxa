@@ -16,7 +16,7 @@ const MOD is 65536
 public entry function main() {
     var arr :: Vec4[N]
 
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         arr[i] is $Vec4 {
             x is (i * 1) % MOD,
             y is (i * 3 + 1) % MOD,
@@ -26,14 +26,14 @@ public entry function main() {
     }
 
     var sink is 0
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         sink += arr[i].x + arr[i].y + arr[i].z + arr[i].w
     }
 
     const t0 is std.time.monotonic()
     var carry is 1
-    for s while s < STEPS do s++ {
-        for i while i < N do i++ {
+    for s while s < STEPS do s += 1 {
+        for i while i < N do i += 1 {
             const nx is (arr[i].x + carry) % MOD
             const ny is (arr[i].y + nx) % MOD
             const nz is (arr[i].z + ny) % MOD
@@ -48,7 +48,7 @@ public entry function main() {
     const t1 is std.time.monotonic()
 
     var checksum is 0
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         checksum += arr[i].x + arr[i].y + arr[i].z + arr[i].w
     }
 

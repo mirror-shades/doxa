@@ -1,0 +1,10 @@
+# A map entry store is checked against the map's value type, as an array
+# element store is against its element type.
+
+map Levels :: string returns float {
+    "a" then 1.0,
+}
+
+public entry function main() {
+    Levels["q"] is "oops"
+}

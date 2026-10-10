@@ -9,38 +9,38 @@ public entry function main() {
     var x :: float[N]
     var y :: float[N]
 
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         x[i] is i % 128
         y[i] is 0.0
     }
 
     var warm_total is 0.0
-    for r while r < 3 do r++ {
-        for i while i < N do i++ {
+    for r while r < 3 do r += 1 {
+        for i while i < N do i += 1 {
             y[i] += 1.5 * x[i]
         }
 
         var warm is 0.0
-        for i while i < N do i++ {
+        for i while i < N do i += 1 {
             warm += y[i]
         }
         warm_total += warm
 
-        for i while i < N do i++ {
+        for i while i < N do i += 1 {
             y[i] is 0.0
         }
     }
 
     const t0 is std.time.monotonic()
-    for r while r < OUTER do r++ {
-        for i while i < N do i++ {
+    for r while r < OUTER do r += 1 {
+        for i while i < N do i += 1 {
             y[i] += 1.5 * x[i]
         }
     }
     const t1 is std.time.monotonic()
 
     var checksum is 0.0
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         checksum += y[i]
     }
 

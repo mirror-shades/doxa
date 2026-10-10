@@ -1,0 +1,8 @@
+entry function main() {
+    var a :: int | string
+    var b :: string | int
+    var c :: float | int
+    @print("{a}\n")
+    @print("[{b}]\n")
+    @print("{c}\n")
+}

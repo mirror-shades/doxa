@@ -13,7 +13,7 @@ public entry function main() {
     # Typed scalar clone across a loop-reset boundary: `b` is re-homed out of the
     # loop arena. The descriptor-free path must copy rather than alias.
     var b is $P { x is 0, y is 0 }
-    for i while i < 3 do i++ {
+    for i while i < 3 do i += 1 {
         const a is $P { x is i, y is i + 1 }
         b is a
     }

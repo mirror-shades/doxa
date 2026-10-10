@@ -27,21 +27,20 @@ pub const MapHeader = struct {
     capacity: usize,
     key_tag: u64,
     value_tag: u64,
-    scope: ?*scope_arena.Scope,
+    scope: *scope_arena.Scope,
     else_value: i64 = 0,
     has_else_value: bool = false,
 };
 
-fn mapAllocator(scope: ?*scope_arena.Scope) std.mem.Allocator {
+fn mapAllocator(scope: *scope_arena.Scope) std.mem.Allocator {
     // Map storage belongs to the map, not to the scope performing a write.
     // This prevents growth from placing its backing buffer in a shorter-lived
     // access scope.
-    return scope_arena.allocatorInScope(scope);
+    return scope_arena.allocator(scope);
 }
 
-pub fn mapNew(capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {
-    const alloc = scope_arena.allocator();
-    const owner_scope = scope_arena.currentScope();
+pub fn mapNew(owner_scope: *scope_arena.Scope, capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {
+    const alloc = scope_arena.allocator(owner_scope);
 
     const cap: usize = if (capacity_raw <= 0)
         0
@@ -119,6 +118,20 @@ pub fn mapSetI64(map: *MapHeader, key: i64, value: i64) void {
     map.len += 1;
 }
 
+/// Set the entry for a string key, compared by content. A new key is copied
+/// into the map's arena as a C string, which is how string keys are stored.
+pub fn mapSetStr(map: *MapHeader, key: []const u8, value: i64) void {
+    for (map.entries[0..map.len]) |*entry| {
+        if (std.mem.eql(u8, strFromKeyBits(entry.key), key)) {
+            entry.value = value;
+            return;
+        }
+    }
+    const owned = mapAllocator(map.scope).allocSentinel(u8, key.len, 0) catch @panic("doxa_map_set_str: OOM copying key");
+    @memcpy(owned[0..key.len], key);
+    mapSetI64(map, @intCast(@intFromPtr(owned.ptr)), value);
+}
+
 pub fn mapSetElseI64(map: *MapHeader, value: i64) void {
     map.else_value = value;
     map.has_else_value = true;
@@ -144,20 +157,18 @@ pub fn mapTryGetI64(map: *MapHeader, key: i64, out_value: *i64) bool {
     return false;
 }
 
-pub fn mapGetI64(map: *MapHeader, key: i64) i64 {
-    var i: usize = 0;
-    while (i < map.len) : (i += 1) {
-        const entry = map.entries[i];
-        if (keysEqual(map.key_tag, entry.key, key)) {
-            return entry.value;
+/// Look a string key up by content.
+pub fn mapTryGetStr(map: *MapHeader, key: []const u8, out_value: *i64) bool {
+    for (map.entries[0..map.len]) |entry| {
+        if (std.mem.eql(u8, strFromKeyBits(entry.key), key)) {
+            out_value.* = entry.value;
+            return true;
         }
     }
-
     if (map.has_else_value) {
-        return map.else_value;
+        out_value.* = map.else_value;
+        return true;
     }
-
-    // No entry found – return 0 as a generic "nothing" payload; the
-    // compiler will interpret this according to the map's value type.
-    return 0;
+    out_value.* = 0;
+    return false;
 }

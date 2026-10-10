@@ -44,7 +44,7 @@ public entry function main() {
     var still_int :: int | Error is 99
     @print("other int tag: {still_int}\n")
 
-    # Two enum arms name no single variant, so only the discriminant is left.
+    # A box with two enum arms names its variant through the box registry.
     var two_arms :: Error | Alt is Error.BAD_ARG
     @print("two enum arms: {two_arms}\n")
 

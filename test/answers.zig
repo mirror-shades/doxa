@@ -73,20 +73,26 @@ pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "strings ints" },
 };
 
+pub const expected_union_default_results = [_]print_result{
+    .{ .value = "0" },
+    .{ .value = "[]" },
+    .{ .value = "0.0" },
+};
+
 pub const expected_union_stringify_results = [_]print_result{
     .{ .value = "string arm: hello world" },
     .{ .value = "int arm: 42" },
-    .{ .value = "enum arm: .BAD_ARG" },
+    .{ .value = "enum arm: Error.BAD_ARG" },
     .{ .value = "enum var: .BAD_ARG" },
     .{ .value = "enum lit: .BAD_ARG" },
     .{ .value = "narrowed: 7" },
     .{ .value = "other string tag: still a string" },
     .{ .value = "other int tag: 99" },
-    .{ .value = "two enum arms: <enum:1>" },
+    .{ .value = "two enum arms: Error.BAD_ARG" },
     .{ .value = "at string: hello world" },
-    .{ .value = "at string enum: .BAD_ARG" },
-    .{ .value = "loop 0: .BAD_ARG" },
-    .{ .value = "loop 1: .BAD_ARG" },
+    .{ .value = "at string enum: Error.BAD_ARG" },
+    .{ .value = "loop 0: Error.BAD_ARG" },
+    .{ .value = "loop 1: Error.BAD_ARG" },
 };
 
 pub const expected_group_test_results = [_]print_result{
@@ -596,10 +602,6 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "float", .value = "6.0" },
     .{ .type = "float", .value = "1.0" },
     .{ .type = "int", .value = "3" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "25" },
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "11.0" },
@@ -642,10 +644,6 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "float", .value = "6.0" },
     .{ .type = "float", .value = "1.0" },
     .{ .type = "int", .value = "3" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "25" },
     .{ .type = "int", .value = "30" },
     .{ .type = "float", .value = "11.0" },
@@ -688,10 +686,6 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "float", .value = "6.0" },
     .{ .type = "float", .value = "1.0" },
     .{ .type = "int", .value = "3" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
-    .{ .type = "int", .value = "6" },
-    .{ .type = "int", .value = "4" },
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "tetra", .value = "true" },
@@ -705,7 +699,7 @@ pub const expected_expressions_results = [_]peek_result{
 
 pub const expected_union_enum_return_results = [_]peek_result{
     .{ .type = ">int[] | Error", .value = "[1, 2, 3]" },
-    .{ .type = "int[] | >Error", .value = ".FailedToShunt" },
+    .{ .type = "int[] | >Error", .value = "Error.FailedToShunt" },
 };
 
 pub const expected_methods_results = [_]peek_result{
@@ -1148,7 +1142,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int | >byte | float", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
     .{ .type = ">int | MyErrorSet", .value = "10" },
-    .{ .type = "int | >MyErrorSet", .value = ".Failed" },
+    .{ .type = "int | >MyErrorSet", .value = "MyErrorSet.Failed" },
     .{ .type = "int", .value = "10" },
     .{ .type = "MyErrorSet", .value = ".Failed" },
 

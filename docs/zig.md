@@ -74,6 +74,8 @@ For a Doxa-visible `fn f`, the generator emits:
 
 ```zig
 pub fn __doxa_native__f(a0: T0, …) callconv(.c) R { … }
+// or, when f returns a string or an array (see "The caller's arena"):
+pub fn __doxa_native__f(__doxa_scope: *Scope, a0: T0, …) callconv(.c) R { … }
 comptime { @export(&__doxa_native__f, .{ .name = "<link name of f>" }); }
 ```
 
@@ -86,6 +88,17 @@ The body is a thin adapter from the ABI types below to the user's Zig
 signature: it re-slices string parameters and, for string returns, performs the
 arena clone described under ownership. There is no argument vector, no tag
 decoding, and no status code.
+
+### The caller's arena
+
+A function whose result is a heap value — a `string` or an array, including
+the payload of a fallible return — builds it in the caller's arena, which the
+caller passes as a hidden first argument, `__doxa_scope: *Scope`, before the
+declared parameters. Every other function takes no hidden argument. The rule
+is one predicate (`takesArena` in `src/inline_zig/compiler.zig`) that the
+wrapper generator and the LLVM backend both read. The arena is the call
+site's innermost open scope, the same arena a Doxa function's result would
+live in; the wrapper never names a scope the caller did not hand it.
 
 ### Passing rules (fixed 64-bit lengths)
 
@@ -113,11 +126,10 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
 ### Ownership and lifetime
 
 - String parameters are borrowed for the duration of the call.
-- A returned string lands in the scope arena active at the call site: the
-  wrapper clones the bytes with `doxa_str_clone_current`, so the value follows
-  the ordinary arena rules in [memory.md](memory.md) — bulk-freed with its
-  scope, and no free hook. Codegen tags the result with that call-site region
-  rather than `Root`.
+- A returned string lands in the caller's arena: the wrapper clones the bytes
+  into `__doxa_scope` with `doxa_str_clone`, so the value follows the ordinary
+  arena rules in [memory.md](memory.md) — bulk-freed with its scope, and no
+  free hook.
 - Non-string returns cross by value.
 - A module may keep **process-lifetime Zig-owned state** (the `std.json` node
   table, the `std.http` client and connection tables) provided it never retains
@@ -135,9 +147,9 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
   a `[]const T` — scalar and `byte[]` arrays alias the array's backing buffer,
   `string[]` is copied into a temporary per-call arena, and nested arrays recurse
   through that arena. The callee must not retain or store it.
-- A returned `[]const T` is copied into a fresh `ArrayHeader` in the call-site
-  arena (`doxa_array_new` runs with that scope active), so it follows the same
-  arena rules as a returned string. Nested levels are deep-cloned as they are
+- A returned `[]const T` is copied into a fresh `ArrayHeader` in the caller's
+  arena (`doxa_array_new(__doxa_scope, …)`), so it follows the same arena rules
+  as a returned string. Nested levels are deep-cloned as they are
   stored.
 
 ### Error model

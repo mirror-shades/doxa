@@ -1,11 +1,11 @@
 function fillAndScale(n :: int, ^a :: int[]) {
-    for i while i < n do i++ {
+    for i while i < n do i += 1 {
         a[i] is a[i] * 2 + 1
     }
 }
 
 function saxpy(n :: int, s :: float, x :: float[], ^y :: float[]) {
-    for i while i < n do i++ {
+    for i while i < n do i += 1 {
         y[i] += s * x[i]
     }
 }
@@ -31,14 +31,14 @@ struct Item {
 # callee. The pushed structs are built in the callee's scope; they must be
 # re-homed into the caller's array so they survive the callee's teardown.
 function collect(n :: int, ^items :: Item[]) {
-    for i while i < n do i++ {
+    for i while i < n do i += 1 {
         @push(items, Item.new("k", i))
     }
 }
 
 public entry function main() {
     var ints :: int[4]
-    for i while i < 4 do i++ {
+    for i while i < 4 do i += 1 {
         ints[i] is i
     }
     fillAndScale(4, ^ints)
@@ -46,13 +46,13 @@ public entry function main() {
 
     var x :: float[5]
     var y :: float[5]
-    for i while i < 5 do i++ {
+    for i while i < 5 do i += 1 {
         x[i] is i
         y[i] is 0.0
     }
     saxpy(5, 2.0, x, ^y)
     var checksum is 0.0
-    for i while i < 5 do i++ {
+    for i while i < 5 do i += 1 {
         checksum += y[i]
     }
     @print("{@string(checksum)}\n")

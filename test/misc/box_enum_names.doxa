@@ -1,0 +1,25 @@
+# A boxed enum is named `Type.Variant` through the runtime box registry,
+# whatever box it is in: a group, a union of two enums, a group array, a
+# struct field, or a nested array.
+
+enum IOError { NotFound, Denied }
+enum ParseError { BadToken, Eof }
+group Error { IOError, ParseError }
+
+struct Failure {
+    public cause :: Error
+}
+
+public entry function main() {
+    var e :: Error is ParseError.Eof
+    @print("{e}\n")
+    var u :: IOError | ParseError is IOError.Denied
+    @print("{u}\n")
+    var xs :: Error[] is [IOError.Denied, ParseError.BadToken]
+    @print("{xs}\n")
+    var f is $Failure { cause is IOError.NotFound }
+    @print("{f.cause}\n")
+    var nested :: Error[][] is [[ParseError.Eof], [IOError.Denied]]
+    @print("{nested}\n")
+    @print("{@string(e)}\n")
+}

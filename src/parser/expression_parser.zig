@@ -581,64 +581,6 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     return loop_expr;
 }
 
-pub fn prefixIncrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek();
-    const is_decrement = (operator.type == .DECREMENT);
-
-    self.advance();
-    const expr = try parseExpression(self);
-
-    const increment_expr = try self.allocator.create(ast.Expr);
-    increment_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
-        .data = if (is_decrement)
-            .{ .Decrement = expr.? }
-        else
-            .{ .Increment = expr.? },
-    };
-    return increment_expr;
-}
-
-pub fn postfixIncrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous();
-    const is_decrement = (operator.type == .DECREMENT);
-
-    const increment_expr = try self.allocator.create(ast.Expr);
-    increment_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
-        .data = if (is_decrement)
-            .{ .Decrement = left.? }
-        else
-            .{ .Increment = left.? },
-    };
-    return increment_expr;
-}
-
-pub fn prefixDecrement(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek();
-
-    self.advance();
-    const expr = try parseExpression(self);
-
-    const decrement_expr = try self.allocator.create(ast.Expr);
-    decrement_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
-        .data = .{ .Decrement = expr.? },
-    };
-    return decrement_expr;
-}
-
-pub fn postfixDecrement(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.previous();
-
-    const decrement_expr = try self.allocator.create(ast.Expr);
-    decrement_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(operator) },
-        .data = .{ .Decrement = left.? },
-    };
-    return decrement_expr;
-}
-
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     const type_token = self.peek();
     const type_name = type_token.lexeme;
@@ -1485,12 +1427,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         .Print => |print| {
             _ = try inferType(print.expr);
             return .{ .base = .Nothing, .is_mutable = false };
-        },
-        .Increment => |operand| {
-            return try inferType(operand);
-        },
-        .Decrement => |operand| {
-            return try inferType(operand);
         },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }

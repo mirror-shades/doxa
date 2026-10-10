@@ -546,12 +546,6 @@ fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticE
         .Break => {
             type_info.base = .Nothing;
         },
-        // `x++` and `x--` have their operand's type; a name as the operand is
-        // also stored to, which visiting it records.
-        .Increment, .Decrement => |operand| {
-            type_info.* = (try inferTypeFromExpr(self, operand)).*;
-            type_info.comptime_int = null;
-        },
         .Binary => |bin| {
             const left_type = try inferTypeFromExpr(self, bin.left.?);
             const right_type = try inferTypeFromExpr(self, bin.right.?);
@@ -1520,6 +1514,16 @@ const op: []const u8 = switch (bin.operator.type) {
             if (array_type.array_type) |elem_type| {
                 try helpers.unifyElement(self, elem_type, value_type, index_assign.value, .{ .location = getLocationFromBase(expr.base) });
             }
+            // A map entry is an element store too: its key and its value fill
+            // the map's key and value slots.
+            if (array_type.base == .Map) {
+                if (array_type.map_key_type) |key_type| {
+                    try helpers.unifyElement(self, key_type, index_type, index_assign.index, .{ .location = getLocationFromBase(index_assign.index.base) });
+                }
+                if (array_type.map_value_type) |map_value_type| {
+                    try helpers.unifyElement(self, map_value_type, value_type, index_assign.value, .{ .location = getLocationFromBase(index_assign.value.base) });
+                }
+            }
 
             type_info.* = .{ .base = .Nothing };
         },
@@ -1579,7 +1583,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
             type_info.* = .{ .base = .Nothing };
         },
-        .Exists => |exists| {
+        .Exists => |*exists| {
             const array_type = try inferTypeFromExpr(self, exists.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -1594,7 +1598,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 ast.TypeInfo{ .base = .Int };
 
             self.checkFreshName(quantifier_scope, exists.variable);
-            _ = quantifier_scope.createValueBinding(
+            const bound = quantifier_scope.createValueBinding(
                 exists.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
@@ -1617,6 +1621,8 @@ const op: []const u8 = switch (bin.operator.type) {
                     return err;
                 }
             };
+
+            exists.storage = bound.storage_id;
 
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
@@ -1653,7 +1659,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
             type_info.* = .{ .base = .Tetra };
         },
-        .ForAll => |for_all| {
+        .ForAll => |*for_all| {
             const array_type = try inferTypeFromExpr(self, for_all.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -1668,7 +1674,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 ast.TypeInfo{ .base = .Int };
 
             self.checkFreshName(quantifier_scope, for_all.variable);
-            _ = quantifier_scope.createValueBinding(
+            const bound = quantifier_scope.createValueBinding(
                 for_all.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
@@ -1691,6 +1697,8 @@ const op: []const u8 = switch (bin.operator.type) {
                     return err;
                 }
             };
+
+            for_all.storage = bound.storage_id;
 
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
@@ -1870,6 +1878,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
             const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
             type_info.* = target_type_info.*;
+            expr.data.Cast.target = target_type_info;
 
             const value_type = try inferTypeFromExpr(self, cast.value);
             const group_cast = classifyGroupCast(self, value_type, target_type_info);

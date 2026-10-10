@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-const overflow = @import("../src/codegen/llvmir/ir_printer/overflow.zig");
-const int_range = @import("../src/codegen/llvmir/ir_printer/int_range.zig");
+const overflow = @import("../src/codegen/llvm/int_range.zig");
+const int_range = @import("../src/codegen/llvm/int_range.zig");
 
 const IntRange = int_range.IntRange;
 

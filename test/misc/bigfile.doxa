@@ -216,7 +216,7 @@ function fber(x:: int, limit:: int) {
 fber(1000, 1015) #fizzerbuzzer 1-15
 
 function forloop(x :: int) {
-    for i is 0 while i < x do i++ {
+    for i is 0 while i < x do i += 1 {
         ((i+10)*66)?
     }
 }
@@ -1024,7 +1024,7 @@ test_defer_nested()? # 1110
 
 function test_defer_loop() returns int {
     var sum is 0
-    for i is 0 while i < 3 do i++ {
+    for i is 0 while i < 3 do i += 1 {
         defer sum += i
         sum += 10
     }
@@ -1036,7 +1036,7 @@ function test_defer_break() returns int {
     var val is 0
     {
         defer val += 100
-        for i is 0 while i < 5 do i++ {
+        for i is 0 while i < 5 do i += 1 {
             if i == 3 then {
                 defer val += 10
                 break
@@ -1050,7 +1050,7 @@ test_defer_break()? # 113
 
 function test_defer_continue() returns int {
     var val is 0
-    for i is 0 while i < 4 do i++ {
+    for i is 0 while i < 4 do i += 1 {
         if i == 2 then {
             defer val += 10
             continue

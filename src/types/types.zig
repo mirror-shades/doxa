@@ -6,9 +6,7 @@ const TokenType = TokenImport.TokenType;
 const MemoryImport = @import("../utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const Scope = MemoryImport.Scope;
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
-const HIRStruct = @import("../codegen/hir/soxa_values.zig").HIRStruct;
-const HIREnum = @import("../codegen/hir/soxa_values.zig").HIREnum;
+const HIRType = @import("../codegen/hir/types.zig").HIRType;
 const Reporting = @import("../utils/reporting.zig");
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -37,11 +35,6 @@ pub const TokenLiteral = union(enum) {
     nothing: void,
     array: []TokenLiteral,
     map: std.StringHashMap(TokenLiteral),
-};
-
-pub const CustomTypeInstanceData = union {
-    struct_instance: *HIRStruct,
-    enum_instance: *HIREnum,
 };
 
 pub const CustomTypeKind = enum {

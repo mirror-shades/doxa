@@ -373,16 +373,6 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .Increment => |*increment| {
-                const operand = increment.*;
-                expr.data.Increment = try self.foldExpr(operand);
-                return expr;
-            },
-            .Decrement => |*decrement| {
-                const operand = decrement.*;
-                expr.data.Decrement = try self.foldExpr(operand);
-                return expr;
-            },
             .Peek => |*peek| {
                 peek.expr = try self.foldExpr(peek.expr);
                 return expr;
@@ -494,15 +484,6 @@ pub const ConstantFolder = struct {
             },
             .EnumDecl => {},
             .GroupDecl => {},
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.key = try self.foldExpr(entry.key);
-                    entry.value = try self.foldExpr(entry.value);
-                }
-                if (map_literal.else_value) |else_value| {
-                    map_literal.else_value = try self.foldExpr(else_value);
-                }
-            },
             .Import => {},
             .Continue => {},
             .Break => {},

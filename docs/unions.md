@@ -88,6 +88,16 @@ narrowed first — with `as`, or by matching it ([control.md](control.md)). Narr
 holds for the branch that selected the member and no further; which branches narrow
 is described under [match](control.md#match-values-and-union-types).
 
+Printing or peeking a union (or group) value shows the member it holds. An enum
+member is written with its type, since a union may hold variants of several enums;
+once narrowed, it is a plain enum again:
+
+```doxa
+var u :: int | IOError is IOError.Denied
+@print("{u}\n")                  # IOError.Denied
+@print("{u as IOError else IOError.NotFound}\n")  # .Denied
+```
+
 ## Error Handling
 
 Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to _errors_, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. This relies on the `as` keyword which attempts to narrow a value into another type.

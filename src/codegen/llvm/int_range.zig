@@ -1,6 +1,7 @@
 const std = @import("std");
-const ArithOp = @import("../../hir/soxa_instructions.zig").ArithOp;
-const HIRType = @import("../../hir/soxa_types.zig").HIRType;
+const ir = @import("../hir/register/ir.zig");
+const ArithOp = ir.ArithOp;
+const HIRType = ir.HIRType;
 
 // ---------------------------------------------------------------------------
 // Phase D — value range facts, and the floored-arithmetic lowerings they pick
@@ -38,8 +39,8 @@ const HIRType = @import("../../hir/soxa_types.zig").HIRType;
 /// A closed signed interval over `i64`, plus an exact-constant fact.
 ///
 /// `konst`, when present, is authoritative and the bounds are then redundant.
-/// It exists because Doxa materializes a constant as an `add i64 0, C` SSA
-/// value, and a floored `%` needs the literal itself, not merely a bound.
+/// It exists because a floored `%` needs the divisor itself, not merely a
+/// bound.
 pub const IntRange = struct {
     lo: i64 = std.math.minInt(i64),
     hi: i64 = std.math.maxInt(i64),
@@ -47,8 +48,8 @@ pub const IntRange = struct {
     hi_known: bool = false,
     konst: ?i64 = null,
 
-    /// The whole of `i64` — the top element, and the default for every
-    /// `StackVal` literal that does not opt in.
+    /// The whole of `i64` — the top element, and the range of every value
+    /// the pass proves nothing about.
     pub fn unknown() IntRange {
         return .{};
     }
@@ -241,12 +242,10 @@ pub fn signFacts(lhs: IntRange, rhs: IntRange) SignFacts {
     };
 }
 
-/// The value range of an integer `Arith` result, for the operand type the HIR
-/// carries. This is the single source of truth for both the emitter (which
-/// attaches it to the result `StackVal`) and the range dataflow (`range_flow.zig`,
-/// which must reproduce the emitter's transfer exactly). Division and modulo
-/// are only compressed when the divisor is a known positive constant, matching
-/// the floored lowerings the emitter selects on.
+/// The value range of an integer `arith` result, for its type. The range
+/// pass (`ranges.zig`) is its one caller. Division and modulo are only
+/// compressed when the divisor is a known positive constant, matching the
+/// floored lowerings the emitter selects on.
 pub fn arithRange(op: ArithOp, operand_type: HIRType, lhs: IntRange, rhs: IntRange) IntRange {
     switch (operand_type) {
         .Int => switch (op) {
@@ -397,236 +396,51 @@ pub fn planDiv(f: SignFacts) DivShape {
 }
 
 // ---------------------------------------------------------------------------
-// Emission
+// Overflow (Phase D-1)
 // ---------------------------------------------------------------------------
+//
+// Integer overflow is defined behaviour (`docs/performance.md` §1): checked
+// modes trap, unchecked modes wrap. The check on a signed `add`, `sub` or
+// `mul` is skipped when the operand ranges prove the result fits.
 
-pub fn Methods(comptime Ctx: type) type {
-    const IRPrinter = Ctx.IRPrinter;
+const Bounds = struct { lo: i64, hi: i64 };
 
-    return struct {
-        /// Accumulates a run of IR lines so a multi-instruction shape is one
-        /// `writeAll` and one `deinit`, rather than one allocation per line.
-        const Lines = struct {
-            buf: std.ArrayList(u8) = .empty,
-            alloc: std.mem.Allocator,
+/// The closed bounds a range guarantees, or `null` when an end is open. An
+/// exact constant is authoritative.
+fn boundsOf(r: IntRange) ?Bounds {
+    if (r.konst) |k| return .{ .lo = k, .hi = k };
+    if (r.lo_known and r.hi_known) return .{ .lo = r.lo, .hi = r.hi };
+    return null;
+}
 
-            fn deinit(self: *Lines) void {
-                self.buf.deinit(self.alloc);
-            }
-
-            fn line(self: *Lines, comptime fmt: []const u8, args: anytype) !void {
-                try self.buf.print(self.alloc, fmt, args);
-            }
-
-            /// Allocate the next unnamed SSA temporary. The names are drawn
-            /// from the same counter as the printer's own `nextTemp`, so these
-            /// shapes are indistinguishable from the rest of the module.
-            fn temp(self: *Lines, id: *usize) ![]const u8 {
-                const name = try std.fmt.allocPrint(self.alloc, "%{d}", .{id.*});
-                id.* += 1;
-                return name;
-            }
-        };
-
-        /// Emits a guard that traps when `divisor` is zero.
-        ///
-        /// `sdiv`/`srem`/`udiv`/`urem` by zero is undefined behavior in LLVM,
-        /// and the backend duly folds it: an unguarded `5 // z` returned
-        /// `-69242844270821376` rather than failing. Every shape that divides by
-        /// a register therefore routes through here first.
-        ///
-        /// The check is skipped when `facts` already proves the divisor non-zero
-        /// (an exact non-zero constant, or a strictly positive lower bound), so
-        /// a literal divisor costs nothing. The taken arm is a self-contained
-        /// basic block and `current_block` is advanced to the continuation, the
-        /// same contract `overflow.zig` uses for its trap diamond.
-        fn emitDivisorGuard(
-            self: *IRPrinter,
-            out: *Lines,
-            id: *usize,
-            divisor: []const u8,
-            facts: SignFacts,
-            current_block: *[]const u8,
-        ) !void {
-            if (facts.divisorNonZero()) return;
-
-            const is_zero = try out.temp(id);
-            try out.line("  {s} = icmp eq i64 {s}, 0\n", .{ is_zero, divisor });
-
-            // The labels consume the shared counter only to stay unique; as
-            // named values they take no part in LLVM's unnamed numbering.
-            const trap_label = try std.fmt.allocPrint(out.alloc, "div0.trap.{d}", .{id.*});
-            id.* += 1;
-            const cont_label = try std.fmt.allocPrint(out.alloc, "div0.cont.{d}", .{id.*});
-            id.* += 1;
-
-            try out.line("  br i1 {s}, label %{s}, label %{s}\n\n", .{ is_zero, trap_label, cont_label });
-            try out.line(
-                "{s}:\n  call void @doxa_trap_div_by_zero()\n  unreachable\n\n{s}:\n",
-                .{ trap_label, cont_label },
-            );
-
-            self.current_block = cont_label;
-            current_block.* = cont_label;
-        }
-
-        /// Emits the `i1` under which a truncated result needs a one-step
-        /// correction: the remainder is non-zero *and* the operands' signs
-        /// differ. When the divisor's sign is already known the test collapses
-        /// to the dividend's sign and the `xor` disappears.
-        ///
-        /// An unsigned remainder is excluded from this helper: a `urem` residue
-        /// is non-negative by construction, so its only question is whether it
-        /// is non-zero.
-        fn emitCorrectionCondition(
-            out: *Lines,
-            id: *usize,
-            remainder: []const u8,
-            dividend: []const u8,
-            divisor: []const u8,
-            dividend_sign_is_decided: bool,
-        ) ![]const u8 {
-            const non_zero = try out.temp(id);
-            try out.line("  {s} = icmp ne i64 {s}, 0\n", .{ non_zero, remainder });
-            var sign_operand = dividend;
-            if (!dividend_sign_is_decided) {
-                const differing = try out.temp(id);
-                try out.line("  {s} = xor i64 {s}, {s}\n", .{ differing, dividend, divisor });
-                sign_operand = differing;
-            }
-            const negative = try out.temp(id);
-            try out.line("  {s} = icmp slt i64 {s}, 0\n", .{ negative, sign_operand });
-            const condition = try out.temp(id);
-            try out.line("  {s} = and i1 {s}, {s}\n", .{ condition, non_zero, negative });
-            return condition;
-        }
-
-        /// Emits floored `dividend % divisor` in the cheapest shape `facts`
-        /// allows, and returns the SSA name holding the result. The caller owns
-        /// the returned name.
-        ///
-        /// LLVM requires unnamed values to be numbered in order of appearance,
-        /// so the result's temporary is always drawn *after* the intermediates
-        /// it consumes, not up front.
-        pub fn emitFlooredMod(
-            self: *IRPrinter,
-            w: anytype,
-            id: *usize,
-            dividend: []const u8,
-            divisor: []const u8,
-            facts: SignFacts,
-            current_block: *[]const u8,
-        ) ![]const u8 {
-            var out = Lines{ .alloc = self.allocator };
-            defer out.deinit();
-
-            var result: []const u8 = undefined;
-            switch (planModulo(facts)) {
-                .urem_const => |mag| {
-                    result = try out.temp(id);
-                    try out.line("  {s} = urem i64 {s}, {d}\n", .{ result, dividend, mag });
-                },
-                .urem_const_negated => |mag| {
-                    // A negative divisor makes the floored residue
-                    // non-positive, so the magnitude is negated; an exact
-                    // division has residue zero and must not become `-mag`.
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = urem i64 {s}, {d}\n", .{ residue, dividend, mag });
-                    const non_zero = try out.temp(id);
-                    try out.line("  {s} = icmp ne i64 {s}, 0\n", .{ non_zero, residue });
-                    const adjustment = try out.temp(id);
-                    try out.line("  {s} = select i1 {s}, i64 {d}, i64 0\n", .{ adjustment, non_zero, mag });
-                    result = try out.temp(id);
-                    try out.line("  {s} = sub i64 {s}, {s}\n", .{ result, residue, adjustment });
-                },
-                .srem_bare => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    result = try out.temp(id);
-                    try out.line("  {s} = srem i64 {s}, {s}\n", .{ result, dividend, divisor });
-                },
-                .fixup_dividend_sign => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
-                    const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, true);
-                    const adjustment = try out.temp(id);
-                    try out.line("  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ adjustment, condition, divisor });
-                    result = try out.temp(id);
-                    try out.line("  {s} = add i64 {s}, {s}\n", .{ result, residue, adjustment });
-                },
-                .fixup_general => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
-                    const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, false);
-                    const adjustment = try out.temp(id);
-                    try out.line("  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ adjustment, condition, divisor });
-                    result = try out.temp(id);
-                    try out.line("  {s} = add i64 {s}, {s}\n", .{ result, residue, adjustment });
-                },
-            }
-            try w.writeAll(out.buf.items);
-            return result;
-        }
-
-        /// Emits floored `dividend // divisor` in the cheapest shape `facts`
-        /// allows, and returns the SSA name holding the result. The caller owns
-        /// the returned name. As in `emitFlooredMod`, the result's temporary is
-        /// drawn last so the numbering ascends.
-        pub fn emitFlooredDiv(
-            self: *IRPrinter,
-            w: anytype,
-            id: *usize,
-            dividend: []const u8,
-            divisor: []const u8,
-            facts: SignFacts,
-            current_block: *[]const u8,
-        ) ![]const u8 {
-            var out = Lines{ .alloc = self.allocator };
-            defer out.deinit();
-
-            var result: []const u8 = undefined;
-            switch (planDiv(facts)) {
-                .shift_floor => |k| {
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = urem i64 {s}, {d}\n", .{ residue, dividend, @as(u64, 1) << k });
-                    const cleared = try out.temp(id);
-                    try out.line("  {s} = sub i64 {s}, {s}\n", .{ cleared, dividend, residue });
-                    result = try out.temp(id);
-                    try out.line("  {s} = ashr i64 {s}, {d}\n", .{ result, cleared, k });
-                },
-                .sdiv_bare => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    result = try out.temp(id);
-                    try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ result, dividend, divisor });
-                },
-                .fixup_dividend_sign => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    const quotient = try out.temp(id);
-                    try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ quotient, dividend, divisor });
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
-                    const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, true);
-                    const adjustment = try out.temp(id);
-                    try out.line("  {s} = zext i1 {s} to i64\n", .{ adjustment, condition });
-                    result = try out.temp(id);
-                    try out.line("  {s} = sub i64 {s}, {s}\n", .{ result, quotient, adjustment });
-                },
-                .fixup_general => {
-                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
-                    const quotient = try out.temp(id);
-                    try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ quotient, dividend, divisor });
-                    const residue = try out.temp(id);
-                    try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
-                    const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, false);
-                    const adjustment = try out.temp(id);
-                    try out.line("  {s} = zext i1 {s} to i64\n", .{ adjustment, condition });
-                    result = try out.temp(id);
-                    try out.line("  {s} = sub i64 {s}, {s}\n", .{ result, quotient, adjustment });
-                },
-            }
-            try w.writeAll(out.buf.items);
-            return result;
-        }
-    };
+/// True when `op` provably cannot overflow for any pair of values drawn from
+/// the two ranges. Endpoints decide `add` and `sub` because both are monotone
+/// in each operand; a product's extrema lie on the corners of the operand
+/// rectangle, so the four corner products (computed in `i128`, which cannot
+/// overflow for `i64` inputs) decide `mul`.
+pub fn intArithCannotOverflow(op: ArithOp, a: IntRange, b: IntRange) bool {
+    const ab = boundsOf(a) orelse return false;
+    const bb = boundsOf(b) orelse return false;
+    switch (op) {
+        .Add => {
+            _ = std.math.add(i64, ab.lo, bb.lo) catch return false;
+            _ = std.math.add(i64, ab.hi, bb.hi) catch return false;
+            return true;
+        },
+        .Sub => {
+            _ = std.math.sub(i64, ab.lo, bb.hi) catch return false;
+            _ = std.math.sub(i64, ab.hi, bb.lo) catch return false;
+            return true;
+        },
+        .Mul => {
+            const p0 = @as(i128, ab.lo) * @as(i128, bb.lo);
+            const p1 = @as(i128, ab.lo) * @as(i128, bb.hi);
+            const p2 = @as(i128, ab.hi) * @as(i128, bb.lo);
+            const p3 = @as(i128, ab.hi) * @as(i128, bb.hi);
+            const lo = @min(@min(p0, p1), @min(p2, p3));
+            const hi = @max(@max(p0, p1), @max(p2, p3));
+            return lo >= std.math.minInt(i64) and hi <= std.math.maxInt(i64);
+        },
+        else => return false,
+    }
 }

@@ -63,7 +63,7 @@ Aliases can be chained — `levelOne(^x)` calls `levelTwo(^x)` — passing the a
 
 ## Native Runtime Model
 
-The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits calls to `doxa_scope_enter()` and `doxa_scope_exit()` only for managed lexical lifetimes, plus `doxa_scope_reset()` for reusable loop bodies. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit. Exited scope nodes are not returned to the OS: they are rewound and kept on a bounded spare list (at most 64 nodes, each keeping at most 64 KiB of its buffers), so entering a scope does not cost a page allocation and the memory held for reuse stays bounded.
+The compiled backend implements the arena model directly. Each scope is an arena the program holds as a value (`src/runtime/scope_arena.zig`, a tree of `std.heap.ArenaAllocator` nodes), and every allocation names the arena it is made in — there is no implicit current scope. The compiler opens one arena per function body and per loop body (`doxa_scope_enter(parent)`, reset each iteration with `doxa_scope_reset`, closed with `doxa_scope_exit`), and drops every arena nothing allocates in. The program root scope (`doxa_scope_root`) is created once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit. Exited scope nodes are not returned to the OS: they are rewound and kept on a bounded spare list (at most 64 nodes, each keeping at most 64 KiB of its buffers), so entering a scope does not cost a page allocation and the memory held for reuse stays bounded.
 
 Loop bodies have two logical lifetimes: a loop scope for state that persists between iterations and a body scope for iteration-local values. The body arena is entered once, reset at each iteration boundary, and exited once when the loop ends. `continue` resets the body before continuing; `break` exits both scopes; `return` unwinds all active scopes after preparing any escaping result.
 
@@ -130,14 +130,15 @@ Scope cleanup prevents cycles by design. A value's arena outlives all references
 Objects can't outlive their scope. There are no pointers in user code; aliases are scoped to the call.
 
 ### Memory Leaks
-Scopes guarantee cleanup. Every `{` is matched by a `}` that frees the arena.
+Scopes guarantee cleanup. A function's arena is freed when it returns, and a loop's at the end of every iteration.
 
 ### Large Allocations
-Controlled through scope-based cleanup timing. Anonymous blocks can be used within a scope to create narrower arenas that will clean up large allocations.
+Controlled through scope-based cleanup timing: a loop body's allocations are reclaimed every iteration, and a helper function's when it returns.
+<!-- TODO(block arenas): an anonymous block does not open its own arena yet. -->
 
 ### Analysis-Phase Scopes
 
-During semantic analysis, a parallel scope tree is maintained by `MemoryManager` / `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime scope-arena stack and are cleaned up after IR generation.
+During semantic analysis, a parallel scope tree is maintained by `MemoryManager` / `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime arenas and are cleaned up after IR generation.
 
 ### Lexer-Lifetime Borrowing
 

@@ -183,7 +183,7 @@ each item at index in collection { ... }
 **Expands to**:
 
 ```doxa
-for i while i < @length(collection) do i++ {
+for i while i < @length(collection) do i += 1 {
   item is collection[i]
   # or with index:
   const index is i

@@ -29,7 +29,6 @@ pub const ReporterOptions = struct {
     debug_lexer: bool = false,
     debug_parser: bool = false,
     debug_semantic: bool = false,
-    debug_hir: bool = false,
     debug_memory: bool = false,
     log_to_stderr: bool = true,
     publish_debounce_ns: u64 = 30 * std.time.ns_per_ms,
@@ -288,11 +287,6 @@ pub const Reporter = struct {
 
     fn debugSemantic(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         if (!self.options.debug_semantic and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
-    fn debugHir(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_hir and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 

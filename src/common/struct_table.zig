@@ -1,6 +1,6 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const HIRTypes = @import("../codegen/hir/soxa_types.zig");
+const HIRTypes = @import("../codegen/hir/types.zig");
 const TypeIndex = @import("type_index.zig").TypeIndex;
 const ModuleGraph = @import("../module/graph.zig").ModuleGraph;
 

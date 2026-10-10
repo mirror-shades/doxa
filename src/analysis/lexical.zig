@@ -351,18 +351,14 @@ pub const LexicalAnalyzer = struct {
                 }
             },
             '+' => {
-                if (self.match('+')) {
-                    try self.addMinimalToken(.INCREMENT);
-                } else if (self.match('=')) {
+                if (self.match('=')) {
                     try self.addMinimalToken(.PLUS_EQUAL);
                 } else {
                     try self.addMinimalToken(.PLUS);
                 }
             },
             '-' => {
-                if (self.match('-')) {
-                    try self.addMinimalToken(.DECREMENT);
-                } else if (self.match('=')) {
+                if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
                 } else {
                     try self.addMinimalToken(.MINUS);

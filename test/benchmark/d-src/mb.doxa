@@ -8,8 +8,8 @@ const WARM_SIZE is 256
 public entry function main() {
     # Warm-up: a smaller mandelbrot pass before timing.
     var warm is 0
-    for y while y < WARM_SIZE do y++ {
-        for x while x < WARM_SIZE do x++ {
+    for y while y < WARM_SIZE do y += 1 {
+        for x while x < WARM_SIZE do x += 1 {
             var cr is (x - WARM_SIZE / 2.0) / (WARM_SIZE / 4.0)
             var ci is (y - WARM_SIZE / 2.0) / (WARM_SIZE / 4.0)
             var zr is 0.0
@@ -29,8 +29,8 @@ public entry function main() {
 
     const t0 is std.time.monotonic()
 
-    for y while y < SIZE do y++ {
-        for x while x < SIZE do x++ {
+    for y while y < SIZE do y += 1 {
+        for x while x < SIZE do x += 1 {
 
             var cr is (x - SIZE / 2.0) / (SIZE / 4.0)
             var ci is (y - SIZE / 2.0) / (SIZE / 4.0)
