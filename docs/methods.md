@@ -113,14 +113,20 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Does not currently fail for supported runtime values.
 - `@int(value)`
   - Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.
+  - Text may be decimal, `0x` hex, or a decimal float (truncated toward zero), with surrounding whitespace. Text that names no int stops the program: `@int: "abc" is not a valid int`.
 - `@float(value)`
   - Fails at runtime for invalid parse, non-finite values, or unsupported source type.
+  - Text may be a decimal float (`inf` and `nan` included) or `0x` hex. Text that names no float stops the program.
   - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly.
 - `@byte(value)`
-  - String conversion path fails at runtime for invalid parse or out-of-range values.
+  - String conversion path fails at runtime for invalid parse or out-of-range values: a one-character string is that character's code, otherwise decimal, `0x` hex, or a decimal float in 0–255.
   - Numeric conversion path can clamp/zero out some invalid values (for example, `@byte(999)` currently yields `0x00`).
 - `@type(value)`
   - Does not currently fail for supported runtime values.
+
+A conversion of text that must not stop the program belongs to the standard library: `std.methods` has `isInt`, `isFloat` and `isByte` to test text first, and `parseIntSafe`, `parseFloatSafe` and `parseByteSafe` to read it with a fallback of zero.
+
+In a constant expression (`docs/math.md`) a conversion of text the program could not convert is a compile error (`E1037`) instead.
 
 ### Diagnostics / Output
 

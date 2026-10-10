@@ -88,6 +88,31 @@ A literal widens only when the float holds it exactly. Above 2^53 not every int 
 
 This rule mirrors how `int` → `byte` already works (comptime literals are allowed; runtime values require `@byte()`). The `@float()` intrinsic converts int, byte, or string values to float.
 
+## Constant expressions
+
+A *constant expression* is a literal, a `const` whose initializer is itself constant, or an operator or conversion (`@int`, `@float`, `@byte`) applied to those. `@length` of a fixed-size array is constant too. An array size must be a constant expression.
+
+```doxa
+const N is 4
+const M is N * 3 - 1      # constant
+var xs :: int[M // 2]     # a constant size
+
+var n is 4                # a var is never constant
+const k is n + 1          # not constant: computed when it runs
+```
+
+The compiler computes a constant expression with exactly the program's arithmetic. Where a running program would trap, a constant expression is a compile error instead:
+
+| In a constant expression | Error |
+|---|---|
+| `int` overflow (`9223372036854775807 + 1`) | `E1024` |
+| `//` or `%` by an integer zero | `E1036` |
+| `@int` of a float with no `int` value (`@int(1e300)`) | `E1032` |
+| `@byte` of a number outside 0–255 | `E1031` |
+| `@int`, `@float` or `@byte` of text that names no such number (`@int("abc")`) | `E1037` |
+
+Anything else is not a constant, and the compiler never guesses its value. That includes a `var`, a field, an array element, and a call. Such an expression runs as written.
+
 ## Division by zero
 
 Integer division and modulo by zero (`//`, `%`, on `int` or `byte`) are a runtime trap. Float division follows IEEE 754 instead: `1 / 0` is `inf`, `-1 / 0` is `-inf`, and `0 / 0` is NaN.
