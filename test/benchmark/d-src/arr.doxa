@@ -10,8 +10,8 @@ const SINK_ITERS is 75_000_000
 function arr_reduce(arr :: int[]) returns int {
     var sum is 0
 
-    for r while r < OUTER do r++ {
-        for i while i < N do i++ {
+    for r while r < OUTER do r += 1 {
+        for i while i < N do i += 1 {
             sum += arr[i]
         }
     }
@@ -22,11 +22,11 @@ public entry function main() {
     var arr :: int[N]
     var sink is 0
 
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         arr[i] is i % 997
     }
 
-    for i while i < SINK_ITERS do i++ {
+    for i while i < SINK_ITERS do i += 1 {
         sink += arr[i % N]
     }
 

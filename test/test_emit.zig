@@ -147,7 +147,7 @@ test "emit: a loop-carried accumulator through a call reaches the bare urem" {
         \\}
         \\function accumulate(iters :: int) returns int {
         \\    var sum is 0
-        \\    for i while i < iters do i++ {
+        \\    for i while i < iters do i += 1 {
         \\        const a is add(i, (sum % 997) + 1)
         \\        sum += a
         \\    }
@@ -212,7 +212,7 @@ fn loopSource(allocator: std.mem.Allocator, expr: []const u8) ![]u8 {
         \\module std from @std()
         \\public entry function main() {{
         \\    var total is 0
-        \\    for i while i < 10 do i++ {{
+        \\    for i while i < 10 do i += 1 {{
         \\        total is total + ({s})
         \\    }}
         \\    std.io.println("{{total}}")
@@ -339,7 +339,7 @@ test "emit: a constant reached through a binding is still a constant" {
         \\public entry function main() {
         \\    const d is 65536
         \\    var total is 0
-        \\    for i while i < 10 do i++ {
+        \\    for i while i < 10 do i += 1 {
         \\        const m is i * 3 + 1
         \\        total is total + (m % d)
         \\    }
@@ -376,7 +376,7 @@ const descriptorFreeSource =
     \\}
     \\public entry function main() {
     \\    var b is $Q { x is 0, y is 0 }
-    \\    for i while i < 3 do i++ {
+    \\    for i while i < 3 do i += 1 {
     \\        const a is $Q { x is i, y is i + 1 }
     \\        b is a
     \\    }

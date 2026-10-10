@@ -11,7 +11,7 @@ function leaf_add(a :: int, b :: int) returns int {
 
 function leaf_sum(iters :: int) returns int {
     var sum is 0
-    for i while i < iters do i++ {
+    for i while i < iters do i += 1 {
         const a is leaf_add(i, (sum % 997) + 1)
         sum += a
     }
@@ -20,7 +20,7 @@ function leaf_sum(iters :: int) returns int {
 
 public entry function main() {
     var sink is 0
-    for i while i < SINK_ITERS do i++ {
+    for i while i < SINK_ITERS do i += 1 {
         sink += leaf_add(i, (sink % 997) + 1)
     }
 

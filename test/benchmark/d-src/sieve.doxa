@@ -8,7 +8,7 @@ public entry function main() {
 
     # Initialization (and first-touch of the buffer) happens before the timer,
     # mirroring the C version so neither side pays page faults inside the timer.
-    for i while i <= limit do i++ {
+    for i while i <= limit do i += 1 {
         prime[i] is 0x01
     }
 
@@ -17,7 +17,7 @@ public entry function main() {
     prime[0] is 0x00
     prime[1] is 0x00
 
-    for i while (i * i <= limit) do i++ {
+    for i while (i * i <= limit) do i += 1 {
         if prime[i] > 0x00 then {
             for j is i * i while j <= limit do j += i {
                 prime[j] is 0x00
@@ -27,7 +27,7 @@ public entry function main() {
 
     var count :: int
 
-    for i while i <= limit do i++ {
+    for i while i <= limit do i += 1 {
         if prime[i] > 0x00 then {
             count += 1
         }

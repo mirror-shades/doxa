@@ -55,8 +55,6 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .MapLiteral => |m| mapLiteral(l, e, m.entries, m.else_value),
         .Index => index(l, e),
         .IndexAssign => |a| indexAssign(l, a.array, a.index, a.value),
-        .Increment => |operand| step(l, e, operand, .Add),
-        .Decrement => |operand| step(l, e, operand, .Sub),
         .Range => |r| range(l, e, r.start, r.end),
 
         .FunctionCall => functionCall(l, e),
@@ -391,23 +389,6 @@ fn assignment(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const v = try l.exprAs(assign.value.?, slot_type) orelse return null;
     try l.writeStorage(target, assign.name.lexeme, v);
     return try result(l, e, v, slot_type);
-}
-
-/// `x++` / `x--`: the operand's new value. A name is stored back; any other
-/// operand only computes the value.
-/// TODO: an index or field operand (`a[i]++`) is computed and not stored back,
-/// as the stack HIR did; whether it should store is undecided.
-fn step(l: *Lowering, e: *ast.Expr, operand: *ast.Expr, op: ir.ArithOp) Error!?ValueId {
-    const ty = try l.g.typeOf(operand);
-    const current = try expr(l, operand) orelse return null;
-    const one = try l.convert(try l.constant(.{ .int = 1 }, .Int), .Int, ty);
-    const next = try l.define(.{ .arith = .{ .op = op, .lhs = current, .rhs = one } }, ty);
-    if (operand.data == .Variable) {
-        const target = try l.g.storeTarget(&operand.base);
-        const slot_type = try l.g.lowerType(target.slot);
-        try l.writeStorage(target, operand.data.Variable.lexeme, try l.convert(next, ty, slot_type));
-    }
-    return try result(l, e, next, ty);
 }
 
 /// Store `value`, of `ty`, back into what `target` names: a name, or a field.

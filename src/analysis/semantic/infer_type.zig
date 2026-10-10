@@ -546,12 +546,6 @@ fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticE
         .Break => {
             type_info.base = .Nothing;
         },
-        // `x++` and `x--` have their operand's type; a name as the operand is
-        // also stored to, which visiting it records.
-        .Increment, .Decrement => |operand| {
-            type_info.* = (try inferTypeFromExpr(self, operand)).*;
-            type_info.comptime_int = null;
-        },
         .Binary => |bin| {
             const left_type = try inferTypeFromExpr(self, bin.left.?);
             const right_type = try inferTypeFromExpr(self, bin.right.?);

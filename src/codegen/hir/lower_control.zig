@@ -201,7 +201,6 @@ fn lentIn(l: *Lowering, e: *ast.Expr) Error!void {
             try lentIn(l, x.value);
         },
         .Assignment => |x| if (x.value) |v| try lentIn(l, v),
-        .Increment, .Decrement => |x| try lentIn(l, x),
         .InternalCall => |x| {
             try lentIn(l, x.receiver);
             for (x.arguments) |a| try lentIn(l, a);

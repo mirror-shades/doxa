@@ -29,10 +29,8 @@ pub const TokenType = enum {
     POWER, // **
     POWER_EQUAL, // **=
     PLUS, // +
-    INCREMENT, // ++
     PLUS_EQUAL, // +=
     MINUS, // -
-    DECREMENT, // --
     MINUS_EQUAL, // -=
     BANG, // !
     BANG_EQUAL, // !=

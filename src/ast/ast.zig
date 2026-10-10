@@ -650,8 +650,6 @@ pub const Expr = struct {
             arguments: []const *Expr,
         },
 
-        Increment: *Expr,
-        Decrement: *Expr,
         Assert: struct {
             condition: *Expr,
             location: Location,
@@ -805,14 +803,6 @@ pub const Expr = struct {
                 allocator.destroy(l.left);
                 l.right.deinit(allocator);
                 allocator.destroy(l.right);
-            },
-            .Increment => |*i| {
-                i.*.deinit(allocator);
-                allocator.destroy(i);
-            },
-            .Decrement => |*i| {
-                i.*.deinit(allocator);
-                allocator.destroy(i);
             },
             .Peek => |i| {
                 i.expr.deinit(allocator);
@@ -1473,14 +1463,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
             try writer.print("Expr.InternalCall .{s}\n", .{c.method.lexeme});
             try dumpExpr(writer, c.receiver, depth + 1);
             for (c.arguments) |arg| try dumpExpr(writer, arg, depth + 1);
-        },
-        .Increment => |e| {
-            try writer.print("Expr.Increment\n", .{});
-            try dumpExpr(writer, e, depth + 1);
-        },
-        .Decrement => |e| {
-            try writer.print("Expr.Decrement\n", .{});
-            try dumpExpr(writer, e, depth + 1);
         },
         .Assert => |a| {
             try writer.print("Expr.Assert\n", .{});

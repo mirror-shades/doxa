@@ -31,7 +31,7 @@ public entry function main() {
 
     # Mixed phi, then arm is a global (Root): identity is preserved, so @push
     # writes through to `g`.
-    for i while i < 1 do i++ {
+    for i while i < 1 do i += 1 {
         const fresh is [7, 7]
         var chosen is if flag == 1 then g else fresh
         @push(chosen, 4)
@@ -40,7 +40,7 @@ public entry function main() {
 
     # Mixed phi, else arm is loop-fresh (Deep): it is cloned, so `g` is intact.
     var flag2 is 0
-    for i while i < 1 do i++ {
+    for i while i < 1 do i += 1 {
         const fresh2 is [7, 7]
         var chosen2 is if flag2 == 1 then g else fresh2
         @push(chosen2, 5)

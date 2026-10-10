@@ -10,8 +10,8 @@ var b :: float[N][N]
 var c :: float[N][N]
 
 public entry function main() {
-    for i while i < N do i++ {
-        for j while j < N do j++ {
+    for i while i < N do i += 1 {
+        for j while j < N do j += 1 {
             a[i][j] is i + j
             b[i][j] is i - j
         }
@@ -19,9 +19,9 @@ public entry function main() {
 
     # Warm-up: a cheap pass over a and b (the matmul read pattern) before timing.
     var warm is 0.0
-    for i while i < N do i++ {
+    for i while i < N do i += 1 {
         var s is 0.0
-        for k while k < N do k++ {
+        for k while k < N do k += 1 {
             s += a[i][k] * b[k][i]
         }
         warm += s
@@ -30,14 +30,14 @@ public entry function main() {
     const t0 is std.time.monotonic()
 
     var acc is 0.0
-    for r while r < REPEATS do r++ {
+    for r while r < REPEATS do r += 1 {
         a[r % N][r % N] is a[r % N][r % N] + 1.0
-        for i while i < N do i++ {
-            for j while j < N do j++ {
+        for i while i < N do i += 1 {
+            for j while j < N do j += 1 {
 
                 var sum is 0.0
 
-                for k while k < N do k++ {
+                for k while k < N do k += 1 {
                     sum += a[i][k] * b[k][j]
                 }
 

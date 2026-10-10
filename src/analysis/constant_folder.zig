@@ -373,16 +373,6 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .Increment => |*increment| {
-                const operand = increment.*;
-                expr.data.Increment = try self.foldExpr(operand);
-                return expr;
-            },
-            .Decrement => |*decrement| {
-                const operand = decrement.*;
-                expr.data.Decrement = try self.foldExpr(operand);
-                return expr;
-            },
             .Peek => |*peek| {
                 peek.expr = try self.foldExpr(peek.expr);
                 return expr;
