@@ -1260,14 +1260,14 @@ const rejected_cases = [_]Case{
         .path = "./test/syntax/constant_overflow_error.doxa",
         .mode = .reject,
         .expect_error = "E1024",
-        .expect_stderr = "constant_overflow_error.doxa:2:34: integer overflow in a constant expression",
+        .expect_stderr = "constant_overflow_error.doxa:2:14: integer overflow in a constant expression",
     },
     .{
         .name = "a division by a constant zero is rejected",
         .path = "./test/syntax/constant_division_by_zero_error.doxa",
         .mode = .reject,
         .expect_error = "E1036",
-        .expect_stderr = "constant_division_by_zero_error.doxa:4:16: division by zero in a constant expression",
+        .expect_stderr = "constant_division_by_zero_error.doxa:4:14: division by zero in a constant expression",
     },
     .{
         .name = "a constant @int of a float with no int value is rejected",
@@ -1281,7 +1281,7 @@ const rejected_cases = [_]Case{
         .path = "./test/syntax/constant_unparsable_error.doxa",
         .mode = .reject,
         .expect_error = "E1037",
-        .expect_stderr = "constant_unparsable_error.doxa:2:15: the text names no number",
+        .expect_stderr = "constant_unparsable_error.doxa:2:14: the text names no number",
     },
     .{
         .name = "a conversion of text that names no number traps",

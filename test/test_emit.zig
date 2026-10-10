@@ -620,3 +620,65 @@ test "module graph: emitted IR is independent of the checkout directory" {
 
     try testing.expectEqualStrings(ir_a, ir_b);
 }
+
+// ---------------------------------------------------------------------------
+// Spans: every instruction names the source it was lowered from
+// ---------------------------------------------------------------------------
+
+const spanSource =
+    \\function scale(xs :: int[], k :: int) returns int {
+    \\    var total is 0
+    \\    each x in xs {
+    \\        if x > k then {
+    \\            total is total + x * k
+    \\        }
+    \\    }
+    \\    return total + xs[0]
+    \\}
+    \\entry function main() {
+    \\    @print("{scale([1, 2, 3], 2)}")
+    \\}
+;
+
+/// The span `--emit-hir` prints for the first line holding `needle`.
+fn spanOf(hir: []const u8, needle: []const u8) ![]const u8 {
+    var lines = std.mem.splitScalar(u8, hir, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.indexOf(u8, line, needle) == null) continue;
+        const at = std.mem.indexOf(u8, line, "  ; ") orelse return error.NoSpan;
+        return std.mem.trimEnd(u8, line[at + "  ; ".len ..], "\r");
+    }
+    std.debug.print("no HIR line holds `{s}`:\n{s}\n", .{ needle, hir });
+    return error.NoSuchLine;
+}
+
+test "spans: an instruction carries its expression's start, a statement's first is marked" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const hir = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = spanSource }}, &.{"--emit-hir"}, "hir");
+    defer allocator.free(hir);
+
+    const expected = [_]struct { needle: []const u8, span: []const u8 }{
+        // A binary expression starts at its left operand, not its operator or
+        // the token after it.
+        .{ .needle = "cmp.Gt", .span = "probe.doxa:4:12 (stmt)" },
+        .{ .needle = "arith.Mul", .span = "probe.doxa:5:30 (stmt)" },
+        .{ .needle = "%16 = arith.Add", .span = "probe.doxa:5:22" },
+        // An index starts at what it indexes; a terminator has its statement.
+        .{ .needle = "%13 = array.get", .span = "probe.doxa:8:20" },
+        .{ .needle = "return %14", .span = "probe.doxa:8:5" },
+        // An `each` loop's machinery sits at what it iterates.
+        .{ .needle = "array.len", .span = "probe.doxa:3:15" },
+        // A placeholder's expressions are where their text is in the file.
+        .{ .needle = "array.new", .span = "probe.doxa:11:20" },
+        .{ .needle = "call ", .span = "probe.doxa:11:14" },
+    };
+    for (expected) |e| {
+        testing.expectEqualStrings(e.span, try spanOf(hir, e.needle)) catch |err| {
+            std.debug.print("for `{s}`\n", .{e.needle});
+            return err;
+        };
+    }
+}

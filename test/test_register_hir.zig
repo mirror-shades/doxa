@@ -25,7 +25,7 @@ const no_program = ir.Program{
 
 fn text(alloc: std.mem.Allocator, program: *const ir.Program, f: *const ir.Function) ![]const u8 {
     var out = std.Io.Writer.Allocating.init(alloc);
-    try print.writeFunction(&out.writer, program, f);
+    try print.writeFunction(&out.writer, program, f, .{});
     return out.written();
 }
 
@@ -48,13 +48,15 @@ fn expectFault(alloc: std.mem.Allocator, program: *const ir.Program, f: *const i
 
 const int: Type = .of(.Int);
 const string: Type = .of(.String);
+/// The span of a hand-built function: its spans are not what these tests pin.
+const here: ir.SrcSpan = .{ .module = 0, .line = 1, .column = 1 };
 
 test "register hir: straight-line code" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "add", .Int);
+    var b = try FunctionBuilder.init(a, "add", .Int, here);
     const x = try b.addParam(int, .value);
     const y = try b.addParam(int, .value);
     const sum = try b.define(.{ .arith = .{ .op = .Add, .lhs = x, .rhs = y } }, int);
@@ -76,7 +78,7 @@ test "register hir: an if value is a block parameter" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "max", .Int);
+    var b = try FunctionBuilder.init(a, "max", .Int, here);
     const x = try b.addParam(int, .value);
     const y = try b.addParam(int, .value);
     const then = try b.createBlock();
@@ -116,7 +118,7 @@ test "register hir: an if value is a block parameter" {
 /// `sum(n)`: `i` and `acc` start at 0; while `i < n`, `acc += i` and `i++`;
 /// `k` is written once before the loop and read in it.
 fn buildSum(a: std.mem.Allocator, with_invariant: bool) !ir.Function {
-    var b = try FunctionBuilder.init(a, "sum", .Int);
+    var b = try FunctionBuilder.init(a, "sum", .Int, here);
     const n = try b.addParam(int, .value);
     const i = try b.declareVar(int);
     const acc = try b.declareVar(int);
@@ -209,7 +211,7 @@ test "register hir: code after a return is dropped" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "early", .Int);
+    var b = try FunctionBuilder.init(a, "early", .Int, here);
     const x = try b.addParam(int, .value);
     const dead = try b.createBlock();
     try b.ret(x);
@@ -226,7 +228,7 @@ test "register hir: reading a local never written is an error" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "undefined_read", .Int);
+    var b = try FunctionBuilder.init(a, "undefined_read", .Int, here);
     const v = try b.declareVar(int);
     try testing.expectError(error.UndefinedVariable, b.useVar(v));
 }
@@ -238,7 +240,7 @@ test "register hir verifier: operand types" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "mixed", .Int);
+    var b = try FunctionBuilder.init(a, "mixed", .Int, here);
     const x = try b.addParam(int, .value);
     const y = try b.addParam(.of(.Float), .value);
     const sum = try b.define(.{ .arith = .{ .op = .Add, .lhs = x, .rhs = y } }, int);
@@ -252,7 +254,7 @@ test "register hir verifier: a definition dominates every use" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    var b = try FunctionBuilder.init(a, "crossed", .Int);
+    var b = try FunctionBuilder.init(a, "crossed", .Int, here);
     const x = try b.addParam(int, .value);
     const then = try b.createBlock();
     const @"else" = try b.createBlock();
@@ -276,7 +278,7 @@ const ArenaFixture = struct {
     body: ir.ValueId,
 
     fn init(a: std.mem.Allocator, name: []const u8, ret: ir.HIRType) !ArenaFixture {
-        var b = try FunctionBuilder.init(a, name, ret);
+        var b = try FunctionBuilder.init(a, name, ret, here);
         const caller = try b.addParam(.arena, .caller_arena);
         const body = try b.define(.{ .scope_enter = .{ .parent = caller } }, .arena);
         return .{ .b = b, .caller = caller, .body = body };
@@ -337,7 +339,7 @@ test "register hir verifier: a returned heap value outlives @caller" {
         try expectValid(a, &no_program, &f);
     }
     {
-        var b = try FunctionBuilder.init(a, "no_caller", .String);
+        var b = try FunctionBuilder.init(a, "no_caller", .String, here);
         const s = try b.define(.{ .constant = .{ .string = "hi" } }, string);
         try b.ret(s);
         const f = try b.finish();
@@ -447,4 +449,35 @@ test "register hir verifier: one slot is never lent twice to one call" {
             try expectValid(a, &program, &f);
         }
     }
+}
+
+test "register hir: every instruction and terminator carries its span" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var b = try FunctionBuilder.init(a, "spans", .Int, .{ .module = 0, .line = 1, .column = 10 });
+    const x = try b.addParam(int, .value);
+    b.beginStatement();
+    const outer = b.at(.{ .module = 1, .line = 2, .column = 5 });
+    const two = try b.define(.{ .constant = .{ .int = 2 } }, int);
+    const inner = b.at(.{ .module = 1, .line = 2, .column = 12 });
+    const doubled = try b.define(.{ .arith = .{ .op = .Mul, .lhs = x, .rhs = two } }, int);
+    _ = b.at(inner);
+    try b.ret(doubled);
+    _ = b.at(outer);
+    const f = try b.finish();
+
+    var program = no_program;
+    program.files = &.{ "main.doxa", "lib.doxa" };
+    var out = std.Io.Writer.Allocating.init(a);
+    try print.writeFunction(&out.writer, &program, &f, .{ .spans = true });
+    try testing.expectEqualStrings(
+        \\fn spans(%0: int) -> int
+        \\b0(%0: int):
+        \\    %1 = const int 2  ; lib.doxa:2:5 (stmt)
+        \\    %2 = arith.Mul %0, %1  ; lib.doxa:2:12
+        \\    return %2  ; lib.doxa:2:5
+        \\
+    , out.written());
 }
