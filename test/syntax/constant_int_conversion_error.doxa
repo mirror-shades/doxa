@@ -1,0 +1,6 @@
+const huge is @int(1e300)
+
+entry function main() {
+    @print("{huge}
+")
+}

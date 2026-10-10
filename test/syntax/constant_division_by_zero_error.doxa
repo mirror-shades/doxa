@@ -1,0 +1,7 @@
+const zero is 0
+
+entry function main() {
+    var q is 7 // zero
+    @print("{q}
+")
+}

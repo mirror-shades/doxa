@@ -1,0 +1,5 @@
+entry function main() {
+    var r is 9223372036854775807 + 1
+    @print("{r}
+")
+}

@@ -1,0 +1,5 @@
+entry function main() {
+    var n is @int("abc")
+    @print("{n}
+")
+}

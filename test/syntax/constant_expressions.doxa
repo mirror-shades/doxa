@@ -1,0 +1,27 @@
+# Constant expressions fold with the program's own arithmetic: floored `//`
+# and `%`, wrapping bytes, and first-order tetra logic.
+
+const N is 4
+const M is N * 3 - 1
+var xs :: int[M // 2 + @int(1.5)]
+
+function ambiguous() returns tetra {
+    return both
+}
+
+entry function main() {
+    const floored is -7 // 2
+    const remainder is 7 % -2
+    const power is 2 ** 10
+    @print("{floored} {remainder} {power} {@length(xs)}\n")
+
+    const b :: byte is 200
+    const c :: byte is 100
+    const wrapped is b + c
+    @print("{wrapped}\n")
+
+    const folded is both and true
+    const run is ambiguous() and true
+    const negated is not both
+    @print("{folded} {run} {negated}\n")
+}

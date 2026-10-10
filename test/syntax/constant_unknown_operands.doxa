@@ -1,0 +1,20 @@
+# An initializer the compiler cannot know is not a constant: a field, a
+# variable assigned after its declaration, or a call runs as written.
+
+struct T {
+    public capacity :: int,
+}
+
+function areaCount() returns int {
+    return 4
+}
+
+entry function main() {
+    var t is $T { capacity is 64 }
+    const slot is 7 % t.capacity
+    var b is 0
+    b is 3
+    const q is (7 * 100) // b
+    const w is @int(400.0 / areaCount())
+    @print("{slot} {q} {w}\n")
+}

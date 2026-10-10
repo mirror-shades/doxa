@@ -1,0 +1,5 @@
+entry function main() {
+    var b :: byte is 300
+    @print("{b}
+")
+}
