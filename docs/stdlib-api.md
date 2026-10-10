@@ -414,10 +414,7 @@ public function makeDir(path :: string) returns nothing | error.StdError
 
 ```doxa
 public function makeDir(path :: string) returns nothing | error.StdError {
-    File.makeDir(path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.makeDir(path)
 }
 ```
 
@@ -434,10 +431,7 @@ public function makePath(path :: string) returns nothing | error.StdError
 
 ```doxa
 public function makePath(path :: string) returns nothing | error.StdError {
-    File.makePath(path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.makePath(path)
 }
 ```
 
@@ -454,10 +448,7 @@ public function copyFile(source :: string, destination :: string) returns nothin
 
 ```doxa
 public function copyFile(source :: string, destination :: string) returns nothing | error.StdError {
-    File.copyFile(source, destination)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.copyFile(source, destination)
 }
 ```
 
@@ -474,10 +465,7 @@ public function delete(path :: string, recursive :: tetra) returns nothing | err
 
 ```doxa
 public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError {
-    File.delete(path, recursive)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.delete(path, recursive)
 }
 ```
 
@@ -494,10 +482,7 @@ public function copyDir(source :: string, destination :: string) returns nothing
 
 ```doxa
 public function copyDir(source :: string, destination :: string) returns nothing | error.StdError {
-    File.copyDir(source, destination)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.copyDir(source, destination)
 }
 ```
 
@@ -514,10 +499,7 @@ public function unzipFile(zip_path :: string, unzip_path :: string) returns noth
 
 ```doxa
 public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError {
-    File.unzipFile(zip_path, unzip_path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.unzipFile(zip_path, unzip_path)
 }
 ```
 
@@ -551,10 +533,7 @@ public function renameDir(old_folder :: string, new_folder :: string) returns no
 
 ```doxa
 public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError {
-    File.renameDir(old_folder, new_folder)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.renameDir(old_folder, new_folder)
 }
 ```
 
@@ -571,10 +550,7 @@ public function rename(old_path :: string, new_path :: string) returns nothing |
 
 ```doxa
 public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError {
-    File.rename(old_path, new_path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.rename(old_path, new_path)
 }
 ```
 
@@ -591,10 +567,7 @@ public function read(path :: string) returns string | error.StdError
 
 ```doxa
 public function read(path :: string) returns string | error.StdError {
-    const value is File.read(path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return value
-    return mapFileError(err)
+    return File.read(path)
 }
 ```
 
@@ -611,10 +584,7 @@ public function write(path :: string, content :: string) returns nothing | error
 
 ```doxa
 public function write(path :: string, content :: string) returns nothing | error.StdError {
-    File.write(path, content)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.write(path, content)
 }
 ```
 
@@ -631,10 +601,7 @@ public function append(path :: string, content :: string) returns nothing | erro
 
 ```doxa
 public function append(path :: string, content :: string) returns nothing | error.StdError {
-    File.append(path, content)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.append(path, content)
 }
 ```
 
@@ -685,10 +652,7 @@ public function list(path :: string) returns string[] | error.StdError
 
 ```doxa
 public function list(path :: string) returns string[] | error.StdError {
-    const value is File.list(path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return value
-    return mapFileError(err)
+    return File.list(path)
 }
 ```
 
@@ -705,10 +669,7 @@ public function touch(path :: string) returns nothing | error.StdError
 
 ```doxa
 public function touch(path :: string) returns nothing | error.StdError {
-    File.touch(path)
-    const err is File.takeLastErrorCode()
-    if err == 0 then return
-    return mapFileError(err)
+    return File.touch(path)
 }
 ```
 
@@ -2640,12 +2601,17 @@ public struct Target {
     public arch :: string,
     public os :: string,
     public abi :: string,
+    # The machine running the build, compiled for its own CPU. A cross target
+    # naming the host's triple is still a cross target: it compiles for the
+    # triple's baseline CPU, so its binary runs on any machine of that triple.
+    public native :: tetra,
 
     public function host() returns Target {
         return $Target {
             arch is Build.hostArch(),
             os is Build.hostOs(),
             abi is Build.hostAbi(),
+            native is true,
         }
     }
 
@@ -2657,6 +2623,7 @@ public struct Target {
             arch is arch,
             os is os,
             abi is abi,
+            native is false,
         }
     }
 
@@ -2691,6 +2658,7 @@ public function host() returns Target {
             arch is Build.hostArch(),
             os is Build.hostOs(),
             abi is Build.hostAbi(),
+            native is true,
         }
     }
 ```
@@ -2716,6 +2684,7 @@ public function cross(arch :: string, os :: string, abi :: string) returns Targe
             arch is arch,
             os is os,
             abi is abi,
+            native is false,
         }
     }
 ```
@@ -3088,6 +3057,16 @@ public function run(c :: Context) returns int | error.StdError {
     # expression that produces a string currently yields a corrupted value.
     var opt is "debug"
     if not c.debug then opt is optModeName(c.optimization)
+    # A native build names no target: the compiler's host build is the one
+    # that targets this machine's CPU.
+    var arch is c.target.arch
+    var os is c.target.os
+    var abi is c.target.abi
+    if c.target.native then {
+        arch is ""
+        os is ""
+        abi is ""
+    }
     var i is 0
     while i < @length(c.artifacts) {
         const art is c.artifacts[i]
@@ -3096,7 +3075,7 @@ public function run(c :: Context) returns int | error.StdError {
         const libdirs is joinLines(art.libdirs)
         const frameworks is joinLines(art.frameworks)
         const includes is joinLines(art.includes)
-        const code is Build.compileArtifact(art.entry_point, art.output, c.target.arch, c.target.os, c.target.abi, opt, links, libdirs, frameworks, includes)
+        const code is Build.compileArtifact(art.entry_point, art.output, arch, os, abi, opt, links, libdirs, frameworks, includes)
         const err is Build.takeLastErrorCode()
         if err != 0 then return mapBuildError(err)
         if code != 0 then return code
@@ -3466,14 +3445,14 @@ public function popStringArray(^collection :: string[]) returns string | error.M
 ### `insert`
 
 ```doxa
-public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns nothing | error.Method
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method {
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns nothing | error.Method {
     match collection {
         string then {
             if index < 0 then return error.Method.OutOfBounds
