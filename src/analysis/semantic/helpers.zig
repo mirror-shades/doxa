@@ -756,11 +756,16 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
             }
             return;
         }
-        // Narrowing int -> byte is implicit only for comptime numeric literals
-        // (bounds-checked in the value/codegen layers). Runtime ints must be
-        // narrowed explicitly with @byte().
+        // Narrowing int -> byte is implicit only for a literal the byte holds.
+        // Runtime ints must be narrowed explicitly with @byte().
         if (expected.base == .Byte and actual.base == .Int) {
-            if (actual.comptime_int != null) return;
+            if (actual.comptime_int) |value| {
+                if (value < 0 or value > 255) {
+                    self.reporter.reportCompileError(span.location, ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
+                    self.fatal_error = true;
+                }
+                return;
+            }
             self.reporter.reportCompileError(
                 span.location,
                 ErrorCode.TYPE_MISMATCH,

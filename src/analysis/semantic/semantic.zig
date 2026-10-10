@@ -39,6 +39,7 @@ const helpers = @import("./helpers.zig");
 const names = @import("./names.zig");
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
+const consteval = @import("../consteval.zig");
 const union_handling = @import("union_handling.zig");
 const infer_type = @import("./infer_type.zig");
 
@@ -599,7 +600,7 @@ pub const SemanticAnalyzer = struct {
             function_type.* = .{ .params = sig.param_types, .return_type = return_type };
             const type_info = try ast.TypeInfo.createDefault(self.allocator);
             type_info.* = .{ .base = .Function, .function_type = function_type, .is_mutable = false };
-            const variable = try scope.createValueBinding(sig.name, TokenLiteral{ .nothing = {} }, .FUNCTION, type_info, true);
+            const variable = try scope.createValueBinding(sig.name, .FUNCTION, type_info, true);
             variable.used = true;
         }
         if (error_sets.items.len > 0) unit.error_sets = try error_sets.toOwnedSlice();
@@ -835,7 +836,6 @@ pub const SemanticAnalyzer = struct {
             // declaration, which codegen reads from the AST.
             if (scope.createValueBinding(
                 func.name.lexeme,
-                TokenLiteral{ .nothing = {} },
                 .FUNCTION,
                 func_type_info,
                 true,
@@ -920,32 +920,16 @@ pub const SemanticAnalyzer = struct {
 
                     const token_type = eval.convertTypeToTokenType(type_info.base);
 
-                    // Get the actual value from initializer or use default for uninitialized variables
-                    var value: TokenLiteral = undefined;
+                    var comptime_value: ?TokenLiteral = null;
                     if (decl.initializer) |init_expr| {
-                        // An annotated initializer is typed in its context
-                        // first: evaluation below infers what it cannot fold,
-                        // and inference is memoized per node.
+                        // An annotated initializer is typed in its context.
                         if (decl.type_info.base != .Nothing) _ = try infer_type.inferTypeIn(self, init_expr, type_info);
-                        value = try self.evaluateExpression(init_expr);
-                    } else {
-                        if (self.isEnumTypeRequiringInitializer(type_info)) {
-                            self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
-                            self.fatal_error = true;
-                            continue;
-                        }
-                        value = defaultValue(type_info);
+                        comptime_value = self.constantInitializer(init_expr, !decl.type_info.is_mutable) catch continue;
+                    } else if (self.isEnumTypeRequiringInitializer(type_info)) {
+                        self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
+                        self.fatal_error = true;
+                        continue;
                     }
-
-                    // Convert value to match the declared type
-                    value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
-                        error.byteOverflow, error.byteUnderflow => {
-                            self.reporter.reportCompileError(location, ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
-                            self.fatal_error = true;
-                            continue;
-                        },
-                        else => return err,
-                    };
 
                     // ENFORCE: nothing types must be const (unless they have an initializer)
                     if (type_info.base == .Nothing and type_info.is_mutable and decl.initializer == null) {
@@ -956,11 +940,12 @@ pub const SemanticAnalyzer = struct {
 
                     self.checkFreshName(scope, decl.name);
                     const binding = if (decl.type_expr == null)
-                        scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
+                        scope.createValueBindingAt(decl.name.lexeme, token_type, type_info, !type_info.is_mutable, decl.name)
                     else
-                        scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
+                        scope.createValueBinding(decl.name.lexeme, token_type, type_info, !type_info.is_mutable);
                     if (binding) |declared| {
                         declared.recordDeclLocation(decl.name);
+                        self.memory.scope_manager.value_storage.get(declared.storage_id).?.comptime_value = comptime_value;
                     } else |err| {
                         if (err != error.DuplicateVariableName) return err;
                         self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate variable name '{s}' in current scope", .{decl.name.lexeme});
@@ -1021,20 +1006,6 @@ pub const SemanticAnalyzer = struct {
             stmt.data.VarDecl.type_info.array_size = storage.type_info.array_size;
             stmt.data.VarDecl.type_info.array_storage = storage.type_info.array_storage;
         }
-    }
-
-    /// The value a declaration without an initializer starts with.
-    fn defaultValue(type_info: *const ast.TypeInfo) TokenLiteral {
-        return switch (type_info.base) {
-            .Int => .{ .int = 0 },
-            .Float => .{ .float = 0.0 },
-            .String => .{ .string = "" },
-            .Tetra => .{ .tetra = .false },
-            .Byte => .{ .byte = 0 },
-            .Array => .{ .array = &.{} },
-            .Union => if (type_info.union_type) |ut| union_handling.getUnionDefaultValue(ut) else .{ .nothing = {} },
-            else => .{ .nothing = {} },
-        };
     }
 
     /// An alias parameter must name a concrete type a caller can lend: maps,
@@ -1141,7 +1112,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn bindTypeName(self: *SemanticAnalyzer, scope: *Scope, name: Token, kind: TokenType, type_info: *ast.TypeInfo, base: ast.Base) ErrorList!void {
-        const variable = scope.createValueBinding(name.lexeme, TokenLiteral{ .string = name.lexeme }, kind, type_info, true) catch |err| {
+        const variable = scope.createValueBinding(name.lexeme, kind, type_info, true) catch |err| {
             if (err != error.DuplicateVariableName) return err;
             self.reporter.reportCompileError(getLocationFromBase(base), ErrorCode.DUPLICATE_VARIABLE, "Duplicate type name '{s}' in current scope", .{name.lexeme});
             self.fatal_error = true;
@@ -1196,6 +1167,9 @@ pub const SemanticAnalyzer = struct {
                     defer self.block_value_expected = prev_bve;
 
                     const scope = self.current_scope.?;
+                    const prev_initializing = self.current_initializing_var;
+                    self.current_initializing_var = decl.name.lexeme;
+                    defer self.current_initializing_var = prev_initializing;
                     // A declaration collectDeclarations already bound (a global)
                     // is only type-checked here. Only the current scope is
                     // consulted, so a local declaration may shadow an outer one.
@@ -1243,40 +1217,26 @@ pub const SemanticAnalyzer = struct {
                             }
                         }
 
-                        var value: TokenLiteral = undefined;
+                        var comptime_value: ?TokenLiteral = null;
                         if (decl.initializer) |init_expr| {
-                            self.current_initializing_var = decl.name.lexeme;
-                            defer self.current_initializing_var = null;
-                            // Typed in its context first; see the module-level
+                            // Typed in its context; see the module-level
                             // declarations above.
                             if (decl.type_info.base != .Nothing) _ = try infer_type.inferTypeIn(self, init_expr, type_info);
-                            value = try self.evaluateExpression(init_expr);
-                        } else {
-                            if (self.isEnumTypeRequiringInitializer(type_info)) {
-                                self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
-                                self.fatal_error = true;
-                                continue;
-                            }
-                            value = defaultValue(type_info);
+                            comptime_value = self.constantInitializer(init_expr, !decl.type_info.is_mutable) catch continue;
+                        } else if (self.isEnumTypeRequiringInitializer(type_info)) {
+                            self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
+                            self.fatal_error = true;
+                            continue;
                         }
-
-                        // Convert value to match the declared type
-                        value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
-                            error.byteOverflow, error.byteUnderflow => {
-                                self.reporter.reportCompileError(location, ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
-                                self.fatal_error = true;
-                                continue;
-                            },
-                            else => return err,
-                        };
 
                         self.checkFreshName(scope, decl.name);
                         const binding = if (decl.type_expr == null)
-                            scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
+                            scope.createValueBindingAt(decl.name.lexeme, token_type, type_info, !type_info.is_mutable, decl.name)
                         else
-                            scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
+                            scope.createValueBinding(decl.name.lexeme, token_type, type_info, !type_info.is_mutable);
                         if (binding) |declared| {
                             declared.recordDeclLocation(decl.name);
+                            self.memory.scope_manager.value_storage.get(declared.storage_id).?.comptime_value = comptime_value;
                         } else |err| {
                             if (err != error.DuplicateVariableName) return err;
                             self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate variable name '{s}' in current scope", .{decl.name.lexeme});
@@ -1605,7 +1565,7 @@ pub const SemanticAnalyzer = struct {
     fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, allocator: std.mem.Allocator) ErrorList!*Variable {
         const type_info = try ast.TypeInfo.createDefault(allocator);
         type_info.* = narrowed;
-        return scope.createValueBinding(name, TokenLiteral{ .nothing = {} }, eval.convertTypeToTokenType(type_info.base), type_info, false);
+        return scope.createValueBinding(name, eval.convertTypeToTokenType(type_info.base), type_info, false);
     }
 
     /// What a match path denotes. Against a group subject the path names a
@@ -1721,13 +1681,13 @@ pub const SemanticAnalyzer = struct {
         if (type_expr.data != .Array) return;
         const array_type = type_expr.data.Array;
         if (type_info.base == .Array and type_info.array_size == null) {
-            if (array_type.size) |size_expr| {
-                const sv = self.evaluateExpression(size_expr) catch return;
-                if (sv == .int and sv.int >= 0) {
-                    type_info.array_size = @intCast(sv.int);
+            if (array_type.size) |size_expr| switch (consteval.evaluate(size_expr, ConstantNames{ .analyzer = self })) {
+                .value => |size| if (size == .int and size.int >= 0) {
+                    type_info.array_size = @intCast(size.int);
                     type_info.array_storage = .fixed;
-                }
-            }
+                },
+                .not_constant, .fault => {},
+            };
         }
         if (type_info.base == .Array) {
             if (type_info.array_type) |child| {
@@ -1741,28 +1701,23 @@ pub const SemanticAnalyzer = struct {
             .Array => |*array_type| {
                 if (array_type.size) |size_expr| {
                     if (type_info.base == .Array and type_info.array_size == null) {
-                        const size_value = self.evaluateExpression(size_expr) catch |err| {
-                            const location = getLocationFromBase(size_expr.base);
-                            self.reporter.reportCompileError(
-                                location,
-                                ErrorCode.INVALID_ARRAY_TYPE,
-                                "array size must be a compile-time constant integer",
-                                .{},
-                            );
-                            return err;
-                        };
-                        if (size_value == .int) {
-                            type_info.array_size = @intCast(size_value.int);
-                            type_info.array_storage = .fixed;
-                        } else {
-                            const location = getLocationFromBase(size_expr.base);
-                            self.reporter.reportCompileError(
-                                location,
-                                ErrorCode.INVALID_ARRAY_TYPE,
-                                "array size must be an integer",
-                                .{},
-                            );
-                            self.fatal_error = true;
+                        const location = getLocationFromBase(size_expr.base);
+                        switch (consteval.evaluate(size_expr, ConstantNames{ .analyzer = self })) {
+                            .value => |size| if (size == .int and size.int >= 0) {
+                                type_info.array_size = @intCast(size.int);
+                                type_info.array_storage = .fixed;
+                            } else {
+                                self.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "array size must be a non-negative integer", .{});
+                                self.fatal_error = true;
+                            },
+                            .not_constant => {
+                                self.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "array size must be a compile-time constant integer", .{});
+                                self.fatal_error = true;
+                            },
+                            .fault => |fault| {
+                                consteval.report(self.reporter, getLocationFromBase(fault.site.base), fault.fault);
+                                self.fatal_error = true;
+                            },
                         }
                     }
                 }
@@ -1871,250 +1826,43 @@ pub const SemanticAnalyzer = struct {
         return ast.typeInfoFromExpr(self.allocator, type_expr);
     }
 
-    // Add this new function to evaluate expressions and get their values
-    fn evaluateExpression(self: *SemanticAnalyzer, expr: *ast.Expr) !TokenLiteral {
-        switch (expr.data) {
-            .Literal => |lit| {
-                return lit;
-            },
-            .Binary => |bin| {
-                const left_value = try self.evaluateExpression(bin.left.?);
-                const right_value = try self.evaluateExpression(bin.right.?);
-
-                return eval.evaluateBinaryOp(left_value, bin.operator, right_value);
-            },
-            .Unary => |unary| {
-                const operand_value = try self.evaluateExpression(unary.right.?);
-                return eval.evaluateUnaryOp(unary.operator, operand_value);
-            },
-            .Grouping => |grouped_expr| {
-                if (grouped_expr) |expr_in_parens| {
-                    return self.evaluateExpression(expr_in_parens);
-                } else {
-                    return TokenLiteral{ .nothing = {} };
-                }
-            },
-            .Variable => |var_token| {
-                if (self.current_initializing_var) |current_var| {
-                    if (std.mem.eql(u8, var_token.lexeme, current_var)) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.SELF_REFERENTIAL_INITIALIZER,
-                            "Variable '{s}' cannot reference itself in its own initializer",
-                            .{current_var},
-                        );
-                        self.fatal_error = true;
-                        return TokenLiteral{ .nothing = {} };
-                    }
-                }
-
-                if (try names.resolveVariableExpr(self, expr)) |variable| {
-                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        return storage.value;
-                    }
-                }
-
-                if (names.suggestName(self, var_token.lexeme)) |suggested| {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.UNDEFINED_VARIABLE,
-                        "Undefined variable: '{s}'. Did you mean '{s}'?",
-                        .{ var_token.lexeme, suggested },
-                    );
-                } else {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.UNDEFINED_VARIABLE,
-                        "Undefined variable: '{s}'",
-                        .{var_token.lexeme},
-                    );
-                }
+    /// The value of a `const` initializer that is a constant expression;
+    /// null for a `var`, whose value is never known at compile time, and for
+    /// any other initializer. A fault is reported here.
+    fn constantInitializer(self: *SemanticAnalyzer, init_expr: *const ast.Expr, is_const: bool) error{ConstantFault}!?TokenLiteral {
+        if (!is_const) return null;
+        return switch (consteval.evaluate(init_expr, ConstantNames{ .analyzer = self })) {
+            .value => |value| value,
+            .not_constant => null,
+            .fault => |fault| {
+                consteval.report(self.reporter, getLocationFromBase(fault.site.base), fault.fault);
                 self.fatal_error = true;
-                return TokenLiteral{ .nothing = {} };
+                return error.ConstantFault;
             },
-            .Cast => |cast| {
-                // Evaluate the value first
-                const value_literal = try self.evaluateExpression(cast.value);
-
-                // Determine target type
-                const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
-                defer self.allocator.destroy(target_type_info);
-
-                // Helper: check if the evaluated value matches the target type
-                const matches_target: bool = switch (target_type_info.base) {
-                    .Int => switch (value_literal) {
-                        .int => true,
-                        else => false,
-                    },
-                    .Float => switch (value_literal) {
-                        .float => true,
-                        else => false,
-                    },
-                    .Byte => switch (value_literal) {
-                        .byte => true,
-                        else => false,
-                    },
-                    .String => switch (value_literal) {
-                        .string => true,
-                        else => false,
-                    },
-                    .Tetra => switch (value_literal) {
-                        .tetra => true,
-                        else => false,
-                    },
-                    .Nothing => switch (value_literal) {
-                        .nothing => true,
-                        else => false,
-                    },
-                    else => false,
-                };
-
-                // If we have branches, pick one at evaluation time
-                if (cast.then_branch != null or cast.else_branch != null) {
-                    const branch_expr = if (matches_target) cast.then_branch else cast.else_branch;
-                    if (branch_expr) |be| {
-                        // If this cast initializes a declaration, expose the declared
-                        // name inside the branch (as a placeholder bound to the subject
-                        // value) so branch bodies may reference it during const-eval
-                        // without raising "Undefined variable".
-                        if (cast.decl_name) |decl_name| {
-                            const branch_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-                            defer branch_scope.deinit();
-                            const prev_scope = self.current_scope;
-                            self.current_scope = branch_scope;
-                            defer self.current_scope = prev_scope;
-
-                            const placeholder_type = try ast.TypeInfo.createDefault(self.allocator);
-                            placeholder_type.* = target_type_info.*;
-                            _ = branch_scope.createValueBinding(
-                                decl_name,
-                                value_literal,
-                                eval.convertTypeToTokenType(placeholder_type.base),
-                                placeholder_type,
-                                false,
-                            ) catch {};
-
-                            const branch_result = try self.evaluateExpression(be);
-                            branch_scope.propagateUsedToParent(decl_name);
-                            return branch_result;
-                        }
-                        return try self.evaluateExpression(be);
-                    }
-                    // If the relevant branch is missing, return nothing
-                    return TokenLiteral{ .nothing = {} };
-                }
-
-                // No branches: return original value (narrowing only affects type, not value)
-                return value_literal;
-            },
-            .InternalCall => |icall| {
-                const receiver_value = try self.evaluateExpression(icall.receiver);
-                switch (icall.method.type) {
-                    .TOINT => {
-                        return switch (receiver_value) {
-                            .int => receiver_value,
-                            .byte => |b| TokenLiteral{ .int = b },
-                            .float => |f| TokenLiteral{ .int = @intFromFloat(f) },
-                            .string => |s| blk: {
-                                const trimmed = std.mem.trim(u8, s, &std.ascii.whitespace);
-                                if (trimmed.len > 2 and std.mem.eql(u8, trimmed[0..2], "0x")) {
-                                    const parsed = std.fmt.parseInt(i64, trimmed[2..], 16) catch break :blk TokenLiteral{ .int = 0 };
-                                    break :blk TokenLiteral{ .int = parsed };
-                                }
-                                const parsed = std.fmt.parseInt(i64, trimmed, 10) catch break :blk TokenLiteral{ .int = 0 };
-                                break :blk TokenLiteral{ .int = parsed };
-                            },
-                            else => TokenLiteral{ .int = 0 },
-                        };
-                    },
-                    .TOFLOAT => {
-                        return switch (receiver_value) {
-                            .float => receiver_value,
-                            .int => |i| TokenLiteral{ .float = @floatFromInt(i) },
-                            .byte => |b| TokenLiteral{ .float = @floatFromInt(b) },
-                            .string => |s| blk: {
-                                const parsed = std.fmt.parseFloat(f64, s) catch break :blk TokenLiteral{ .float = 0.0 };
-                                break :blk TokenLiteral{ .float = parsed };
-                            },
-                            else => TokenLiteral{ .float = 0.0 },
-                        };
-                    },
-                    .TOBYTE => {
-                        return switch (receiver_value) {
-                            .byte => receiver_value,
-                            .int => |i| TokenLiteral{ .byte = @intCast(i) },
-                            .float => |f| TokenLiteral{ .byte = @intCast(@as(i64, @intFromFloat(f))) },
-                            .string => |s| blk: {
-                                if (s.len == 1) break :blk TokenLiteral{ .byte = s[0] };
-                                const parsed = std.fmt.parseInt(u8, s, 10) catch break :blk TokenLiteral{ .byte = 0 };
-                                break :blk TokenLiteral{ .byte = parsed };
-                            },
-                            else => TokenLiteral{ .byte = 0 },
-                        };
-                    },
-                    .TOSTRING => {
-                        return switch (receiver_value) {
-                            .string => receiver_value,
-                            .int => |i| blk: {
-                                const buf = try self.allocator.alloc(u8, 32);
-                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{i}) };
-                            },
-                            .float => |f| blk: {
-                                const buf = try self.allocator.alloc(u8, 32);
-                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{f}) };
-                            },
-                            .byte => |b| blk: {
-                                const buf = try self.allocator.alloc(u8, 32);
-                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{b}) };
-                            },
-                            else => TokenLiteral{ .string = "" },
-                        };
-                    },
-                    .LENGTH => {
-                        if (icall.receiver.data == .Variable) {
-                            const var_name = icall.receiver.data.Variable.lexeme;
-                            if (try names.lookupVariable(self, var_name)) |variable| {
-                                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                    if (storage.type_info.array_size) |size| {
-                                        return TokenLiteral{ .int = @intCast(size) };
-                                    }
-                                }
-                            }
-                        }
-                        return switch (receiver_value) {
-                            .string => |s| TokenLiteral{ .int = @intCast(s.len) },
-                            .array => |a| TokenLiteral{ .int = @intCast(a.len) },
-                            else => TokenLiteral{ .int = 0 },
-                        };
-                    },
-                    else => {
-                        const inferred_type = try infer_type.inferTypeFromExpr(self, expr);
-                        return switch (inferred_type.base) {
-                            .Int => TokenLiteral{ .int = 0 },
-                            .Float => TokenLiteral{ .float = 0.0 },
-                            .String => TokenLiteral{ .string = "" },
-                            .Tetra => TokenLiteral{ .tetra = .false },
-                            .Byte => TokenLiteral{ .byte = 0 },
-                            else => TokenLiteral{ .nothing = {} },
-                        };
-                    },
-                }
-            },
-            else => {
-                // For complex expressions that can't be evaluated at compile time,
-                // return a default value based on the inferred type
-                const inferred_type = try infer_type.inferTypeFromExpr(self, expr);
-                return switch (inferred_type.base) {
-                    .Int => TokenLiteral{ .int = 0 },
-                    .Float => TokenLiteral{ .float = 0.0 },
-                    .String => TokenLiteral{ .string = "" },
-                    .Tetra => TokenLiteral{ .tetra = .false },
-                    .Byte => TokenLiteral{ .byte = 0 },
-                    else => TokenLiteral{ .nothing = {} },
-                };
-            },
-        }
+        };
     }
+
+    /// What `consteval` asks of analysis: the constant a name holds, and the
+    /// length of a fixed-size array.
+    const ConstantNames = struct {
+        analyzer: *SemanticAnalyzer,
+
+        fn storageOf(self: ConstantNames, expr: *const ast.Expr) ?*Memory.ValueStorage {
+            if (expr.data != .Variable) return null;
+            const variable = (names.lookupVariable(self.analyzer, expr.data.Variable.lexeme) catch return null) orelse return null;
+            return self.analyzer.memory.scope_manager.value_storage.get(variable.storage_id);
+        }
+
+        pub fn constantOf(self: ConstantNames, expr: *const ast.Expr) ?TokenLiteral {
+            return (self.storageOf(expr) orelse return null).comptime_value;
+        }
+
+        pub fn fixedLengthOf(self: ConstantNames, expr: *const ast.Expr) ?i64 {
+            const storage = self.storageOf(expr) orelse return null;
+            if (storage.type_info.base != .Array) return null;
+            return @intCast(storage.type_info.array_size orelse return null);
+        }
+    };
 
     fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, enclosing: ?Enclosing) !void {
         // Create function scope with parameters
@@ -2137,7 +1885,6 @@ pub const SemanticAnalyzer = struct {
             self.checkFreshName(func_scope, param.name);
             const param_var = func_scope.createValueBinding(
                 param.name.lexeme,
-                TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
                 eval.convertTypeToTokenType(param_type_info.base),
                 param_type_info,
                 false, // Parameters are mutable

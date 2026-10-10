@@ -10,10 +10,13 @@ const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const ValueStorage = struct {
-    value: TokenLiteral,
     type: TokenType,
     type_info: *TypeInfo,
     constant: bool,
+    /// The value of a `const` whose initializer is a constant expression
+    /// (`consteval`); null for every other binding. Nothing else about a
+    /// binding's value is known at compile time.
+    comptime_value: ?TokenLiteral = null,
 };
 
 pub const Variable = struct {
@@ -140,7 +143,6 @@ pub const Scope = struct {
     pub fn createValueBinding(
         self: *Scope,
         name: []const u8,
-        value: TokenLiteral,
         vtype: TokenType,
         type_info: *TypeInfo,
         constant: bool,
@@ -155,7 +157,7 @@ pub const Scope = struct {
         self.manager.variable_counter += 1;
 
         const storage = try self.allocator.create(ValueStorage);
-        storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
+        storage.* = .{ .type = vtype, .type_info = type_info, .constant = constant };
 
         const variable = try self.allocator.create(Variable);
         variable.* = .{
@@ -180,13 +182,12 @@ pub const Scope = struct {
     pub fn createValueBindingAt(
         self: *Scope,
         name: []const u8,
-        value: TokenLiteral,
         vtype: TokenType,
         type_info: *TypeInfo,
         constant: bool,
         decl_token: Token,
     ) !*Variable {
-        const variable = try self.createValueBinding(name, value, vtype, type_info, constant);
+        const variable = try self.createValueBinding(name, vtype, type_info, constant);
         variable.decl_line = decl_token.line;
         variable.decl_column = decl_token.column;
         variable.recordDeclLocation(decl_token);

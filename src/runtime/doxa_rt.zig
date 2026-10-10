@@ -291,42 +291,90 @@ pub export fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) 
     return value.ptr;
 }
 
-pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
-    const raw = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    if (trimmed.len == 0) return 0;
+// ── Parsing numbers from text ──
+//
+// `@int`, `@float` and `@byte` of a string. Each parser is the language's one
+// definition of what text names a number: the exports below trap on text that
+// names none, and the compiler's constant evaluator (`consteval.zig`) calls
+// the same functions, so a folded conversion and a run one cannot disagree.
+// A conversion that must not trap is the standard library's (`std.methods`).
 
-    const is_neg = trimmed[0] == '-';
-    const hex_start: usize = if (is_neg) 1 else 0;
-    if (trimmed.len >= hex_start + 2 and trimmed[hex_start] == '0' and (trimmed[hex_start + 1] == 'x' or trimmed[hex_start + 1] == 'X')) {
-        const digits = trimmed[hex_start + 2 ..];
-        const parsed = std.fmt.parseInt(i64, digits, 16) catch return 0;
-        return if (is_neg) -parsed else parsed;
+/// The int `text` names: decimal, `0x` hex (either sign), or a decimal float
+/// truncated toward zero, between optional whitespace. Null for anything else.
+pub fn parseIntText(text: []const u8) ?i64 {
+    const trimmed = std.mem.trim(u8, text, whitespace);
+    if (hexDigits(trimmed)) |hex| {
+        const magnitude = std.fmt.parseInt(i64, hex.digits, 16) catch return null;
+        return if (hex.negative) -magnitude else magnitude;
     }
-
     if (std.mem.indexOfScalar(u8, trimmed, '.') != null) {
-        const f = std.fmt.parseFloat(f64, trimmed) catch return 0;
-        return @intFromFloat(f);
+        return truncateToInt(std.fmt.parseFloat(f64, trimmed) catch return null);
     }
+    return std.fmt.parseInt(i64, trimmed, 10) catch null;
+}
 
-    return std.fmt.parseInt(i64, trimmed, 10) catch 0;
+/// The float `text` names: a decimal float (`inf` and `nan` included) or
+/// `0x` hex, between optional whitespace. Null for anything else.
+pub fn parseFloatText(text: []const u8) ?f64 {
+    const trimmed = std.mem.trim(u8, text, whitespace);
+    if (hexDigits(trimmed)) |hex| {
+        const magnitude = std.fmt.parseInt(i64, hex.digits, 16) catch return null;
+        const value: f64 = @floatFromInt(magnitude);
+        return if (hex.negative) -value else value;
+    }
+    if (trimmed.len == 0) return null;
+    return std.fmt.parseFloat(f64, trimmed) catch null;
+}
+
+/// The byte `text` names: a single character is its own code; otherwise a
+/// decimal, `0x` hex, or decimal float truncated toward zero, in 0–255. Null
+/// for anything else.
+pub fn parseByteText(text: []const u8) ?u8 {
+    if (text.len == 1) return text[0];
+    if (text.len > 2 and std.mem.eql(u8, text[0..2], "0x")) {
+        return std.fmt.parseInt(u8, text[2..], 16) catch null;
+    }
+    const wide = std.fmt.parseInt(i64, text, 10) catch
+        truncateToInt(std.fmt.parseFloat(f64, text) catch return null) orelse return null;
+    return std.math.cast(u8, wide);
+}
+
+const whitespace = " \t\r\n";
+
+const HexText = struct { negative: bool, digits: []const u8 };
+
+fn hexDigits(text: []const u8) ?HexText {
+    const negative = text.len > 0 and text[0] == '-';
+    const body = text[@intFromBool(negative)..];
+    if (body.len < 2 or body[0] != '0' or (body[1] != 'x' and body[1] != 'X')) return null;
+    return .{ .negative = negative, .digits = body[2..] };
+}
+
+/// The int a float truncates to, when it has one.
+pub fn truncateToInt(value: f64) ?i64 {
+    // 2^63 is exact as a double; every finite value strictly inside
+    // (-2^63 - 1, 2^63) truncates to an i64.
+    const limit: f64 = 9223372036854775808.0;
+    if (!(value > -limit - 1.0 and value < limit)) return null;
+    return @intFromFloat(value);
+}
+
+/// Text that names no number of the kind asked for. Terminates like a panic.
+fn trapUnparsable(comptime kind: []const u8, text: []const u8) noreturn {
+    writeStderr("@" ++ kind ++ ": \"");
+    writeStderr(text);
+    writeStderr("\" is not a valid " ++ kind ++ "\n");
+    std.process.exit(1);
+}
+
+pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
+    const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
+    return parseIntText(text) orelse trapUnparsable("int", text);
 }
 
 pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) f64 {
-    const raw = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
-    if (trimmed.len == 0) return 0.0;
-
-    const is_neg = trimmed[0] == '-';
-    const hex_start: usize = if (is_neg) 1 else 0;
-    if (trimmed.len >= hex_start + 2 and trimmed[hex_start] == '0' and (trimmed[hex_start + 1] == 'x' or trimmed[hex_start + 1] == 'X')) {
-        const digits = trimmed[hex_start + 2 ..];
-        const parsed = std.fmt.parseInt(i64, digits, 16) catch return 0.0;
-        const signed = if (is_neg) -parsed else parsed;
-        return @floatFromInt(signed);
-    }
-
-    return std.fmt.parseFloat(f64, trimmed) catch 0.0;
+    const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
+    return parseFloatText(text) orelse trapUnparsable("float", text);
 }
 
 pub export fn doxa_int_to_string(scope: *Scope, value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -982,27 +1030,8 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
 }
 
 pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
-    const s_val = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    if (s_val.len == 0) return 0;
-    if (s_val.len == 1) return @as(i64, @intCast(s_val[0]));
-
-    if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
-        const hex_str = s_val[2..];
-        const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch return 0;
-        return @as(i64, @intCast(parsed_hex_byte));
-    }
-
-    const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
-    if (parsed_int_opt) |parsed_int| {
-        if (parsed_int >= 0 and parsed_int <= 255) return parsed_int;
-        return 0;
-    }
-
-    const parsed_float = std.fmt.parseFloat(f64, s_val) catch return 0;
-    if (!std.math.isFinite(parsed_float)) return 0;
-    const rounded: i64 = @intFromFloat(parsed_float);
-    if (rounded >= 0 and rounded <= 255) return rounded;
-    return 0;
+    const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
+    return parseByteText(text) orelse trapUnparsable("byte", text);
 }
 
 pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {

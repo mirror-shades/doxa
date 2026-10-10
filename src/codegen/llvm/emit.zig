@@ -14,6 +14,7 @@ const rt = @import("../../runtime/doxa_rt.zig");
 const layout_mod = @import("layout.zig");
 const Ranges = @import("ranges.zig").Ranges;
 const function = @import("function.zig");
+const consteval = @import("../../analysis/consteval.zig");
 const module_graph = @import("../../module/graph.zig");
 
 const HIRType = ir.HIRType;
@@ -455,15 +456,25 @@ const prelude =
     \\declare double @llvm.pow.f64(double, double)
     \\declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
     \\declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)
-    \\@tetra_and_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 0, i8 0, i8 0, i8 0], [4 x i8] [i8 0, i8 1, i8 2, i8 3], [4 x i8] [i8 0, i8 2, i8 2, i8 0], [4 x i8] [i8 0, i8 3, i8 0, i8 3]]
-    \\@tetra_or_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 0, i8 1, i8 2, i8 3], [4 x i8] [i8 1, i8 1, i8 1, i8 1], [4 x i8] [i8 2, i8 1, i8 2, i8 2], [4 x i8] [i8 3, i8 1, i8 2, i8 3]]
-    \\@tetra_iff_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 0, i8 1, i8 1, i8 0], [4 x i8] [i8 0, i8 1, i8 1, i8 0], [4 x i8] [i8 1, i8 0, i8 0, i8 1]]
-    \\@tetra_xor_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 0, i8 1, i8 1, i8 0], [4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 0, i8 1, i8 1, i8 0]]
-    \\@tetra_nand_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 1, i8 1, i8 1, i8 1], [4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 1, i8 1, i8 1, i8 1]]
-    \\@tetra_nor_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 1, i8 0, i8 0, i8 1], [4 x i8] [i8 0, i8 0, i8 0, i8 0], [4 x i8] [i8 0, i8 0, i8 0, i8 0], [4 x i8] [i8 1, i8 0, i8 0, i8 1]]
-    \\@tetra_implies_lut = private constant [4 x [4 x i8]] [[4 x i8] [i8 1, i8 1, i8 1, i8 1], [4 x i8] [i8 0, i8 1, i8 1, i8 0], [4 x i8] [i8 0, i8 1, i8 1, i8 0], [4 x i8] [i8 1, i8 1, i8 1, i8 1]]
     \\
-;
+++ tetraTables();
+
+/// The binary tetra operators' truth tables, from `consteval`'s: what the
+/// folder computes for an operator is what the program computes.
+fn tetraTables() []const u8 {
+    comptime {
+        var text: []const u8 = "";
+        for (.{ "and", "or", "iff", "xor", "nand", "nor", "implies" }) |name| {
+            const table = @field(consteval.truth_tables, name);
+            var rows: []const u8 = "";
+            for (table, 0..) |row, i| {
+                rows = rows ++ (if (i == 0) "" else ", ") ++ std.fmt.comptimePrint("[4 x i8] [i8 {d}, i8 {d}, i8 {d}, i8 {d}]", .{ row[0], row[1], row[2], row[3] });
+            }
+            text = text ++ "@tetra_" ++ name ++ "_lut = private constant [4 x [4 x i8]] [" ++ rows ++ "]\n";
+        }
+        return text;
+    }
+}
 
 const overflow_prelude =
     \\declare void @llvm.trap() noreturn

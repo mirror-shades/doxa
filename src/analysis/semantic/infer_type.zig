@@ -70,6 +70,7 @@ fn inferBuiltinCall(
     receiver: ?*ast.Expr,
     rest: []const *ast.Expr,
 ) SemanticError!*ast.TypeInfo {
+    const start = self.reporter.diagnostics.items.len;
     const result = try inferBuiltinCallInner(self, expr, fname, receiver, rest);
     try self.type_cache.put(expr.base.id, result);
 
@@ -85,7 +86,7 @@ fn inferBuiltinCall(
     // of a thing every new `@` method has to remember. The rules keep their own
     // checks; this only fills the cache, and it runs after them so a rule that
     // reported an error does not report a second one underneath it.
-    if (self.fatal_error) return result;
+    if (self.reporter.firstErrorSince(start) != null) return result;
     const args = try builtinArgs(self, receiver, rest);
     defer self.allocator.free(args);
     for (args) |arg| _ = try inferTypeFromExpr(self, arg);
@@ -338,8 +339,9 @@ fn inferBuiltinCallInner(
                 const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
                 byte_elem.* = .{ .base = .Byte };
                 var expected: ast.TypeInfo = .{ .base = .Array, .array_type = byte_elem };
+                const start = self.reporter.diagnostics.items.len;
                 try helpers.unifyTypesExpr(self, &expected, operand_type, args[0], .{ .location = getLocationFromBase(args[0].base) });
-                if (self.fatal_error) return type_info;
+                if (self.reporter.firstErrorSince(start) != null) return type_info;
             }
             type_info.* = .{ .base = info.return_type };
             if (info.return_element_type) |elem_base| {
@@ -691,8 +693,9 @@ const op: []const u8 = switch (bin.operator.type) {
                         const elem = try ast.TypeInfo.createDefault(self.allocator);
                         elem.* = src.*;
                         if (left_type.array_type != null and right_type.array_type != null) {
+                            const start = self.reporter.diagnostics.items.len;
                             try helpers.unifyTypes(self, elem, right_type.array_type.?, .{ .location = getLocationFromBase(expr.base) });
-                            if (self.fatal_error) {
+                            if (self.reporter.firstErrorSince(start) != null) {
                                 type_info.base = .Nothing;
                                 return type_info;
                             }
@@ -817,6 +820,24 @@ const op: []const u8 = switch (bin.operator.type) {
                     ErrorCode.MODULE_NAMESPACE_NOT_A_VALUE,
                     "Module namespace '{s}' is not a value",
                     .{var_token.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+            } else if (self.current_initializing_var != null and std.mem.eql(u8, self.current_initializing_var.?, var_token.lexeme)) {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.SELF_REFERENTIAL_INITIALIZER,
+                    "Variable '{s}' cannot reference itself in its own initializer",
+                    .{var_token.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+            } else if (names.suggestName(self, var_token.lexeme)) |suggested| {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.UNDEFINED_VARIABLE,
+                    "Undefined variable: '{s}'. Did you mean '{s}'?",
+                    .{ var_token.lexeme, suggested },
                 );
                 self.fatal_error = true;
                 type_info.base = .Nothing;
@@ -1197,6 +1218,9 @@ const op: []const u8 = switch (bin.operator.type) {
                 }
                 const array_type = try ast.TypeInfo.createDefault(self.allocator);
                 array_type.* = joined.*;
+                // An element type is a type, not a literal: `[65]` is an
+                // `int[]` whose elements a byte context may not narrow.
+                array_type.comptime_int = null;
                 type_info.* = .{ .base = .Array, .array_type = array_type };
             }
         },
@@ -1600,7 +1624,6 @@ const op: []const u8 = switch (bin.operator.type) {
             self.checkFreshName(quantifier_scope, exists.variable);
             const bound = quantifier_scope.createValueBinding(
                 exists.variable.lexeme,
-                TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
                 bound_var_type,
                 true,
@@ -1676,7 +1699,6 @@ const op: []const u8 = switch (bin.operator.type) {
             self.checkFreshName(quantifier_scope, for_all.variable);
             const bound = quantifier_scope.createValueBinding(
                 for_all.variable.lexeme,
-                TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
                 bound_var_type,
                 true,
@@ -2415,7 +2437,6 @@ fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInf
     const token_type = eval.convertTypeToTokenType(narrowed_type.base);
     const view = scope.createValueBinding(
         name,
-        TokenLiteral{ .nothing = {} },
         token_type,
         narrowed_type,
         false,
@@ -2429,7 +2450,6 @@ fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInf
 fn bindCastDeclName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !?ast.CastBinding {
     const binding = scope.createValueBinding(
         name,
-        TokenLiteral{ .nothing = {} },
         eval.convertTypeToTokenType(narrowed_type.base),
         narrowed_type,
         false,
@@ -2472,7 +2492,6 @@ fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast
                         narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
                         const view = scope.createValueBinding(
                             obj_name,
-                            TokenLiteral{ .nothing = {} },
                             .STRUCT,
                             narrowed_struct,
                             false,
@@ -2691,6 +2710,7 @@ fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, 
         .Struct, .Custom => {
             if (object_type.custom_type) |custom| {
                 const owner = custom.resolved();
+                const start = self.reporter.diagnostics.items.len;
                 if (try methodOf(self, expr, owner, method_name, field_access.object)) |method| {
                     // A struct's function called through `this` takes no
                     // receiver; any other value cannot stand in for the type.
@@ -2711,7 +2731,7 @@ fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, 
                     type_info.* = method.signature.return_type.*;
                     return type_info;
                 }
-                if (self.fatal_error) {
+                if (self.reporter.firstErrorSince(start) != null) {
                     type_info.base = .Nothing;
                     return type_info;
                 }

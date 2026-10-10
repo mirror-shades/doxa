@@ -1,7 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
-const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const Reporting = @import("../../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const Errors = @import("../../utils/errors.zig");
@@ -139,22 +138,4 @@ pub fn unionContainsNothing(union_type_info: ast.TypeInfo) bool {
         }
     }
     return false;
-}
-
-/// Default value for unions: use the first member's default
-pub fn getUnionDefaultValue(union_type: *ast.UnionType) TokenLiteral {
-    if (union_type.types.len == 0) {
-        return TokenLiteral{ .nothing = {} };
-    }
-
-    const first_type = union_type.types[0];
-    return switch (first_type.base) {
-        .Int => TokenLiteral{ .int = 0 },
-        .Float => TokenLiteral{ .float = 0.0 },
-        .String => TokenLiteral{ .string = "" },
-        .Tetra => TokenLiteral{ .tetra = .false },
-        .Byte => TokenLiteral{ .byte = 0 },
-        .Nothing => TokenLiteral{ .nothing = {} },
-        else => TokenLiteral{ .nothing = {} },
-    };
 }

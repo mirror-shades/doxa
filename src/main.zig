@@ -262,13 +262,17 @@ fn lowerProgram(memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnaly
     var generator = try Generator.init(allocator, reporter, semantic_analyzer);
 
     profiler.begin("constant-fold");
+    var faulted = false;
     for (semantic_analyzer.graph.records.items) |record| {
         if (record.kind != .doxa or !record.status.atLeast(.Analyzed)) continue;
-        var constant_folder = ConstantFolder.init(allocator);
+        var constant_folder = ConstantFolder.init(allocator, reporter);
         defer constant_folder.deinit();
         for (record.statements()) |*stmt| _ = try constant_folder.foldStmt(stmt);
+        faulted = faulted or constant_folder.faulted;
     }
     profiler.end();
+    // A faulting constant expression has been reported where it happened.
+    if (faulted) return error.ConstantExpressionFault;
 
     var module = try generator.generate();
     profiler.begin("hir-arenas");

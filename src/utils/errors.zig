@@ -368,6 +368,8 @@ pub const ErrorCode = struct {
     pub const NON_EXHAUSTIVE_MATCH = "E1033";
     pub const INEXACT_FLOAT_LITERAL = "E1034";
     pub const SHADOWED_NAME = "E1035";
+    pub const CONSTANT_DIVISION_BY_ZERO = "E1036";
+    pub const UNPARSABLE_CONVERSION = "E1037";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

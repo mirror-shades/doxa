@@ -1,14 +1,21 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const token = @import("../types/token.zig");
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
+const Reporter = @import("../utils/reporting.zig").Reporter;
+const consteval = @import("consteval.zig");
 
+/// Folds constant expressions in place. What an operator computes is
+/// `consteval`'s; the folder only walks the tree, tracks which names are
+/// constants, and rewrites a node whose operands are literals.
 pub const ConstantFolder = struct {
     allocator: std.mem.Allocator,
+    reporter: *Reporter,
     optimizations_made: u32 = 0,
-    /// Bindings whose initializers folded to literals in this pass. Semantic
-    /// analysis stores placeholder values (e.g. `0`) for runtime calls, so the
-    /// folder must not read those as compile-time constants.
+    /// Whether a constant expression faulted (overflow, division by zero, a
+    /// conversion with no value). Each fault is reported where it happened
+    /// and its node left unfolded.
+    faulted: bool = false,
+    /// `const` bindings whose initializers folded to literals in this pass.
     comptime_bindings: std.array_list.Managed(std.StringHashMap(TokenLiteral)),
     /// Names that are *not* compile-time constants in each scope: function
     /// parameters, mutable variables, non-literal constants, and loop / query
@@ -18,9 +25,10 @@ pub const ConstantFolder = struct {
 
     /// A folder is syntax-local: it sees one file's statements and folds a
     /// name only to a constant it watched that file bind.
-    pub fn init(allocator: std.mem.Allocator) ConstantFolder {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter) ConstantFolder {
         var folder = ConstantFolder{
             .allocator = allocator,
+            .reporter = reporter,
             .comptime_bindings = std.array_list.Managed(std.StringHashMap(TokenLiteral)).init(allocator),
             .shadowed_names = std.array_list.Managed(std.StringHashMap(void)).init(allocator),
         };
@@ -115,15 +123,11 @@ pub const ConstantFolder = struct {
                 binary.right = folded_right;
 
                 if (folded_left.data == .Literal and folded_right.data == .Literal) {
-                    if (self.foldBinaryOp(folded_left.data.Literal, binary.operator, folded_right.data.Literal)) |result| {
-                        self.optimizations_made += 1;
-
+                    if (self.apply(expr, consteval.binary(binary.operator.type, folded_left.data.Literal, folded_right.data.Literal))) {
                         folded_left.deinit(self.allocator);
                         self.allocator.destroy(folded_left);
                         folded_right.deinit(self.allocator);
                         self.allocator.destroy(folded_right);
-
-                        expr.data = .{ .Literal = result };
                         return expr;
                     }
                 }
@@ -163,13 +167,9 @@ pub const ConstantFolder = struct {
                 unary.right = folded_operand;
 
                 if (folded_operand.data == .Literal) {
-                    if (self.foldUnaryOp(unary.operator, folded_operand.data.Literal)) |result| {
-                        self.optimizations_made += 1;
-
+                    if (self.apply(expr, consteval.unary(unary.operator.type, folded_operand.data.Literal))) {
                         folded_operand.deinit(self.allocator);
                         self.allocator.destroy(folded_operand);
-
-                        expr.data = .{ .Literal = result };
                         return expr;
                     }
                 }
@@ -186,9 +186,8 @@ pub const ConstantFolder = struct {
                     const folded_condition = try self.foldExpr(condition);
                     if_expr.condition = folded_condition;
 
-                    if (folded_condition.data == .Literal) {
-                        const is_truthy = self.isTruthy(folded_condition.data.Literal);
-                        if (is_truthy) {
+                    if (folded_condition.data == .Literal and folded_condition.data.Literal == .tetra) {
+                        if (consteval.holds(folded_condition.data.Literal.tetra)) {
                             if (if_expr.then_branch) |then_branch| {
                                 self.optimizations_made += 1;
                                 return try self.foldExpr(then_branch);
@@ -270,16 +269,11 @@ pub const ConstantFolder = struct {
                 logical.right = folded_right;
 
                 if (folded_left.data == .Literal and folded_right.data == .Literal) {
-                    if (self.foldBinaryOp(folded_left.data.Literal, logical.operator, folded_right.data.Literal)) |result| {
-                        self.optimizations_made += 1;
-
+                    if (self.apply(expr, consteval.binary(logical.operator.type, folded_left.data.Literal, folded_right.data.Literal))) {
                         folded_left.deinit(self.allocator);
                         self.allocator.destroy(folded_left);
                         folded_right.deinit(self.allocator);
                         self.allocator.destroy(folded_right);
-
-                        expr.data = .{ .Literal = result };
-                        return expr;
                     }
                 }
 
@@ -344,7 +338,8 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .Map => |*map_expr| {                for (map_expr.entries) |entry| {
+            .Map => |*map_expr| {
+                for (map_expr.entries) |entry| {
                     entry.key = try self.foldExpr(entry.key);
                     entry.value = try self.foldExpr(entry.value);
                 }
@@ -364,6 +359,11 @@ pub const ConstantFolder = struct {
                 call.receiver = try self.foldExpr(call.receiver);
                 for (call.arguments) |argument| {
                     _ = try self.foldExpr(argument);
+                }
+                const receiver = call.receiver;
+                if (receiver.data == .Literal and self.apply(expr, consteval.convert(call.method.type, receiver.data.Literal))) {
+                    receiver.deinit(self.allocator);
+                    self.allocator.destroy(receiver);
                 }
                 return expr;
             },
@@ -503,406 +503,22 @@ pub const ConstantFolder = struct {
         return stmt.*;
     }
 
-    fn foldBinaryOp(self: *ConstantFolder, left: TokenLiteral, operator: token.Token, right: TokenLiteral) ?TokenLiteral {
-        return switch (operator.type) {
-            .PLUS => self.foldAdd(left, right),
-            .MINUS => self.foldSub(left, right),
-            .ASTERISK => self.foldMul(left, right),
-            .SLASH => self.foldDiv(left, right),
-            .MODULO => self.foldMod(left, right),
-            .POWER => null,
-
-            .LESS => self.foldLess(left, right),
-            .LESS_EQUAL => self.foldLessEqual(left, right),
-            .GREATER => self.foldGreater(left, right),
-            .GREATER_EQUAL => self.foldGreaterEqual(left, right),
-            .EQUALITY => self.foldEqual(left, right),
-            .BANG_EQUAL => self.foldNotEqual(left, right),
-
-            .AND => self.foldAnd(left, right),
-            .OR => self.foldOr(left, right),
-            .XOR => self.foldXor(left, right),
-            .IFF => self.foldIff(left, right),
-            .NAND => self.foldNand(left, right),
-            .NOR => self.foldNor(left, right),
-            .IMPLIES => self.foldImplies(left, right),
-
-            else => null,
-        };
-    }
-
-    fn foldUnaryOp(self: *ConstantFolder, operator: token.Token, operand: TokenLiteral) ?TokenLiteral {
-        _ = self;
-
-        return switch (operator.type) {
-            .MINUS => switch (operand) {
-                .int => |i| TokenLiteral{ .int = -i },
-                .float => |f| TokenLiteral{ .float = -f },
-                else => null,
+    /// Rewrite `expr` to the literal `outcome` computed, and say whether it
+    /// did. A fault is a compile error at `expr`, which is left as it is.
+    fn apply(self: *ConstantFolder, expr: *ast.Expr, outcome: consteval.Outcome) bool {
+        switch (outcome) {
+            .value => |value| {
+                self.optimizations_made += 1;
+                expr.data = .{ .Literal = value };
+                return true;
             },
-            .NOT => switch (operand) {
-                .tetra => |t| TokenLiteral{ .tetra = switch (t) {
-                    .true => .false,
-                    .false => .true,
-                    .both => .neither,
-                    .neither => .both,
-                } },
-                else => null,
+            .not_constant => return false,
+            .fault => |fault| {
+                consteval.report(self.reporter, expr.base.location(), fault);
+                self.faulted = true;
+                return false;
             },
-            else => null,
-        };
-    }
-
-    fn foldAdd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .int = l + r },
-                .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) + r },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .byte = l + r },
-                .int => |r| if (r >= 0 and r <= 255) TokenLiteral{ .byte = l + @as(u8, @intCast(r)) } else null,
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .float = l + r },
-                .int => |r| TokenLiteral{ .float = l + @as(f64, @floatFromInt(r)) },
-                else => null,
-            },
-            .array => |l| switch (right) {
-                .array => |r| {
-                    const combined_elements = self.allocator.alloc(TokenLiteral, l.len + r.len) catch return null;
-
-                    for (0..l.len) |i| {
-                        combined_elements[i] = l[i];
-                    }
-
-                    for (0..r.len) |i| {
-                        combined_elements[l.len + i] = r[i];
-                    }
-
-                    return TokenLiteral{ .array = combined_elements };
-                },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldSub(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .int = l - r },
-                .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) - r },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| if (l >= r) TokenLiteral{ .byte = l - r } else null,
-                .int => |r| if (r >= 0 and r <= l) TokenLiteral{ .byte = l - @as(u8, @intCast(r)) } else null,
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .float = l - r },
-                .int => |r| TokenLiteral{ .float = l - @as(f64, @floatFromInt(r)) },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldMul(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .int = l * r },
-                .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) * r },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .byte = l * r },
-                .int => |r| if (r >= 0 and r <= 255 and l * @as(u8, @intCast(r)) <= 255) TokenLiteral{ .byte = l * @as(u8, @intCast(r)) } else null,
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .float = l * r },
-                .int => |r| TokenLiteral{ .float = l * @as(f64, @floatFromInt(r)) },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldDiv(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
-                .int => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
-                .byte => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
-                .int => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
-                .byte => |r| if (r != 0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) } else null,
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| if (r != 0.0) TokenLiteral{ .float = l / r } else null,
-                .int => |r| if (r != 0) TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) } else null,
-                .byte => |r| if (r != 0) TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) } else null,
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldMod(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| if (r != 0) TokenLiteral{ .int = @mod(l, r) } else null,
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| if (r != 0) TokenLiteral{ .byte = l % r } else null,
-                .int => |r| if (r > 0 and r <= 255) TokenLiteral{ .byte = l % @as(u8, @intCast(r)) } else null,
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldPow(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| if (r >= 0) TokenLiteral{ .int = std.math.pow(i32, l, @as(i32, @intCast(r))) } else null,
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .float = std.math.pow(f64, l, r) },
-                .int => |r| TokenLiteral{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldLess(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .tetra = if (l < r) .true else .false },
-                .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) < r) .true else .false },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .tetra = if (l < r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) < r) .true else .false },
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .tetra = if (l < r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (l < @as(f64, @floatFromInt(r))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldLessEqual(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .tetra = if (l <= r) .true else .false },
-                .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) <= r) .true else .false },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .tetra = if (l <= r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) <= r) .true else .false },
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .tetra = if (l <= r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (l <= @as(f64, @floatFromInt(r))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldGreater(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .tetra = if (l > r) .true else .false },
-                .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) > r) .true else .false },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .tetra = if (l > r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) > r) .true else .false },
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .tetra = if (l > r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (l > @as(f64, @floatFromInt(r))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldGreaterEqual(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .tetra = if (l >= r) .true else .false },
-                .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) >= r) .true else .false },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .tetra = if (l >= r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) >= r) .true else .false },
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .tetra = if (l >= r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (l >= @as(f64, @floatFromInt(r))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldEqual(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
-        return switch (left) {
-            .int => |l| switch (right) {
-                .int => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
-                .float => |r| TokenLiteral{ .tetra = if (@as(f64, @floatFromInt(l)) == r) .true else .false },
-                else => null,
-            },
-            .byte => |l| switch (right) {
-                .byte => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (@as(i32, l) == r) .true else .false },
-                else => null,
-            },
-            .float => |l| switch (right) {
-                .float => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
-                .int => |r| TokenLiteral{ .tetra = if (l == @as(f64, @floatFromInt(r))) .true else .false },
-                else => null,
-            },
-            .tetra => |l| switch (right) {
-                .tetra => |r| TokenLiteral{ .tetra = if (l == r) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldNotEqual(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        if (self.foldEqual(left, right)) |equal_result| {
-            return switch (equal_result.tetra) {
-                .true => TokenLiteral{ .tetra = .false },
-                .false => TokenLiteral{ .tetra = .true },
-                .both => TokenLiteral{ .tetra = .neither },
-                .neither => TokenLiteral{ .tetra = .both },
-            };
         }
-        return null;
-    }
-
-    fn foldAnd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => if (self.isTruthy(left)) right else TokenLiteral{ .tetra = .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldOr(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => if (self.isTruthy(left)) TokenLiteral{ .tetra = .true } else right,
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldXor(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => TokenLiteral{ .tetra = if (self.isTruthy(left) != self.isTruthy(right)) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldIff(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => TokenLiteral{ .tetra = if (self.isTruthy(left) == self.isTruthy(right)) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldNand(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => TokenLiteral{ .tetra = if (!(self.isTruthy(left) and self.isTruthy(right))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldNor(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => TokenLiteral{ .tetra = if (!(self.isTruthy(left) or self.isTruthy(right))) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn foldImplies(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        return switch (left) {
-            .tetra => switch (right) {
-                .tetra => TokenLiteral{ .tetra = if (!self.isTruthy(left) or self.isTruthy(right)) .true else .false },
-                else => null,
-            },
-            else => null,
-        };
-    }
-
-    fn isTruthy(self: *ConstantFolder, literal: TokenLiteral) bool {
-        _ = self;
-        return switch (literal) {
-            .tetra => |t| switch (t) {
-                .true => true,
-                .false => false,
-                .both => true,
-                .neither => false,
-            },
-            .int => |i| i != 0,
-            .byte => |u| u != 0,
-            .float => |f| f != 0.0,
-            .string => |s| s.len > 0,
-            .nothing => false,
-            else => true,
-        };
     }
 
     pub fn resetCounter(self: *ConstantFolder) void {
