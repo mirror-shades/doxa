@@ -30,6 +30,9 @@ pub const LexicalAnalyzer = struct {
     file_path: []const u8,
     file_uri: []const u8,
     token_line: usize,
+    /// The offset of `token_line`'s first byte: a token's column is its
+    /// distance from there.
+    token_line_start: usize,
     reporter: *Reporter,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
@@ -49,6 +52,7 @@ pub const LexicalAnalyzer = struct {
             .file_path = file_path,
             .file_uri = file_uri,
             .token_line = 1,
+            .token_line_start = 0,
             .reporter = reporter,
         };
     }
@@ -165,7 +169,7 @@ pub const LexicalAnalyzer = struct {
             };
         }
 
-        try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.column));
+        try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.column, self.file_path, self.file_uri));
         return self.tokens;
     }
 
@@ -176,8 +180,7 @@ pub const LexicalAnalyzer = struct {
 
         if (self.isAtEnd()) return;
 
-        self.start = self.current;
-        self.token_line = self.line;
+        self.beginToken(self.current, self.line, self.line_start);
         const c = self.peekAt(0);
 
         if (c >= 0x80) {
@@ -273,7 +276,7 @@ pub const LexicalAnalyzer = struct {
             },
             ';' => {
                 try self.addMinimalToken(.SEMICOLON);
-                try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path, self.file_uri));
+                try self.tokens.append(Token.init(.NEWLINE, "", .nothing, self.line, 1, self.file_path, self.file_uri));
             },
             '%' => {
                 if (self.match('=')) {
@@ -291,7 +294,7 @@ pub const LexicalAnalyzer = struct {
                         self.advance();
                         if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
                             const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
-                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
+                            try self.tokens.append(Token.init(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
                         }
                     }
                 }
@@ -390,7 +393,7 @@ pub const LexicalAnalyzer = struct {
 
                 if (should_add_newline) {
                     const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
-                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
+                    try self.tokens.append(Token.init(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
                 }
             },
             else => {
@@ -432,21 +435,19 @@ pub const LexicalAnalyzer = struct {
         const token_line = self.token_line;
         const token_column = self.tokenColumn();
 
-        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path, self.file_uri));
+        try self.tokens.append(Token.init(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path, self.file_uri));
     }
 
-    fn tokenColumn(self: *LexicalAnalyzer) usize {
-        var token_line_start: usize = 0;
-        var current_line: usize = 1;
-        var i: usize = 0;
-        while (i < self.start and current_line < self.token_line) {
-            if (self.source[i] == '\n') {
-                current_line += 1;
-                token_line_start = i + 1;
-            }
-            i += 1;
-        }
-        return self.start - token_line_start + 1;
+    /// The token being lexed starts at byte `start`, on `line`, whose first
+    /// byte is `line_start`.
+    fn beginToken(self: *LexicalAnalyzer, start: usize, line: usize, line_start: usize) void {
+        self.start = start;
+        self.token_line = line;
+        self.token_line_start = line_start;
+    }
+
+    fn tokenColumn(self: *const LexicalAnalyzer) usize {
+        return self.start - self.token_line_start + 1;
     }
 
     fn intLiteralOutOfRange(self: *LexicalAnalyzer, literal: []const u8) ErrorList {
@@ -604,8 +605,7 @@ pub const LexicalAnalyzer = struct {
                         return error.ExpectedIdentifier;
                     }
 
-                    self.start = self.current;
-                    self.token_line = self.line;
+                    self.beginToken(self.current, self.line, self.line_start);
                     while (!self.isAtEnd() and (isAlpha(self.peekAt(0)) or isDigit(self.peekAt(0)) or self.peekAt(0) == '_')) {
                         self.advance();
                     }
@@ -618,7 +618,7 @@ pub const LexicalAnalyzer = struct {
                     }
 
                     // Now lex the zig block payload
-                    self.token_line = self.line;
+                    self.beginToken(self.current, self.line, self.line_start);
                     try self.addZigBlock();
                 },
                 .LOGIC => {
@@ -820,6 +820,7 @@ pub const LexicalAnalyzer = struct {
 
         const block_start = self.current; // points at '{'
         const block_line = self.line;
+        const block_line_start = self.line_start;
 
         _ = self.match('{');
         const content_start = self.current; // first char inside the braces
@@ -961,20 +962,18 @@ pub const LexicalAnalyzer = struct {
             return error.UnterminatedZigBlock;
         }
 
-        self.start = block_start;
-        self.token_line = block_line;
+        self.beginToken(block_start, block_line, block_line_start);
         const lexeme = self.source[block_start..self.current];
         const inner_source = self.source[content_start..content_end];
         try self.addLongToken(.ZIG_BLOCK, .{ .string = inner_source }, lexeme);
     }
 
+    /// `@name`: a token that starts at the `@`, whose lexeme is the bare name
+    /// every later phase looks the intrinsic up by.
     fn internalMethod(self: *LexicalAnalyzer) !void {
-        const name_start = self.current;
         const method_name = self.getMethodName();
-        self.start = name_start;
-
         const tt = TokenImport.methodNameToTokenType(method_name) orelse return error.InvalidInternalMethod;
-        try self.addToken(tt, .nothing);
+        try self.addLongToken(tt, .nothing, method_name);
     }
 
     fn structInstance(self: *LexicalAnalyzer) !void {
@@ -987,18 +986,11 @@ pub const LexicalAnalyzer = struct {
         }
     }
 
+    /// The name after an `@`: the identifier characters that follow it.
     fn getMethodName(self: *LexicalAnalyzer) []const u8 {
-        var buffer: [20]u8 = undefined;
-        var i: usize = 0;
-
-        while (!self.isAtEnd() and self.peekAt(0) != '(' and self.peekAt(0) != ' ' and i < buffer.len) {
-            buffer[i] = self.peekAt(0);
-            self.advance();
-            i += 1;
-        }
-
-        const result = self.source[self.current - i .. self.current];
-        return result;
+        const name_start = self.current;
+        while (!self.isAtEnd() and (isAlpha(self.peekAt(0)) or isDigit(self.peekAt(0)))) self.advance();
+        return self.source[name_start..self.current];
     }
 
     fn number(self: *LexicalAnalyzer) !void {

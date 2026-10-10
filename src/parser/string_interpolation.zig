@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
+const Token = @import("../types/token.zig").Token;
 const expression_parser = @import("expression_parser.zig");
 
 const Errors = @import("../utils/errors.zig");
@@ -8,14 +9,16 @@ const ErrorList = Errors.ErrorList;
 
 const Parser = @import("parser_types.zig").Parser;
 
+/// `content` is `literal`'s decoded text.
 pub fn buildStringLiteralExpr(
     self: *Parser,
     content: []const u8,
-    span: ast.SourceSpan,
+    literal: Token,
     interpolated: bool,
 ) ErrorList!*ast.Expr {
+    const span = ast.SourceSpan.fromToken(literal);
     if (interpolated and std.mem.indexOfScalar(u8, content, '{') != null) {
-        const template = try parseFormatTemplate(self, content, span);
+        const template = try parseFormatTemplate(self, content, literal);
         const expr = try self.allocator.create(ast.Expr);
         expr.* = .{
             .base = .{
@@ -39,7 +42,9 @@ pub fn buildStringLiteralExpr(
     return expr;
 }
 
-fn parseFormatTemplate(self: *Parser, format_string: []const u8, span: ast.SourceSpan) ErrorList!*ast.FormatTemplate {
+fn parseFormatTemplate(self: *Parser, format_string: []const u8, literal: Token) ErrorList!*ast.FormatTemplate {
+    const span = ast.SourceSpan.fromToken(literal);
+    var source = SourceCursor.init(literal);
     var template_parts = std.array_list.Managed(ast.FormatPart).init(self.allocator);
     errdefer {
         for (template_parts.items) |*part| {
@@ -56,39 +61,13 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8, span: ast.Sourc
             const part = format_string[current_part_start..i];
             try template_parts.append(try ast.createStringPart(self.allocator, part));
 
-            var j = i + 1;
-            var depth: usize = 1;
-            while (j < format_string.len and depth > 0) {
-                switch (format_string[j]) {
-                    '{' => {
-                        depth += 1;
-                        j += 1;
-                    },
-                    '}' => {
-                        depth -= 1;
-                        if (depth > 0) j += 1;
-                    },
-                    '"' => {
-                        j += 1;
-                        while (j < format_string.len and format_string[j] != '"') {
-                            if (format_string[j] == '\\') {
-                                j += 2;
-                            } else {
-                                j += 1;
-                            }
-                        }
-                        if (j < format_string.len) j += 1;
-                    },
-                    else => j += 1,
-                }
-            }
-
-            if (depth > 0) {
-                return error.UnmatchedOpenBrace;
-            }
+            const j = placeholderEnd(format_string, i) orelse return error.UnmatchedOpenBrace;
+            // Placeholder text is not escape-decoded, so it reads the same in
+            // the source: where it starts there is where its tokens are.
+            const origin = source.nextPlaceholder() orelse return error.UnmatchedOpenBrace;
 
             const placeholder_content = format_string[i + 1 .. j];
-            const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content, span);
+            const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content, span, origin);
             try template_parts.append(ast.createExpressionPart(placeholder_expr));
 
             i = j + 1;
@@ -104,7 +83,82 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8, span: ast.Sourc
     return try ast.createFormatTemplate(self.allocator, try template_parts.toOwnedSlice());
 }
 
-fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: ast.SourceSpan) ErrorList!*ast.Expr {
+/// The index of the `}` closing the placeholder whose `{` is at `open`.
+fn placeholderEnd(text: []const u8, open: usize) ?usize {
+    var j = open + 1;
+    var depth: usize = 1;
+    while (j < text.len) {
+        switch (text[j]) {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if (depth == 0) return j;
+            },
+            '"' => {
+                j += 1;
+                while (j < text.len and text[j] != '"') j += if (text[j] == '\\') 2 else 1;
+            },
+            else => {},
+        }
+        j += 1;
+    }
+    return null;
+}
+
+/// A line and column in the source.
+const Position = struct { line: usize, column: usize };
+
+/// Walks a string literal's source text (its lexeme, quotes and escapes
+/// included) to find where each placeholder's text begins.
+const SourceCursor = struct {
+    text: []const u8,
+    index: usize,
+    at: Position,
+
+    fn init(literal: Token) SourceCursor {
+        return .{ .text = literal.lexeme, .index = 0, .at = .{ .line = literal.line, .column = literal.column } };
+    }
+
+    /// The position just inside the next placeholder's `{`, past its `}`
+    /// afterwards; null when the source has no further placeholder.
+    fn nextPlaceholder(self: *SourceCursor) ?Position {
+        while (self.index < self.text.len) {
+            switch (self.text[self.index]) {
+                '\\' => {
+                    const unicode = self.index + 1 < self.text.len and self.text[self.index + 1] == 'u';
+                    self.step(2);
+                    if (unicode) {
+                        while (self.index < self.text.len and self.text[self.index] != '}') self.step(1);
+                        self.step(1);
+                    }
+                },
+                '{' => {
+                    const end = placeholderEnd(self.text, self.index) orelse return null;
+                    self.step(1);
+                    const start = self.at;
+                    self.step(end + 1 - self.index);
+                    return start;
+                },
+                else => self.step(1),
+            }
+        }
+        return null;
+    }
+
+    fn step(self: *SourceCursor, count: usize) void {
+        for (0..count) |_| {
+            if (self.index >= self.text.len) return;
+            if (self.text[self.index] == '\n') {
+                self.at = .{ .line = self.at.line + 1, .column = 1 };
+            } else {
+                self.at.column += 1;
+            }
+            self.index += 1;
+        }
+    }
+};
+
+fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: ast.SourceSpan, origin: Position) ErrorList!*ast.Expr {
     // The placeholder content is a slice into the enclosing string literal's
     // buffer, which may be owned by a lexer whose lifetime ends before the AST
     // is consumed. Duplicate it so every token lexeme produced below (and the
@@ -124,6 +178,12 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
     try temp_lexer.initKeywords();
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
+    // The lexer counts from the placeholder's own start: move every token to
+    // where its text is in the file.
+    for (tokens.items) |*tok| {
+        if (tok.line == 1) tok.column += origin.column - 1;
+        tok.line += origin.line - 1;
+    }
 
     var temp_parser = Parser.init(self.io, self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
 
@@ -137,6 +197,5 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
         return error.InvalidExpression;
     };
 
-    expr.base.span = outer_span;
     return expr;
 }

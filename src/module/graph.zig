@@ -384,6 +384,9 @@ pub const ModuleRecord = struct {
     /// Source text and parsed body of a `.doxa` record (`ast` is a block). Both
     /// live in the compilation's analysis arena, which outlives every record.
     source: ?[]const u8 = null,
+    /// The file name its tokens carry (`Token.file`): the physical key for a
+    /// loaded file, the path as given for the entry file. Set with `source`.
+    source_name: ?[]const u8 = null,
     ast: ?*ast.Expr = null,
     /// The Zig behind an `inline_zig` or `zig_file` record.
     zig: ?ZigUnit = null,
@@ -660,12 +663,13 @@ pub const ModuleGraph = struct {
     /// Complete the externally-driven Parse stage for the entry record. The
     /// pipeline parses the entry file itself, then hands its source and body
     /// here for the `NotLoaded → Parsed` transition, so `Parsed` never means
-    /// `ast == null`.
-    pub fn completeExternalParse(self: *ModuleGraph, target: *ModuleRecord, source: []const u8, body: *ast.Expr) void {
+    /// `ast == null`. `source_name` is the path its tokens carry.
+    pub fn completeExternalParse(self: *ModuleGraph, target: *ModuleRecord, source: []const u8, source_name: []const u8, body: *ast.Expr) void {
         _ = self;
         std.debug.assert(target.status == .NotLoaded);
         target.status = .Parsed;
         target.source = source;
+        target.source_name = source_name;
         target.ast = body;
     }
 

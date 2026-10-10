@@ -168,19 +168,7 @@ pub const Token = struct {
     file: []const u8,
     file_uri: []const u8,
 
-    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize) Token {
-        return Token{
-            .type = token_type,
-            .lexeme = lexeme,
-            .literal = literal,
-            .line = line,
-            .column = column,
-            .file = "",
-            .file_uri = "",
-        };
-    }
-
-    pub fn initWithFile(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize, file: []const u8, file_uri: []const u8) Token {
+    pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize, file: []const u8, file_uri: []const u8) Token {
         return Token{
             .type = token_type,
             .lexeme = lexeme,

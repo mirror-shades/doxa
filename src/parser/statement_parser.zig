@@ -12,6 +12,13 @@ const expression_parser = @import("./expression_parser.zig");
 const import_parser = @import("./import_parser.zig");
 
 pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
+    const start = self.peek();
+    var stmt = try parseExpressionStmtBody(self);
+    stmt.base.span = self.spanFrom(start);
+    return stmt;
+}
+
+fn parseExpressionStmtBody(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .VAR) {
         return declaration_parser.parseVarDecl(self);
     }
@@ -176,7 +183,16 @@ pub fn parseLiftStmt(self: *Parser) ErrorList!ast.Stmt {
     };
 }
 
+/// Parse one statement. Every statement spans its own source, first token to
+/// last; the forms below build it around one token, and the span is set here.
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
+    const start = self.peek();
+    var stmt = try parseStatementBody(self);
+    stmt.base.span = self.spanFrom(start);
+    return stmt;
+}
+
+fn parseStatementBody(self: *Parser) ErrorList!ast.Stmt {
     return switch (self.peek().type) {
         .ZIG => declaration_parser.parseZigDecl(self),
         .VAR, .CONST => declaration_parser.parseVarDecl(self),
@@ -403,6 +419,9 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedInKeyword;
     }
     self.advance();
+    // The loop's own machinery (an unnamed index, its test and step) is
+    // placed at what it iterates.
+    const iterated = self.peek();
 
     var array_expr: ?*ast.Expr = null;
     if (self.peek().type == .IDENTIFIER and self.peekAhead(1).type == .LEFT_BRACE) {
@@ -438,13 +457,13 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         const load_item = try self.allocator.create(ast.Expr);
         load_item.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Variable = item_name } };
         const cond_expr = try self.allocator.create(ast.Expr);
-        cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = load_item, .operator = token.Token.initWithFile(.LESS_EQUAL, "<=", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = range.end } } };
+        cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = load_item, .operator = token.Token.init(.LESS_EQUAL, "<=", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = range.end } } };
         const one_expr = try self.allocator.create(ast.Expr);
         one_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Literal = .{ .int = 1 } } };
         const left_item = try self.allocator.create(ast.Expr);
         left_item.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Variable = item_name } };
         const add_expr = try self.allocator.create(ast.Expr);
-        add_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = left_item, .operator = token.Token.initWithFile(.PLUS, "+", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = one_expr } } };
+        add_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = left_item, .operator = token.Token.init(.PLUS, "+", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = one_expr } } };
         const step_expr = try self.allocator.create(ast.Expr);
         step_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Assignment = .{ .name = item_name, .value = add_expr } } };
         const loop_expr = try self.allocator.create(ast.Expr);
@@ -456,7 +475,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     // Create ForEach expression
     // Desugar foreach into Loop (init; cond; body; step)
     // for idx is 0; while idx < length(array); step idx += 1 { item is array[idx]; <body> }
-    const idx_name = if (index_name) |tok| tok else token.Token.initWithFile(.IDENTIFIER, "__idx", .{ .nothing = {} }, self.peek().line, self.peek().column, self.current_file, self.current_file_uri);
+    const idx_name = if (index_name) |tok| tok else token.Token.init(.IDENTIFIER, "__idx", .{ .nothing = {} }, iterated.line, iterated.column, self.current_file, self.current_file_uri);
 
     const idx_type = ast.TypeInfo{ .base = .Int };
     const zero_expr = try self.allocator.create(ast.Expr);
@@ -467,19 +486,19 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     const load_idx = try self.allocator.create(ast.Expr);
     load_idx.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Variable = idx_name } };
 
-    const length_method = token.Token.initWithFile(.LENGTH, "length", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri);
+    const length_method = token.Token.init(.LENGTH, "length", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri);
     const len_expr = try self.allocator.create(ast.Expr);
     len_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .InternalCall = .{ .receiver = array_expr.?, .method = length_method, .arguments = &[_]*ast.Expr{} } } };
 
     const cond_expr = try self.allocator.create(ast.Expr);
-    cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Binary = .{ .left = load_idx, .operator = token.Token.initWithFile(.LESS, "<", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri), .right = len_expr } } };
+    cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Binary = .{ .left = load_idx, .operator = token.Token.init(.LESS, "<", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri), .right = len_expr } } };
 
     const one_expr = try self.allocator.create(ast.Expr);
     one_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Literal = .{ .int = 1 } } };
     const left_idx2 = try self.allocator.create(ast.Expr);
     left_idx2.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Variable = idx_name } };
     const add_expr = try self.allocator.create(ast.Expr);
-    add_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Binary = .{ .left = left_idx2, .operator = token.Token.initWithFile(.PLUS, "+", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri), .right = one_expr } } };
+    add_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Binary = .{ .left = left_idx2, .operator = token.Token.init(.PLUS, "+", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri), .right = one_expr } } };
     const step_expr = try self.allocator.create(ast.Expr);
     step_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Assignment = .{ .name = idx_name, .value = add_expr } } };
 

@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const hir_types = @import("../types.zig");
-const Reporting = @import("../../../utils/reporting.zig");
+const ids = @import("../../../module/ids.zig");
 
 pub const HIRType = hir_types.HIRType;
 pub const StructId = hir_types.StructId;
@@ -19,7 +19,20 @@ pub const EnumId = hir_types.EnumId;
 /// float division the generator converts into.
 pub const ArithOp = enum { Add, Sub, Mul, Div, IntDiv, Mod, Pow };
 pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
-pub const Location = Reporting.Location;
+pub const ModuleId = ids.ModuleId;
+
+/// Where an instruction came from: the expression it was lowered from, or for
+/// an instruction lowering synthesizes (an arena, a conversion, a re-run
+/// `defer`), the nearest enclosing one. Lines and columns are 1-based; every
+/// instruction and terminator has one.
+pub const SrcSpan = struct {
+    module: ModuleId,
+    line: u32,
+    column: u32,
+    /// The first instruction of a statement: where a debugger's step stops
+    /// and a line counter counts.
+    is_stmt: bool = false,
+};
 
 pub const ValueId = enum(u32) { _ };
 pub const BlockId = enum(u32) {
@@ -240,7 +253,6 @@ pub const Op = union(enum) {
 /// What a peek shows beside the value.
 pub const PeekDisplay = struct {
     path: ?[]const u8,
-    location: Location,
     /// A union's or group's members as written, with the marker slot each
     /// member maps to (`Peek.member_slots` today).
     members: ?[]const []const u8 = null,
@@ -252,6 +264,7 @@ pub const Inst = struct {
     /// The value this instruction defines; null for one that defines none
     /// (a store, a print, a call returning `nothing`).
     result: ?ValueId,
+    span: SrcSpan,
 };
 
 pub const BlockCall = struct {
@@ -272,7 +285,7 @@ pub const Terminator = union(enum) {
     @"unreachable",
     panic: ValueId,
     exit: ValueId,
-    assert_fail: struct { message: ?ValueId, location: Location },
+    assert_fail: struct { message: ?ValueId },
 
     /// Call `f` with each block this terminator can transfer to.
     pub fn forEachSuccessor(self: *const Terminator, ctx: anytype, comptime f: anytype) ReturnOf(f) {
@@ -299,13 +312,13 @@ pub const Def = union(enum) {
 pub const ValueInfo = struct {
     ty: Type,
     def: Def,
-    location: ?Location = null,
 };
 
 pub const Block = struct {
     params: []const ValueId,
     insts: []const Inst,
     term: Terminator,
+    term_span: SrcSpan,
 };
 
 /// Addressable storage: a local lent as `^`, or a narrowed receiver read
@@ -387,6 +400,9 @@ pub const Program = struct {
     struct_fields: []const []const HIRType,
     /// Flattened members by `GroupId`, in the group's member order.
     group_members: []const []const HIRType,
+    /// The file each `SrcSpan.module` names, by `ModuleId`: the name its
+    /// tokens carry (`ModuleRecord.source_name`), which diagnostics show.
+    files: []const []const u8 = &.{},
     /// Display names by id, for the textual form; an id past the end prints
     /// as the id.
     struct_names: []const []const u8 = &.{},

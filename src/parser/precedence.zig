@@ -241,6 +241,9 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
     return rules.get(token_type);
 }
 
+/// Parse an expression of at least `precedence_level`. Every node it returns
+/// spans its own source, first token to last: the rules build a node around
+/// one token (an operator, a keyword), and the span is set here, once.
 pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*ast.Expr {
     const current_token = self.peek();
     const prefix_rule = getRule(current_token.type).prefix;
@@ -250,6 +253,7 @@ pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*
     }
 
     var left = try prefix_rule.?(self, null, precedence_level) orelse return null;
+    left.base.span = self.spanFrom(current_token);
     errdefer {
         left.deinit(self.allocator);
         self.allocator.destroy(left);
@@ -288,6 +292,7 @@ pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*
             self.allocator.destroy(left);
             return null;
         };
+        left.base.span = self.spanFrom(current_token);
     }
 
     return left;
@@ -307,7 +312,9 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     const operator = self.tokens[self.current - 1];
     const value = try parsePrecedence(self, .ASSIGNMENT) orelse return error.ExpectedExpression;
 
-    const span = ast.SourceSpan.fromToken(operator);
+    // `parsePrecedence` gives both operands their spans: the operation, and
+    // the store of it, run from the target to the value.
+    const span = ast.SourceSpan.merge(target.base.span.?, value.base.span.?);
 
     const operation = try self.allocator.create(ast.Expr);
     operation.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = .{ .Binary = .{

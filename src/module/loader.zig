@@ -61,7 +61,7 @@ pub const ModuleLoader = struct {
             },
         };
         const record = try self.intern(physical, .doxa, path, null);
-        self.graph.completeExternalParse(record, source, try blockOf(self.allocator, statements));
+        self.graph.completeExternalParse(record, source, path, try blockOf(self.allocator, statements));
         return record;
     }
 
@@ -274,6 +274,7 @@ pub const ModuleLoader = struct {
             return err;
         };
         record.source = source;
+        record.source_name = path;
         record.ast = try blockOf(self.allocator, statements);
     }
 

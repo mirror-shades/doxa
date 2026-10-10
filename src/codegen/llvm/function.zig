@@ -427,7 +427,7 @@ const FunctionEmitter = struct {
                 const s = try self.stringParts(self.name(u.operand));
                 try self.line("call void @doxa_write_cstr(ptr {s}, i64 {s})", .{ s.ptr, s.len });
             },
-            .peek => |p| try self.peek(p.operand, p.display),
+            .peek => |p| try self.peek(p.operand, p.display, inst.span),
         }
     }
 
@@ -1348,11 +1348,11 @@ const FunctionEmitter = struct {
     // ── Peek ──
 
     /// `v?`: the location, name and type, then the value, on stderr.
-    fn peek(self: *FunctionEmitter, operand: ValueId, display: ir.PeekDisplay) Error!void {
+    fn peek(self: *FunctionEmitter, operand: ValueId, display: ir.PeekDisplay, span: ir.SrcSpan) Error!void {
         const t = self.doxaOf(operand);
         const info = try self.alloca("%DoxaPeekInfo");
         const fields = [_][]const u8{ "file", "name", "type", "members" };
-        const file = try self.e.string(display.location.file);
+        const file = try self.e.string(self.e.module.program.files[span.module]);
         const label = try self.peekLabel(t, display);
         const values = [_][]const u8{
             file,
@@ -1370,8 +1370,8 @@ const FunctionEmitter = struct {
             try std.fmt.allocPrint(self.e.alloc, "{d}", .{count}),
             active,
             "1",
-            try std.fmt.allocPrint(self.e.alloc, "{d}", .{display.location.range.start_line}),
-            try std.fmt.allocPrint(self.e.alloc, "{d}", .{display.location.range.start_col}),
+            try std.fmt.allocPrint(self.e.alloc, "{d}", .{span.line}),
+            try std.fmt.allocPrint(self.e.alloc, "{d}", .{span.column}),
         };
         for (ints, 4..) |v, i| {
             const at = try self.tmp("getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 {d}", .{ info, i });
@@ -1425,7 +1425,7 @@ const FunctionEmitter = struct {
             .Enum => "enum",
             .Union => "union",
             .Group => |gid| p.group_names[gid],
-            else => try self.peekLabel(t, .{ .path = null, .location = undefined }),
+            else => try self.peekLabel(t, .{ .path = null }),
         };
     }
 

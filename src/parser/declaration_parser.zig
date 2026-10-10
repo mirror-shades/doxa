@@ -962,7 +962,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.base = .Array;
         self.advance();
 
-        const name = token.Token.initWithFile(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file, self.current_file_uri);
+        const name = token.Token.init(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file, self.current_file_uri);
 
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {

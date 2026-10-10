@@ -1086,6 +1086,20 @@ pub const Parser = struct {
         return self.tokens[self.current - 1];
     }
 
+    /// The span of a node that began at `start` and ends at the last token
+    /// consumed, the separators after it aside.
+    pub fn spanFrom(self: *Parser, start: token.Token) ast.SourceSpan {
+        var i = self.current;
+        while (i > 0) : (i -= 1) {
+            switch (self.tokens[i - 1].type) {
+                .NEWLINE, .SEMICOLON => {},
+                else => break,
+            }
+        }
+        const last = if (i == 0) start else self.tokens[i - 1];
+        return .merge(.fromToken(start), .fromToken(last));
+    }
+
     pub fn arrayPop(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (array == null) return error.ExpectedExpression;
 

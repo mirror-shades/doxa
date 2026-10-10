@@ -297,7 +297,7 @@ fn lowerProgram(memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnaly
 fn writeHirText(allocator: std.mem.Allocator, module: *const hir.Module) ![]const u8 {
     var text = std.Io.Writer.Allocating.init(allocator);
     for (module.functions) |*f| {
-        try hir_print.writeFunction(&text.writer, &module.program, f);
+        try hir_print.writeFunction(&text.writer, &module.program, f, .{ .spans = true });
         try text.writer.writeAll("\n");
     }
     return text.written();

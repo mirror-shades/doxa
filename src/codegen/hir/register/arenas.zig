@@ -413,9 +413,9 @@ const Edit = struct {
                 const op = self.replace[b][n] orelse inst.op;
                 const result: ?ValueId = if (inst.result) |r| try map.value(r) else null;
                 if (result) |r| values.items[@intFromEnum(r)].def = .{ .inst = .{ .block = @enumFromInt(b), .index = @intCast(insts.items.len) } };
-                try insts.append(alloc, .{ .op = try ir.mapOperands(alloc, op, map, Map.value), .result = result });
+                try insts.append(alloc, .{ .op = try ir.mapOperands(alloc, op, map, Map.value), .result = result, .span = inst.span });
             }
-            out.* = .{ .params = params.items, .insts = insts.items, .term = try self.terminator(alloc, f, block.term, map) };
+            out.* = .{ .params = params.items, .insts = insts.items, .term = try self.terminator(alloc, f, block.term, map), .term_span = block.term_span };
         }
 
         // A role naming its arena parameter by index follows the renumbering.
@@ -462,7 +462,7 @@ const Edit = struct {
             .@"unreachable" => .@"unreachable",
             .panic => |v| .{ .panic = map.value(v) catch unreachable },
             .exit => |v| .{ .exit = map.value(v) catch unreachable },
-            .assert_fail => |a| .{ .assert_fail = .{ .message = if (a.message) |m| map.value(m) catch unreachable else null, .location = a.location } },
+            .assert_fail => |a| .{ .assert_fail = .{ .message = if (a.message) |m| map.value(m) catch unreachable else null } },
         };
     }
 };

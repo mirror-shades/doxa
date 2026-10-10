@@ -1015,7 +1015,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         .STRING => blk: {
             self.advance();
             const interpolated = true;
-            const new_expr = try string_interpolation.buildStringLiteralExpr(self, current.literal.string, ast.SourceSpan.fromToken(current), interpolated);
+            const new_expr = try string_interpolation.buildStringLiteralExpr(self, current.literal.string, current, interpolated);
             break :blk new_expr;
         },
         else => {

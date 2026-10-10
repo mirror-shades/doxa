@@ -784,7 +784,7 @@ pub const SemanticAnalyzer = struct {
                 else => continue,
             };
             if (!at_file_scope) {
-                try self.reportNestedDeclaration("Type", decl.name, stmt.base);
+                try self.reportNestedDeclaration("Type", decl.name);
                 continue;
             }
             try helpers.registerGroupType(self, .{ .module = self.current_module, .name = decl.name.lexeme }, decl.members);
@@ -1040,7 +1040,7 @@ pub const SemanticAnalyzer = struct {
     /// bound in the module scope (a struct name is a value in a literal or a
     /// static call), and its methods.
     fn declareStruct(self: *SemanticAnalyzer, decl: *ast.StructDecl, scope: *Scope, at_file_scope: bool, base: ast.Base) ErrorList!void {
-        if (!at_file_scope) return self.reportNestedDeclaration("Type", decl.name, base);
+        if (!at_file_scope) return self.reportNestedDeclaration("Type", decl.name);
         const ref = TypeRef{ .module = self.current_module, .name = decl.name.lexeme };
 
         const fields = try self.allocator.alloc(ast.StructFieldType, decl.fields.len);
@@ -1099,7 +1099,7 @@ pub const SemanticAnalyzer = struct {
     /// Register an enum declared at file scope and bind its name, so
     /// `Color.Red` resolves its qualifier.
     fn declareEnum(self: *SemanticAnalyzer, decl: *ast.EnumDecl, scope: *Scope, at_file_scope: bool, base: ast.Base) ErrorList!void {
-        if (!at_file_scope) return self.reportNestedDeclaration("Type", decl.name, base);
+        if (!at_file_scope) return self.reportNestedDeclaration("Type", decl.name);
         const ref = TypeRef{ .module = self.current_module, .name = decl.name.lexeme };
 
         const variant_names = try self.allocator.alloc([]const u8, decl.variants.len);
@@ -1122,9 +1122,9 @@ pub const SemanticAnalyzer = struct {
     }
 
     /// Types and functions are declared at file scope only.
-    fn reportNestedDeclaration(self: *SemanticAnalyzer, comptime kind: []const u8, name: Token, base: ast.Base) ErrorList!void {
+    fn reportNestedDeclaration(self: *SemanticAnalyzer, comptime kind: []const u8, name: Token) ErrorList!void {
         self.reporter.reportCompileError(
-            getLocationFromBase(base),
+            ast.SourceSpan.fromToken(name).location,
             ErrorCode.NESTED_DECLARATION,
             kind ++ " '{s}' must be declared at file scope",
             .{name.lexeme},
@@ -1271,7 +1271,7 @@ pub const SemanticAnalyzer = struct {
                             // silently emits a null-based access.
                             .StructDecl => |*struct_decl| {
                                 if (self.current_scope != self.moduleScope(self.current_module)) {
-                                    try self.reportNestedDeclaration("Type", struct_decl.name, stmt.base);
+                                    try self.reportNestedDeclaration("Type", struct_decl.name);
                                     continue;
                                 }
                                 const ref = TypeRef{ .module = self.current_module, .name = struct_decl.name.lexeme };
@@ -1285,10 +1285,10 @@ pub const SemanticAnalyzer = struct {
                                 }
                             },
                             .EnumDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
-                                try self.reportNestedDeclaration("Type", decl.name, stmt.base);
+                                try self.reportNestedDeclaration("Type", decl.name);
                             },
                             .GroupDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
-                                try self.reportNestedDeclaration("Type", decl.name, stmt.base);
+                                try self.reportNestedDeclaration("Type", decl.name);
                             },
                             else => {
                                 _ = try infer_type.inferTypeFromExpr(self, expression);
@@ -1307,7 +1307,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .FunctionDecl => |func| {
                     if (self.current_scope != self.moduleScope(self.current_module)) {
-                        try self.reportNestedDeclaration("Function", func.name, stmt.base);
+                        try self.reportNestedDeclaration("Function", func.name);
                         continue;
                     }
                     const location = ast.SourceSpan{ .location = getLocationFromBase(stmt.base) };
@@ -1327,10 +1327,10 @@ pub const SemanticAnalyzer = struct {
                     _ = try infer_type.inferTypeFromExpr(self, deferred);
                 },
                 .EnumDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
-                    try self.reportNestedDeclaration("Type", decl.name, stmt.base);
+                    try self.reportNestedDeclaration("Type", decl.name);
                 },
                 .GroupDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
-                    try self.reportNestedDeclaration("Type", decl.name, stmt.base);
+                    try self.reportNestedDeclaration("Type", decl.name);
                 },
                 .Assert => |assertion| {
                     _ = try infer_type.inferTypeFromExpr(self, assertion.condition);

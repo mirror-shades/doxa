@@ -22,9 +22,8 @@ const ValueId = ir.ValueId;
 
 /// Lower `e`; null when control leaves it.
 pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
-    const saved = l.b.location;
-    l.b.location = e.base.location();
-    defer l.b.location = saved;
+    const saved = try l.enter(e.base.location());
+    defer l.leave(saved);
 
     return switch (e.data) {
         .Literal => |lit| literal(l, e, lit),
@@ -43,7 +42,7 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .Loop => |loop| lower_control.loop(l, loop),
         .Block => lower_control.blockExpr(l, e, true),
         .ReturnExpr => |r| lower_control.returnFrom(l, r.value),
-        .Unreachable => lower_control.unreachableAt(l, e.base.location()),
+        .Unreachable => lower_control.unreachableAt(l),
         .Cast => lower_control.cast(l, e, true),
         .ForAll => |q| lower_control.quantifier(l, q.array, q.condition, q.storage, .forall),
         .Exists => |q| lower_control.quantifier(l, q.array, q.condition, q.storage, .exists),
@@ -89,6 +88,8 @@ fn unexpected(l: *Lowering, e: *ast.Expr) Error!?ValueId {
 /// Lower `e` as a branch condition: a comparison yields its `cond` directly;
 /// any other tetra holds when it is `true` or `both` (`docs/tetras.md`).
 pub fn cond(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    const saved = try l.enter(e.base.location());
+    defer l.leave(saved);
     switch (e.data) {
         .Binary => |bin| if (compareOp(bin.operator.type)) |op| return compare(l, bin, op),
         .Grouping => |inner| if (inner) |g| return cond(l, g),
@@ -961,7 +962,6 @@ fn peek(l: *Lowering, e: *ast.Expr, location: Location) Error!?ValueId {
         if (l.g.resolutionOf(e.data.FieldAccess.object)) |resolved| resolved == .type else false;
     var display: ir.PeekDisplay = .{
         .path = if (names_variant) null else try peekPath(l, e),
-        .location = location,
     };
     if (ty.isBoxed()) {
         const names = try memberNames(l, ty);
@@ -973,6 +973,8 @@ fn peek(l: *Lowering, e: *ast.Expr, location: Location) Error!?ValueId {
             }
         }
     }
+    const saved = try l.enter(location);
+    defer l.leave(saved);
     try l.effect(.{ .peek = .{ .operand = shown, .display = display } });
     return v;
 }

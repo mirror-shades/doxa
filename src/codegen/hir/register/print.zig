@@ -1,6 +1,9 @@
 //! The textual form of the register HIR (`--emit-hir`). Verifier faults quote
 //! it, and HIR-shape tests compare against it, so it is stable: one line per
-//! instruction, values as `%n`, blocks as `bn`, slots as `sn`.
+//! instruction, values as `%n`, blocks as `bn`, slots as `sn`. With
+//! `Options.spans`, each instruction and terminator ends with its source
+//! position, `(stmt)` marking a statement's first:
+//! `    %1 = const int 0  ; main.doxa:3:5 (stmt)`.
 //!
 //! ```
 //! fn sum(%0: int[]) -> int
@@ -14,7 +17,12 @@ const ir = @import("ir.zig");
 
 const Writer = std.Io.Writer;
 
-pub fn writeFunction(w: *Writer, program: *const ir.Program, f: *const ir.Function) Writer.Error!void {
+pub const Options = struct {
+    /// End each line with its span; names files through `Program.files`.
+    spans: bool = false,
+};
+
+pub fn writeFunction(w: *Writer, program: *const ir.Program, f: *const ir.Function, options: Options) Writer.Error!void {
     try w.print("fn {s}(", .{f.name});
     for (f.params(), f.roles, 0..) |param, role, i| {
         if (i != 0) try w.writeAll(", ");
@@ -34,10 +42,10 @@ pub fn writeFunction(w: *Writer, program: *const ir.Program, f: *const ir.Functi
         try writeHIRType(w, program, slot.ty);
         try w.print(" in %{d}  # {s}\n", .{ @intFromEnum(slot.arena), slot.name });
     }
-    for (f.blocks, 0..) |*block, i| try writeBlock(w, program, f, @enumFromInt(i), block);
+    for (f.blocks, 0..) |*block, i| try writeBlock(w, program, f, @enumFromInt(i), block, options);
 }
 
-pub fn writeBlock(w: *Writer, program: *const ir.Program, f: *const ir.Function, id: ir.BlockId, block: *const ir.Block) Writer.Error!void {
+pub fn writeBlock(w: *Writer, program: *const ir.Program, f: *const ir.Function, id: ir.BlockId, block: *const ir.Block, options: Options) Writer.Error!void {
     try w.print("b{d}", .{@intFromEnum(id)});
     if (block.params.len != 0) {
         try w.writeAll("(");
@@ -51,11 +59,18 @@ pub fn writeBlock(w: *Writer, program: *const ir.Program, f: *const ir.Function,
     for (block.insts) |*inst| {
         try w.writeAll("    ");
         try writeInst(w, program, f, inst);
+        if (options.spans) try writeSpan(w, program, inst.span);
         try w.writeAll("\n");
     }
     try w.writeAll("    ");
     try writeTerminator(w, program, &block.term);
+    if (options.spans) try writeSpan(w, program, block.term_span);
     try w.writeAll("\n");
+}
+
+fn writeSpan(w: *Writer, program: *const ir.Program, span: ir.SrcSpan) Writer.Error!void {
+    try w.print("  ; {s}:{d}:{d}", .{ program.files[span.module], span.line, span.column });
+    if (span.is_stmt) try w.writeAll(" (stmt)");
 }
 
 fn writeValueDecl(w: *Writer, program: *const ir.Program, f: *const ir.Function, v: ir.ValueId) Writer.Error!void {

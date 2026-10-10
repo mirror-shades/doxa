@@ -86,7 +86,7 @@ pub fn writeFault(w: *std.Io.Writer, program: *const ir.Program, f: *const ir.Fu
     }
     try w.print(": {s}\n", .{fault.message});
     if (fault.block) |b| {
-        if (@intFromEnum(b) < f.blocks.len) try print.writeBlock(w, program, f, b, &f.blocks[@intFromEnum(b)]);
+        if (@intFromEnum(b) < f.blocks.len) try print.writeBlock(w, program, f, b, &f.blocks[@intFromEnum(b)], .{});
     }
 }
 

@@ -53,9 +53,9 @@ fn fallOffValue(l: *Lowering) Error!?ValueId {
 /// Lower one statement. False when control does not reach its end, so the
 /// statements after it are dead.
 pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
-    const saved = l.b.location;
-    l.b.location = stmt.base.location();
-    defer l.b.location = saved;
+    const saved = try l.enter(stmt.base.location());
+    defer l.leave(saved);
+    l.b.beginStatement();
 
     switch (stmt.data) {
         .Expression => |maybe| if (maybe) |e| return try effect(l, e) != null,
@@ -313,13 +313,12 @@ pub fn continueLoop(l: *Lowering) Error!?ValueId {
 }
 
 fn outsideLoop(l: *Lowering, comptime keyword: []const u8, code: []const u8) Error!?ValueId {
-    l.g.report(l.location().?, code, "'" ++ keyword ++ "' used outside of a loop", .{});
+    l.g.report(l.location.?, code, "'" ++ keyword ++ "' used outside of a loop", .{});
     return ErrorList.UnsupportedOperator;
 }
 
 /// An `unreachable` expression: reaching it is a runtime trap.
-pub fn unreachableAt(l: *Lowering, location: Location) Error!?ValueId {
-    _ = location;
+pub fn unreachableAt(l: *Lowering) Error!?ValueId {
     try l.b.unreachableTerm();
     return null;
 }
@@ -333,7 +332,11 @@ pub fn assert(l: *Lowering, condition: *ast.Expr, message: ?*ast.Expr, location:
     try l.b.seal(ok);
     l.b.switchTo(fail);
     const text: ?ValueId = if (message) |m| try l.exprAs(m, .String) else null;
-    if (message == null or text != null) try l.b.assertFail(text, location);
+    if (message == null or text != null) {
+        const saved = try l.enter(location);
+        defer l.leave(saved);
+        try l.b.assertFail(text);
+    }
     l.b.switchTo(ok);
     return try l.nothing();
 }

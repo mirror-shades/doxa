@@ -58,6 +58,8 @@ const FunctionDecl = struct {
     /// own a copy (`param_mutation.zig`).
     param_mutated: []const bool,
     body: []ast.Stmt,
+    /// Where the function is declared: its name.
+    location: Location,
     signature: ir.Signature,
     is_entry: bool,
 };
@@ -85,6 +87,14 @@ pub const Generator = struct {
     reflected_structs: std.StringHashMapUnmanaged(void) = .empty,
     force_struct_descriptors: bool = false,
 
+    /// Each `.doxa` record by the file name its tokens carry
+    /// (`ModuleRecord.source_name`): how a node's location names its record.
+    source_files: std.StringHashMapUnmanaged(module_graph.ModuleId) = .empty,
+    /// The record `spanOf` last resolved a file to: every token of a file
+    /// shares one path slice, so consecutive spans rarely look it up.
+    span_file: []const u8 = "",
+    span_module: module_graph.ModuleId = 0,
+
     const ZigDecl = struct {
         link_name: []const u8,
         sig: *const ast.ZigFnSig,
@@ -102,6 +112,9 @@ pub const Generator = struct {
             .type_system = TypeSystem.init(alloc, reporter, semantic, &semantic.union_table),
         };
         try self.bindGlobalLinkNames();
+        for (self.graph.records.items) |record| {
+            if (record.source_name) |name| try self.source_files.put(alloc, name, record.id);
+        }
         return self;
     }
 
@@ -193,6 +206,7 @@ pub const Generator = struct {
             .param_types = try self.lowerTypes(signature.params),
             .param_mutated = try self.mutatedParams(func.body, func.params),
             .body = func.body,
+            .location = ast.SourceSpan.fromToken(func.name).location,
             .signature = undefined,
             .is_entry = func.is_entry,
         }, ret);
@@ -212,6 +226,7 @@ pub const Generator = struct {
                 .param_types = try self.lowerTypes(info.signature.params),
                 .param_mutated = try self.mutatedParams(method.body, method.params),
                 .body = method.body,
+                .location = ast.SourceSpan.fromToken(method.name).location,
                 .signature = undefined,
                 .is_entry = false,
             }, try self.lowerType(info.signature.return_type));
@@ -326,7 +341,7 @@ pub const Generator = struct {
 
     fn lowerFunction(self: *Generator, id: ir.FunctionId) Error!ir.Function {
         const decl = self.functionDecl(id).*;
-        var l = try Lowering.init(self, decl.link_name, decl.signature.ret, decl.module);
+        var l = try Lowering.init(self, decl.link_name, decl.signature.ret, decl.module, try self.spanOf(decl.location));
 
         // Parameters, in the signature's order.
         const caller = try l.b.addParam(.arena, .caller_arena);
@@ -369,7 +384,9 @@ pub const Generator = struct {
     /// code allocates in the root arena, where globals live.
     fn lowerInit(self: *Generator, records: []const *module_graph.ModuleRecord) Error!ir.Function {
         const entry = self.semantic.entry_module;
-        var l = try Lowering.init(self, "__doxa_init", .Nothing, entry);
+        // Its prologue (the root arena) belongs to no statement: the entry
+        // file's start.
+        var l = try Lowering.init(self, "__doxa_init", .Nothing, entry, .{ .module = entry, .line = 1, .column = 1 });
         try l.start();
         try l.pushArena(l.root, .borrowed);
         try l.pushDefers();
@@ -409,6 +426,9 @@ pub const Generator = struct {
         }
         signatures[@intFromEnum(init_id)] = .{ .params = &.{}, .roles = &.{}, .ret = .Nothing };
         names[@intFromEnum(init_id)] = "__doxa_init";
+
+        const files = try self.alloc.alloc([]const u8, self.graph.count());
+        for (files, self.graph.records.items) |*file, record| file.* = record.source_name orelse self.graph.filePath(record.id);
 
         const zig_sigs = try self.alloc.alloc(ir.Signature, self.zig_functions.items.len);
         const zig_names = try self.alloc.alloc([]const u8, self.zig_functions.items.len);
@@ -478,6 +498,7 @@ pub const Generator = struct {
             .enum_keys = enum_keys,
             .struct_field_names = struct_field_names,
             .enum_variants = enum_variants,
+            .files = files,
         };
     }
 
@@ -620,6 +641,26 @@ pub const Generator = struct {
     pub fn report(self: *const Generator, location: Location, code: []const u8, comptime fmt: []const u8, args: anytype) void {
         self.reporter.reportCompileError(location, code, fmt, args);
     }
+
+    /// The span of `location`, in the record of the file it names. A node
+    /// with no position, or one outside every record, is a lowering bug.
+    pub fn spanOf(self: *Generator, location: Location) Error!ir.SrcSpan {
+        const line = location.range.start_line;
+        const column = location.range.start_col;
+        if (line == 0 or column == 0) {
+            self.reporter.reportInternal("lowered a node with no source position. This is a compiler bug, not an error in the program", .{}, @src());
+            return ErrorList.InternalParserError;
+        }
+        const file = location.file;
+        if (file.ptr != self.span_file.ptr or file.len != self.span_file.len) {
+            self.span_module = self.source_files.get(file) orelse {
+                self.reporter.reportInternal("lowered a node from '{s}', which is no module of the program. This is a compiler bug, not an error in the program", .{file}, @src());
+                return ErrorList.InternalParserError;
+            };
+            self.span_file = file;
+        }
+        return .{ .module = self.span_module, .line = @intCast(line), .column = @intCast(column) };
+    }
 };
 
 /// The type a group's flattened member names.
@@ -685,13 +726,31 @@ pub const Lowering = struct {
     arenas: std.ArrayListUnmanaged(ArenaFrame) = .empty,
     loops: std.ArrayListUnmanaged(LoopContext) = .empty,
     defers: std.ArrayListUnmanaged(std.ArrayListUnmanaged(*ast.Expr)) = .empty,
+    /// The node being lowered, for diagnostics; its span is the builder's.
+    location: ?Location = null,
 
     pub const expr = lower_expr.expr;
     pub const cond = lower_expr.cond;
     pub const call = lower_expr.callDoxa;
 
-    fn init(g: *Generator, name: []const u8, ret: HIRType, module: module_graph.ModuleId) Error!Lowering {
-        return .{ .g = g, .b = try FunctionBuilder.init(g.alloc, name, ret), .module = module, .ret = ret };
+    fn init(g: *Generator, name: []const u8, ret: HIRType, module: module_graph.ModuleId, span: ir.SrcSpan) Error!Lowering {
+        return .{ .g = g, .b = try FunctionBuilder.init(g.alloc, name, ret, span), .module = module, .ret = ret };
+    }
+
+    /// What `leave` restores.
+    pub const Position = struct { span: ir.SrcSpan, location: ?Location };
+
+    /// Lower what follows at `location`, until `leave`.
+    pub fn enter(self: *Lowering, location: Location) Error!Position {
+        const span = try self.g.spanOf(location);
+        const saved = Position{ .span = self.b.at(span), .location = self.location };
+        self.location = location;
+        return saved;
+    }
+
+    pub fn leave(self: *Lowering, saved: Position) void {
+        _ = self.b.at(saved.span);
+        self.location = saved.location;
     }
 
     /// Begin the body, once every parameter is added.
@@ -879,7 +938,7 @@ pub const Lowering = struct {
         var to_text = std.Io.Writer.Allocating.init(self.g.alloc);
         hir_print.writeHIRType(&from_text.writer, &no_names, from) catch {};
         hir_print.writeHIRType(&to_text.writer, &no_names, to) catch {};
-        const at = self.b.location orelse Location{ .file = "?", .file_uri = null, .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } };
+        const at = self.location orelse Location{ .file = "?", .file_uri = null, .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } };
         self.g.reporter.reportInternal("cannot convert a {s} to a {s} at {s}:{d}:{d}. This is a compiler bug, not an error in the program", .{ from_text.written(), to_text.written(), at.file, at.range.start_line, at.range.start_col }, @src());
         return ErrorList.TypeMismatch;
     }
@@ -913,10 +972,6 @@ pub const Lowering = struct {
         const element = try self.g.alloc.create(HIRType);
         element.* = try self.dynamicOf(t.Array.element.*);
         return .{ .Array = .{ .element = element } };
-    }
-
-    pub fn location(self: *const Lowering) ?Location {
-        return self.b.location;
     }
 };
 

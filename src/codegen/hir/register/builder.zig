@@ -50,7 +50,7 @@ const PendingTerm = union(enum) {
     @"unreachable",
     panic: ValueId,
     exit: ValueId,
-    assert_fail: struct { message: ?ValueId, location: ir.Location },
+    assert_fail: struct { message: ?ValueId },
 };
 
 const PendingCase = struct { value: i64, edge: u32 };
@@ -61,6 +61,7 @@ const BlockState = struct {
     explicit_params: u32 = 0,
     insts: std.ArrayListUnmanaged(ir.Inst) = .empty,
     term: ?PendingTerm = null,
+    term_span: ir.SrcSpan = undefined,
     preds: std.ArrayListUnmanaged(u32) = .empty,
     sealed: bool = false,
     incomplete: std.ArrayListUnmanaged(Incomplete) = .empty,
@@ -93,12 +94,17 @@ pub const FunctionBuilder = struct {
     var_types: std.ArrayListUnmanaged(Type) = .empty,
     defs: std.AutoHashMapUnmanaged(VarBlock, ValueId) = .empty,
     current: BlockId = .entry,
-    location: ?ir.Location = null,
+    /// The span every instruction emitted now takes.
+    span: ir.SrcSpan,
+    /// Whether the next instruction or terminator begins a statement.
+    stmt_pending: bool = false,
 
     /// `alloc` should be an arena: nothing the builder allocates is freed
-    /// before the function is.
-    pub fn init(alloc: std.mem.Allocator, name: []const u8, return_type: ir.HIRType) Error!FunctionBuilder {
-        var self = FunctionBuilder{ .alloc = alloc, .name = name, .return_type = return_type };
+    /// before the function is. `span` is the function's own, which its
+    /// prologue takes.
+    pub fn init(alloc: std.mem.Allocator, name: []const u8, return_type: ir.HIRType, span: ir.SrcSpan) Error!FunctionBuilder {
+        std.debug.assert(span.line != 0 and span.column != 0);
+        var self = FunctionBuilder{ .alloc = alloc, .name = name, .return_type = return_type, .span = span };
         try self.blocks.append(alloc, .{ .sealed = true });
         return self;
     }
@@ -239,20 +245,49 @@ pub const FunctionBuilder = struct {
         }
     }
 
+    // ── Spans ──
+
+    /// Emit what follows at `span`; returns the span to restore.
+    pub fn at(self: *FunctionBuilder, span: ir.SrcSpan) ir.SrcSpan {
+        std.debug.assert(span.line != 0 and span.column != 0);
+        const saved = self.span;
+        self.span = span;
+        return saved;
+    }
+
+    /// The next instruction or terminator emitted begins a statement.
+    pub fn beginStatement(self: *FunctionBuilder) void {
+        self.stmt_pending = true;
+    }
+
+    /// The span of the instruction being emitted, which takes the pending
+    /// statement start.
+    fn take(self: *FunctionBuilder) ir.SrcSpan {
+        var span = self.span;
+        span.is_stmt = self.stmt_pending;
+        self.stmt_pending = false;
+        return span;
+    }
+
+    fn terminate(self: *FunctionBuilder, s: *BlockState, term: PendingTerm) void {
+        s.term = term;
+        s.term_span = self.take();
+    }
+
     // ── Instructions ──
 
     /// Emit an instruction that defines a value of type `ty`.
     pub fn define(self: *FunctionBuilder, op: ir.Op, ty: Type) Error!ValueId {
         const s = try self.open();
         const result = try self.newValue(ty, .{ .inst = .{ .block = self.current, .index = @intCast(s.insts.items.len) } });
-        try self.blockState(self.current).insts.append(self.alloc, .{ .op = op, .result = result });
+        try self.blockState(self.current).insts.append(self.alloc, .{ .op = op, .result = result, .span = self.take() });
         return result;
     }
 
     /// Emit an instruction that defines no value.
     pub fn effect(self: *FunctionBuilder, op: ir.Op) Error!void {
         const s = try self.open();
-        try s.insts.append(self.alloc, .{ .op = op, .result = null });
+        try s.insts.append(self.alloc, .{ .op = op, .result = null, .span = self.take() });
     }
 
     fn open(self: *FunctionBuilder) Error!*BlockState {
@@ -265,44 +300,44 @@ pub const FunctionBuilder = struct {
     // ── Terminators ──
 
     pub fn jump(self: *FunctionBuilder, target: Target) Error!void {
-        _ = try self.open();
+        const s = try self.open();
         const edge = try self.addEdge(target);
-        self.blockState(self.current).term = .{ .jump = edge };
+        self.terminate(s, .{ .jump = edge });
     }
 
     pub fn branch(self: *FunctionBuilder, cond: ValueId, then: Target, @"else": Target) Error!void {
-        _ = try self.open();
+        const s = try self.open();
         const then_edge = try self.addEdge(then);
         const else_edge = try self.addEdge(@"else");
-        self.blockState(self.current).term = .{ .branch = .{ .cond = cond, .then = then_edge, .@"else" = else_edge } };
+        self.terminate(s, .{ .branch = .{ .cond = cond, .then = then_edge, .@"else" = else_edge } });
     }
 
     pub fn switchOn(self: *FunctionBuilder, operand: ValueId, cases: []const Case, default: Target) Error!void {
-        _ = try self.open();
+        const s = try self.open();
         const pending = try self.alloc.alloc(PendingCase, cases.len);
         for (cases, pending) |case, *slot| slot.* = .{ .value = case.value, .edge = try self.addEdge(case.target) };
         const default_edge = try self.addEdge(default);
-        self.blockState(self.current).term = .{ .@"switch" = .{ .operand = operand, .cases = pending, .default = default_edge } };
+        self.terminate(s, .{ .@"switch" = .{ .operand = operand, .cases = pending, .default = default_edge } });
     }
 
     pub fn ret(self: *FunctionBuilder, result: ?ValueId) Error!void {
-        (try self.open()).term = .{ .@"return" = result };
+        self.terminate(try self.open(), .{ .@"return" = result });
     }
 
     pub fn unreachableTerm(self: *FunctionBuilder) Error!void {
-        (try self.open()).term = .@"unreachable";
+        self.terminate(try self.open(), .@"unreachable");
     }
 
     pub fn panic(self: *FunctionBuilder, message: ValueId) Error!void {
-        (try self.open()).term = .{ .panic = message };
+        self.terminate(try self.open(), .{ .panic = message });
     }
 
     pub fn exit(self: *FunctionBuilder, code: ValueId) Error!void {
-        (try self.open()).term = .{ .exit = code };
+        self.terminate(try self.open(), .{ .exit = code });
     }
 
-    pub fn assertFail(self: *FunctionBuilder, message: ?ValueId, location: ir.Location) Error!void {
-        (try self.open()).term = .{ .assert_fail = .{ .message = message, .location = location } };
+    pub fn assertFail(self: *FunctionBuilder, message: ?ValueId) Error!void {
+        self.terminate(try self.open(), .{ .assert_fail = .{ .message = message } });
     }
 
     fn addEdge(self: *FunctionBuilder, target: Target) Error!u32 {
@@ -444,12 +479,14 @@ pub const FunctionBuilder = struct {
                 out.* = .{
                     .op = try map.op(inst.op),
                     .result = if (inst.result) |r| try map.value(r) else null,
+                    .span = inst.span,
                 };
             }
             blocks[block_number[i]] = .{
                 .params = params,
                 .insts = insts,
                 .term = try self.terminator(s.term.?, map, block_number),
+                .term_span = s.term_span,
             };
         }
 
@@ -490,10 +527,7 @@ pub const FunctionBuilder = struct {
             .@"unreachable" => .@"unreachable",
             .panic => |v| .{ .panic = try map.value(v) },
             .exit => |v| .{ .exit = try map.value(v) },
-            .assert_fail => |a| .{ .assert_fail = .{
-                .message = if (a.message) |m| try map.value(m) else null,
-                .location = a.location,
-            } },
+            .assert_fail => |a| .{ .assert_fail = .{ .message = if (a.message) |m| try map.value(m) else null } },
         };
     }
 
@@ -530,7 +564,7 @@ pub const FunctionBuilder = struct {
 
     fn newValue(self: *FunctionBuilder, ty: Type, def: ir.Def) Error!ValueId {
         const id: ValueId = @enumFromInt(self.values.items.len);
-        try self.values.append(self.alloc, .{ .ty = ty, .def = def, .location = self.location });
+        try self.values.append(self.alloc, .{ .ty = ty, .def = def });
         return id;
     }
 
