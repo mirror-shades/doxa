@@ -77,8 +77,11 @@ fn writeStdout(slice: []const u8) void {
         writeWasiFd(1, slice);
         return;
     }
+    // Streaming, not positional: a fresh positional writer starts at offset 0
+    // and, with stdout redirected to a file, overwrites earlier output (ours or
+    // a child process's sharing the handle) instead of appending.
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
     const stdout = &stdout_writer.interface;
     _ = stdout.write(slice) catch return;
     _ = stdout.flush() catch return;
@@ -97,7 +100,7 @@ fn writeStderr(slice: []const u8) void {
         return;
     }
     var stderr_buffer: [1024]u8 = undefined;
-    var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
+    var stderr_writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
     const stderr = &stderr_writer.interface;
     _ = stderr.write(slice) catch return;
     _ = stderr.flush() catch return;

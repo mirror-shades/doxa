@@ -59,6 +59,8 @@ pub const Doxa = struct {
         /// The repository root when null.
         cwd: ?[]const u8 = null,
         stdin: ?[]const u8 = null,
+        /// See `process.Options.stdout_file`.
+        stdout_file: ?Io.File = null,
     };
 
     /// `doxa <args>` under the standard deadline.
@@ -69,6 +71,7 @@ pub const Doxa = struct {
             .argv = argv,
             .cwd = invocation.cwd orelse doxa.root,
             .stdin = invocation.stdin,
+            .stdout_file = invocation.stdout_file,
             .timeout = timeout,
         });
     }
