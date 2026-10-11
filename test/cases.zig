@@ -1265,7 +1265,7 @@ const rejected_cases = [_]Case{
         .path = "./test/syntax/nested_empty_array_error.doxa",
         .mode = .reject,
         .expect_error = "E6019",
-        .expect_stderr = "nested_empty_array_error.doxa:2:5: cannot infer element type of empty array literal",
+        .expect_stderr = "nested_empty_array_error.doxa:2:1: cannot infer element type of empty array literal",
     },
     .{
         .name = "an array literal of a group's members is typed by its context",

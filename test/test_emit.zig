@@ -682,3 +682,97 @@ test "spans: an instruction carries its expression's start, a statement's first 
         };
     }
 }
+
+// ── Debug info (`-g`) ──
+
+test "debug info: subprograms, files and statement-start key locations" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ll = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = spanSource }}, &.{"-g"}, "ll");
+    defer allocator.free(ll);
+
+    // One subprogram per function, named as the program spells it, linked
+    // by its mangled name, stepping by key instructions.
+    try expectContains(ll, "!DISubprogram(name: \"scale\", linkageName: \"__doxa_m1_");
+    try expectContains(ll, "!DISubprogram(name: \"main\", linkageName: \"__doxa_m1_");
+    try expectContains(ll, "keyInstructions: true");
+    // Files by display path, never a path on this machine.
+    try expectContains(ll, "!DIFile(filename: \"probe.doxa\", directory: \"\")");
+    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = cwd_buffer[0..try tmp.dir.realPath(testing.io, &cwd_buffer)];
+    try testing.expect(std.mem.indexOf(u8, ll, cwd) == null);
+    // `if x > k` begins at its `if` (4:9), though its first instruction is
+    // the comparison at 4:12: the key location is the statement's own start.
+    try expectContains(ll, "!DILocation(line: 4, column: 9, scope: ");
+    try testing.expect(std.mem.indexOf(u8, keyLocation(ll, 4, 9) orelse "", "atomRank: 1") != null);
+    // Other instructions keep their expression's position and no atom.
+    try expectContains(ll, "!DILocation(line: 5, column: 22, scope: ");
+    try testing.expect(std.mem.indexOf(u8, keyLocation(ll, 5, 22) orelse "", "atom") == null);
+}
+
+test "debug info: without -g the IR carries no metadata" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ll = try emitIrFor(allocator, &tmp, spanSource, "--opt=0");
+    defer allocator.free(ll);
+    try testing.expect(std.mem.indexOf(u8, ll, "!dbg") == null);
+    try testing.expect(std.mem.indexOf(u8, ll, "!llvm.dbg.cu") == null);
+}
+
+test "debug info: the line table names the .doxa file and its statement lines" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    // DWARF, read from the assembly the object is made of: the line program
+    // names `probe.doxa`, and the `if` statement is a step stop at its start.
+    const asm_text = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = spanSource }}, &.{ "-g", "--emit-asm", "--arch=x86_64", "--os=linux" }, "s");
+    defer allocator.free(asm_text);
+    try expectContains(asm_text, "\"probe.doxa\"");
+    try expectContains(asm_text, " 4 9");
+
+    // CodeView, read from the PDB a Windows link writes beside the binary.
+    const pdb = try compileProbeOutput(allocator, &tmp, &.{"-g"}, "pdb");
+    defer allocator.free(pdb);
+    try expectContains(pdb, "probe.doxa");
+    try expectContains(pdb, "scale");
+}
+
+fn expectContains(haystack: []const u8, needle: []const u8) !void {
+    if (std.mem.indexOf(u8, haystack, needle) != null) return;
+    std.debug.print("expected `{s}` in:\n{s}\n", .{ needle, haystack });
+    return error.TestExpectedContains;
+}
+
+/// The `!DILocation` node at `line:column`, through its closing parenthesis.
+fn keyLocation(ll: []const u8, line: u32, column: u32) ?[]const u8 {
+    var buf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "!DILocation(line: {d}, column: {d}, ", .{ line, column }) catch return null;
+    const at = std.mem.indexOf(u8, ll, needle) orelse return null;
+    const end = std.mem.indexOfScalarPos(u8, ll, at, ')') orelse return null;
+    return ll[at .. end + 1];
+}
+
+/// Compiles `spanSource` for Windows with `flags` and returns the file beside
+/// the output binary with extension `ext`.
+fn compileProbeOutput(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, flags: []const []const u8, ext: []const u8) ![]u8 {
+    const all = try std.mem.concat(allocator, []const u8, &.{ flags, &.{ "--arch=x86_64", "--os=windows" } });
+    defer allocator.free(all);
+    const ll = try compileProbe(allocator, tmp, &.{.{ .path = "probe.doxa", .data = spanSource }}, all, "ll");
+    defer allocator.free(ll);
+    // `-o <stem>` with no directory writes the binary, and its side files,
+    // into `bin/`.
+    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
+    defer bin.close(testing.io);
+    var it = bin.iterate();
+    while (try it.next(testing.io)) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ext) and std.mem.startsWith(u8, entry.name, "probe-")) {
+            return bin.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
+        }
+    }
+    return error.NoSuchOutput;
+}

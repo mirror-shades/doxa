@@ -10,6 +10,7 @@ test {
     _ = @import("test/test_lexer.zig");
     _ = @import("test/test_profiler.zig");
     _ = @import("test/test_artifact_cache.zig");
+    _ = @import("test/test_native_cpu_cache.zig");
     _ = @import("test/test_floored_arith.zig");
     _ = @import("test/test_overflow.zig");
     _ = @import("test/test_register_hir.zig");

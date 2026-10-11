@@ -458,15 +458,23 @@ test "register hir: every instruction and terminator carries its span" {
 
     var b = try FunctionBuilder.init(a, "spans", .Int, .{ .module = 0, .line = 1, .column = 10 });
     const x = try b.addParam(int, .value);
-    b.beginStatement();
     const outer = b.at(.{ .module = 1, .line = 2, .column = 5 });
+    try b.beginStatement();
     const two = try b.define(.{ .constant = .{ .int = 2 } }, int);
     const inner = b.at(.{ .module = 1, .line = 2, .column = 12 });
     const doubled = try b.define(.{ .arith = .{ .op = .Mul, .lhs = x, .rhs = two } }, int);
-    _ = b.at(inner);
+    b.restore(inner);
     try b.ret(doubled);
-    _ = b.at(outer);
+    b.restore(outer);
     const f = try b.finish();
+
+    // Statement 0 is the prologue, at the declaration; statement 1 starts at
+    // its own column, and everything lowered inside it belongs to it.
+    try testing.expectEqual(@as(usize, 2), f.statements.len);
+    try testing.expectEqual(@as(u32, 10), f.statements[0].column);
+    try testing.expectEqual(@as(u32, 5), f.statements[1].column);
+    for (f.blocks[0].insts) |inst| try testing.expectEqual(@as(u32, 1), inst.span.stmt);
+    try testing.expectEqual(@as(u32, 1), f.blocks[0].term_span.stmt);
 
     var program = no_program;
     program.files = &.{ "main.doxa", "lib.doxa" };
