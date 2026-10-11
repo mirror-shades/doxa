@@ -81,7 +81,7 @@ zig IO {
             return;
         }
         var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
         const stdout = &stdout_writer.interface;
 
         stdout.print("{s}", .{text}) catch {
@@ -102,7 +102,7 @@ zig IO {
             return;
         }
         var stderr_buffer: [1024]u8 = undefined;
-        var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
+        var stderr_writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
         const stderr = &stderr_writer.interface;
 
         stderr.print("{s}", .{text}) catch {

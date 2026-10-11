@@ -22,4 +22,5 @@ test {
     _ = @import("test_build_script.zig");
     _ = @import("test_emit.zig");
     _ = @import("test_lsp_session.zig");
+    _ = @import("test_redirect.zig");
 }

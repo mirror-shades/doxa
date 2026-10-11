@@ -34,6 +34,10 @@ pub const Options = struct {
     /// Written whole, then closed, before any output is read, so it must fit
     /// the pipe buffer. Stdin is the null device when absent.
     stdin: ?[]const u8 = null,
+    /// Hands the child this file as its stdout instead of a pipe, for probes of
+    /// how a program writes to a redirected, seekable stdout. `Capture.stdout`
+    /// is then empty; the output is in the file.
+    stdout_file: ?Io.File = null,
     /// How long the whole tree may run before it is killed.
     timeout: Io.Duration,
 };
@@ -84,9 +88,16 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !Capture {
         child.stdin = null;
     }
 
+    // Stream 0 is stdout and stream 1 stderr; a stdout handed over as a file
+    // leaves only stderr to read, at index 0.
+    const piped_stdout = child.stdout != null;
+    const files: [2]Io.File = if (piped_stdout) .{ child.stdout.?, child.stderr.? } else .{ child.stderr.?, undefined };
+    const stream_count: u32 = if (piped_stdout) 2 else 1;
     var streams: Io.File.MultiReader.Buffer(2) = undefined;
+    const stream_set = streams.toStreams();
+    stream_set.len = stream_count;
     var reader: Io.File.MultiReader = undefined;
-    reader.init(gpa, io, streams.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    reader.init(gpa, io, stream_set, files[0..stream_count]);
     defer reader.deinit();
 
     const deadline = (Io.Timeout{ .duration = .{ .raw = options.timeout, .clock = .awake } }).toDeadline(io);
@@ -103,9 +114,9 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !Capture {
     try reader.checkAnyError();
 
     const term = try child.wait(io);
-    const stdout = try reader.toOwnedSlice(0);
+    const stdout = if (piped_stdout) try reader.toOwnedSlice(0) else try gpa.alloc(u8, 0);
     errdefer gpa.free(stdout);
-    const stderr = try reader.toOwnedSlice(1);
+    const stderr = try reader.toOwnedSlice(if (piped_stdout) 1 else 0);
 
     return .{
         .stdout = stdout,
@@ -136,7 +147,7 @@ fn spawn(io: Io, options: Options) !Child {
         .argv = options.argv,
         .cwd = if (options.cwd) |dir| .{ .path = dir } else .inherit,
         .stdin = if (options.stdin != null) .pipe else .ignore,
-        .stdout = .pipe,
+        .stdout = if (options.stdout_file) |file| .{ .file = file } else .pipe,
         .stderr = .pipe,
         .start_suspended = native_os == .windows,
         .pgid = if (native_os == .windows) null else 0,
