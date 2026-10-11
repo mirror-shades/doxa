@@ -60,6 +60,9 @@ const FunctionDecl = struct {
     body: []ast.Stmt,
     /// Where the function is declared: its name.
     location: Location,
+    /// The name as the program spells it: `f`, or `Point.norm` for a method.
+    /// Filled from the function's key by `addFunction`.
+    display_name: []const u8 = "",
     signature: ir.Signature,
     is_entry: bool,
 };
@@ -257,6 +260,7 @@ pub const Generator = struct {
             }
         }
         var full = decl;
+        full.display_name = key.name;
         full.signature = .{ .params = params.items, .roles = roles.items, .ret = ret };
         const id: ir.FunctionId = @enumFromInt(self.functions.items.len);
         try self.functions.append(self.alloc, full);
@@ -342,6 +346,7 @@ pub const Generator = struct {
     fn lowerFunction(self: *Generator, id: ir.FunctionId) Error!ir.Function {
         const decl = self.functionDecl(id).*;
         var l = try Lowering.init(self, decl.link_name, decl.signature.ret, decl.module, try self.spanOf(decl.location));
+        l.b.display_name = decl.display_name;
 
         // Parameters, in the signature's order.
         const caller = try l.b.addParam(.arena, .caller_arena);
@@ -749,7 +754,7 @@ pub const Lowering = struct {
     }
 
     pub fn leave(self: *Lowering, saved: Position) void {
-        _ = self.b.at(saved.span);
+        self.b.restore(saved.span);
         self.location = saved.location;
     }
 

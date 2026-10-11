@@ -24,6 +24,7 @@ const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
 const Profiler = @import("./utils/profiler.zig").Profiler;
+const CountingAllocator = @import("./utils/profiler.zig").CountingAllocator;
 const ArtifactCache = @import("./utils/artifact_cache.zig").ArtifactCache;
 const hashing = @import("./utils/hashing.zig");
 const source_cache = @import("./utils/source_cache.zig");
@@ -76,6 +77,9 @@ const CLI = struct {
     emit_opt_ir: bool,
     emit_asm: bool,
     emit_hir: bool,
+    /// `-g`: debug metadata in the program's object, for an external debugger
+    /// or a sampling profiler.
+    debug_info: bool,
     lsp_mode: LspMode,
     lsp_debug_file: ?[]const u8,
     lsp_io_trace: bool,
@@ -204,11 +208,18 @@ const TargetTriple = struct {
         if (!self.isCross()) try args.append("-mcpu=native");
     }
 
-    /// The CPU component of an artifact cache key: `native` for a host build,
-    /// empty for a cross build (whose baseline is already captured by the
-    /// toolchain/triple).
-    fn cpuKey(self: TargetTriple) []const u8 {
-        return if (self.isCross()) "" else "native";
+    /// The CPU component of an artifact cache key.
+    ///
+    /// A native build compiles for the *running* host's CPU, so the key must
+    /// name that CPU. The constant `"native"` is not a key: CI restores
+    /// `.zig-cache` across runs and its runners are not CPU-homogeneous, so a
+    /// cache populated on one machine would be served to another and the
+    /// program would execute instructions that machine lacks — a trap in the
+    /// middle of unrelated code. `nativeCpuKey` resolves the real model
+    /// instead. A cross build compiles for its target's baseline, which the
+    /// toolchain and triple already capture, so it contributes nothing.
+    fn cpuKey(self: TargetTriple, native_cpu_key: []const u8) []const u8 {
+        return if (self.isCross()) "" else native_cpu_key;
     }
 
     /// The string passed to `-target`, resolved the same way for native and
@@ -303,7 +314,7 @@ fn writeHirText(allocator: std.mem.Allocator, module: *const hir.Module) ![]cons
     return text.written();
 }
 
-fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *const module_graph.ModuleGraph, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
+fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *const module_graph.ModuleGraph, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, native_cpu_key: NativeCpuKey, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
     // Match the runtime object and final link exactly: native builds also pass
@@ -316,7 +327,7 @@ fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *co
     // An explicit `-target` stops auto-detecting the host CPU, so the native
     // shim must ask for it explicitly, exactly as the runtime object does.
     const cpu_arg: []const u8 = if (target.isCross()) "" else "-mcpu=native";
-    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, graph, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, profiler);
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, graph, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, target.cpuKey(native_cpu_key.bytes()), include_dirs, toolchain, profiler);
 }
 
 /// Each of `paths` resolved against `base`; an absolute path is kept as is.
@@ -500,6 +511,56 @@ fn toolchainIdentity(io: std.Io, allocator: std.mem.Allocator, zig_exe_path: []c
     return allocator.dupe(u8, std.mem.trim(u8, result.stdout, " \t\r\n"));
 }
 
+/// A CPU identity, resolved from the running host, that participates in every
+/// native artifact cache key.
+pub const NativeCpuKey = struct {
+    digest: hashing.Digest,
+    /// True when host detection failed and the key is the fixed fallback. The
+    /// key is still stable, so the cache stays correct on that host, but any
+    /// prior native object must be presumed unsafe to reuse — an unknown CPU
+    /// cannot be shown to match a known one.
+    known: bool,
+
+    pub fn bytes(self: NativeCpuKey) []const u8 {
+        return &self.digest;
+    }
+};
+
+/// Resolve the CPU a native build targets.
+///
+/// This resolves the *running* host, which is deliberately not `builtin.cpu`:
+/// `builtin` describes the machine the compiler was built for, and the two
+/// differ exactly when a binary is built on one machine and run on another —
+/// a cached CI artifact, or a developer on a different box. Keying on
+/// `builtin` would reproduce the very bug this replaces.
+///
+/// `std.zig.system.resolveTargetQuery` is what the bundled Zig itself runs for
+/// `-mcpu=native`, so this names the same CPU the object will be built for.
+/// The feature set is folded in alongside the model name because Zig adds
+/// features from the OS version (AVX on Windows 11, AVX-512 on the newest
+/// Linux) that the name alone does not carry, and two hosts differing only
+/// there must not share an object. It is hashed as raw bits rather than as
+/// feature names: the set is a bitset, so its bytes are exactly its identity.
+pub fn resolveNativeCpuKey(io: std.Io) NativeCpuKey {
+    const query: std.Target.Query = .{ .cpu_model = .native };
+    const resolved = std.zig.system.resolveTargetQuery(io, query) catch {
+        // Detection can fail on a locked-down or exotic host. Rather than
+        // widen the key to "anything", fall back to a distinct constant: every
+        // host that cannot detect lands on the same key and still reuses
+        // safely among themselves, while a host that can detect never shares
+        // with one that could not.
+        var kb = hashing.KeyBuilder.init("doxa-native-cpu-v1");
+        kb.addBytes("native-undetected");
+        return .{ .digest = kb.finish(), .known = false };
+    };
+
+    var kb = hashing.KeyBuilder.init("doxa-native-cpu-v1");
+    kb.addBytes(@tagName(resolved.cpu.arch));
+    kb.addBytes(resolved.cpu.model.name);
+    kb.addBytes(std.mem.sliceAsBytes(&resolved.cpu.features.ints));
+    return .{ .digest = kb.finish(), .known = true };
+}
+
 // Optimization is described on two axes that govern different parts of the
 // toolchain:
 //
@@ -611,18 +672,18 @@ const EmitKind = enum { opt_ir, asm_ };
 // inspection artifact (optimized LLVM IR or target assembly) at the same
 // optimization level the object build uses. Non-fatal: a failure here warns but
 // does not abort the compile.
-fn emitInspectionArtifact(io: std.Io, zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind, target: TargetTriple) !void {
-    var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+fn emitInspectionArtifact(io: std.Io, allocator: std.mem.Allocator, zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind, target: TargetTriple) !void {
+    var args = std.array_list.Managed([]const u8).init(allocator);
     defer args.deinit();
 
-    const in_name = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.ll", .{stem});
-    defer std.heap.page_allocator.free(in_name);
+    const in_name = try std.fmt.allocPrint(allocator, "{s}.ll", .{stem});
+    defer allocator.free(in_name);
     const out_ext = switch (kind) {
         .opt_ir => "opt.ll",
         .asm_ => "s",
     };
-    const out_name = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.{s}", .{ stem, out_ext });
-    defer std.heap.page_allocator.free(out_name);
+    const out_name = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ stem, out_ext });
+    defer allocator.free(out_name);
 
     try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-S" });
     if (kind == .opt_ir) try args.append("-emit-llvm");
@@ -711,6 +772,10 @@ fn compileToNative(
     const toolchain = try toolchainIdentity(io, allocator, zig_exe_path);
     profiler.end();
     defer allocator.free(toolchain);
+    // Resolved once and shared by every key: a native build compiles for the
+    // host CPU, so an object may only be reused on a host that would produce
+    // the same one.
+    const native_cpu_key = resolveNativeCpuKey(io);
     const target_arg = try target.targetArgAlloc(allocator);
     defer allocator.free(target_arg);
     const obj_ext: []const u8 = if (target.isWindows()) "obj" else "o";
@@ -731,7 +796,11 @@ fn compileToNative(
             const hir_path = try std.fmt.bufPrint(&hir_path_buf, "{s}/{s}.hir", .{ cache_dir, stem_for_derivatives });
             try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = hir_path, .data = try writeHirText(emit_alloc, module) });
         }
-        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, cli_options.opt.arithOverflow());
+        const debug_options: ?llvm_emit.debug.Options = if (cli_options.debug_info) .{
+            .format = if (target.isWindows()) .codeview else .dwarf,
+            .optimized = cli_options.opt.level != .o0,
+        } else null;
+        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, cli_options.opt.arithOverflow(), debug_options);
         var ll = std.Io.Writer.Allocating.init(emit_alloc);
         emitter.emit(&ll.writer) catch |err| {
             if (err == error.EmitFault) reporter.reportInternal("the emitter rejected the register HIR: {s}. This is a compiler bug, not an error in the program", .{emitter.fault.?}, @src());
@@ -744,7 +813,7 @@ fn compileToNative(
     const obj_path = blk: {
         const ll_source = try std.Io.Dir.cwd().readFileAlloc(io, ir_path, allocator, .unlimited);
         defer allocator.free(ll_source);
-        const key = userObjectKey(ll_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.clangFlag(), include_dirs);
+        const key = userObjectKey(ll_source, toolchain, target_arg, target.cpuKey(native_cpu_key.bytes()), cli_options.opt.clangFlag(), include_dirs);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
@@ -752,7 +821,7 @@ fn compileToNative(
 
         profiler.begin("cc-compile");
         defer profiler.end();
-        var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var args = std.array_list.Managed([]const u8).init(allocator);
         defer args.deinit();
         try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_path, "-o", staged });
         try target.appendTargetArg(&args);
@@ -761,13 +830,13 @@ fn compileToNative(
         // refusing contraction keeps float workloads bit-identical.
         try args.append("-ffp-contract=off");
         try args.append(cli_options.opt.clangFlag());
-        var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var include_flags = std.array_list.Managed([]const u8).init(allocator);
         defer {
-            for (include_flags.items) |f| std.heap.page_allocator.free(f);
+            for (include_flags.items) |f| allocator.free(f);
             include_flags.deinit();
         }
         for (include_dirs) |dir| {
-            const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
+            const flag = try std.fmt.allocPrint(allocator, "-I{s}", .{dir});
             try include_flags.append(flag);
             try args.append(flag);
         }
@@ -796,16 +865,16 @@ fn compileToNative(
     if (cli_options.emit_opt_ir) {
         profiler.begin("emit-opt-ir");
         defer profiler.end();
-        try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
+        try emitInspectionArtifact(io, allocator, zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
     }
     if (cli_options.emit_asm) {
         profiler.begin("emit-asm");
         defer profiler.end();
-        try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
+        try emitInspectionArtifact(io, allocator, zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
     }
 
     profiler.begin("inline-zig");
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, semantic_analyzer.graph, reporter, cache_dir, cli_options.opt.zigFlag(), target, include_dirs, toolchain, profiler);
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, semantic_analyzer.graph, reporter, cache_dir, cli_options.opt.zigFlag(), target, native_cpu_key, include_dirs, toolchain, profiler);
     profiler.end();
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
@@ -824,7 +893,7 @@ fn compileToNative(
         const root_source = try buildRootSource(allocator);
         defer allocator.free(root_source);
 
-        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.zigFlag(), include_dirs);
+        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(native_cpu_key.bytes()), cli_options.opt.zigFlag(), include_dirs);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         profiler.begin("runtime-stage");
@@ -839,22 +908,22 @@ fn compileToNative(
         defer profiler.end();
         const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
         defer allocator.free(staged);
-        var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var args = std.array_list.Managed([]const u8).init(allocator);
         defer args.deinit();
-        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{staged});
-        defer std.heap.page_allocator.free(emit_flag);
+        const emit_flag = try std.fmt.allocPrint(allocator, "-femit-bin={s}", .{staged});
+        defer allocator.free(emit_flag);
         try args.appendSlice(&[_][]const u8{ zig_exe_path, "build-obj", root_path, emit_flag });
         try target.appendTargetArg(&args);
         try target.appendCpuArg(&args);
         try args.append(cli_options.opt.zigFlag());
         try args.append("-lc");
-        var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var include_flags = std.array_list.Managed([]const u8).init(allocator);
         defer {
-            for (include_flags.items) |f| std.heap.page_allocator.free(f);
+            for (include_flags.items) |f| allocator.free(f);
             include_flags.deinit();
         }
         for (include_dirs) |dir| {
-            const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
+            const flag = try std.fmt.allocPrint(allocator, "-I{s}", .{dir});
             try include_flags.append(flag);
             try args.append(flag);
         }
@@ -883,7 +952,7 @@ fn compileToNative(
     {
         profiler.begin("link");
         defer profiler.end();
-        var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var args_ln = std.array_list.Managed([]const u8).init(allocator);
         defer args_ln.deinit();
         try args_ln.append(zig_exe_path);
         try args_ln.append("build-exe");
@@ -892,8 +961,8 @@ fn compileToNative(
         for (inline_zig_wrapper_paths) |p| {
             try args_ln.append(p);
         }
-        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe});
-        defer std.heap.page_allocator.free(emit_flag);
+        const emit_flag = try std.fmt.allocPrint(allocator, "-femit-bin={s}", .{exe});
+        defer allocator.free(emit_flag);
         try args_ln.append(emit_flag);
         try target.appendTargetArg(&args_ln);
         try target.appendCpuArg(&args_ln);
@@ -903,18 +972,18 @@ fn compileToNative(
             try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
         }
 
-        var manifest_link_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        var manifest_link_flags = std.array_list.Managed([]const u8).init(allocator);
         defer {
-            for (manifest_link_flags.items) |f| std.heap.page_allocator.free(f);
+            for (manifest_link_flags.items) |f| allocator.free(f);
             manifest_link_flags.deinit();
         }
         for (lib_dirs) |dir| {
-            const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-L{s}", .{dir});
+            const flag = try std.fmt.allocPrint(allocator, "-L{s}", .{dir});
             try manifest_link_flags.append(flag);
             try args_ln.append(flag);
         }
         for (cli_options.link_libs.items) |lib| {
-            const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-l{s}", .{lib});
+            const flag = try std.fmt.allocPrint(allocator, "-l{s}", .{lib});
             try manifest_link_flags.append(flag);
             try args_ln.append(flag);
         }
@@ -945,8 +1014,8 @@ fn compileToNative(
 
 // Spawn the native binary produced for `doxa run`. `program_args[0]` is the
 // source path; skip it so the process argv[0] is the exe.
-fn runNativeExecutable(io: std.Io, environ_map: *const std.process.Environ.Map, exe_path: []const u8, program_args: []const []const u8) !u8 {
-    var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+fn runNativeExecutable(io: std.Io, allocator: std.mem.Allocator, environ_map: *const std.process.Environ.Map, exe_path: []const u8, program_args: []const []const u8) !u8 {
+    var args = std.array_list.Managed([]const u8).init(allocator);
     defer args.deinit();
     try args.append(exe_path);
     if (program_args.len > 1) try args.appendSlice(program_args[1..]);
@@ -954,10 +1023,10 @@ fn runNativeExecutable(io: std.Io, environ_map: *const std.process.Environ.Map, 
     // Point the compiled program at the real `doxa` executable so the std/build
     // library's `compileArtifact` re-invokes the compiler instead of recursing
     // into the compiled binary itself (`selfExePath` would resolve to it).
-    var env = try environ_map.clone(std.heap.page_allocator);
+    var env = try environ_map.clone(allocator);
     defer env.deinit();
-    if (std.process.executablePathAlloc(io, std.heap.page_allocator)) |compiler_path| {
-        defer std.heap.page_allocator.free(compiler_path);
+    if (std.process.executablePathAlloc(io, allocator)) |compiler_path| {
+        defer allocator.free(compiler_path);
         env.put("DOXA_BIN", compiler_path) catch {};
     } else |_| {}
 
@@ -1003,6 +1072,7 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         .emit_opt_ir = false,
         .emit_asm = false,
         .emit_hir = false,
+        .debug_info = false,
         .lsp_mode = .none,
         .lsp_debug_file = null,
         .lsp_io_trace = false,
@@ -1189,6 +1259,9 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         } else if (stringEquals(arg, "--emit-hir")) {
             options.emit_hir = true;
             continue;
+        } else if (stringEquals(arg, "-g")) {
+            options.debug_info = true;
+            continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
             printUsage();
             std.process.exit(0);
@@ -1345,6 +1418,7 @@ fn printUsage() void {
     std.debug.print("                                    # lexer, parser, semantic, hir, memory\n", .{});
     std.debug.print("  --debug-verbose                   # Enable all debug output\n", .{});
     std.debug.print("  --cache-dir=<dir>                 # Build cache directory (default: .doxa-cache)\n", .{});
+    std.debug.print("  -g                                # Emit debug info for a debugger or sampling profiler\n", .{});
     std.debug.print("\nCompile options:\n", .{});
     std.debug.print("  -o, --output <path>               # Output executable path (required)\n", .{});
     std.debug.print("  --arch=<arch>                     # Target CPU architecture (default: host)\n", .{});
@@ -1448,7 +1522,13 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
 pub fn main(init: std.process.Init) !void {
     platform.enableUtf8Console();
 
-    const gpa = init.gpa;
+    const cli_options = try parseArgs(init.gpa, init);
+    defer cli_options.deinit(init.gpa);
+
+    // `--profile` counts every byte the compiler draws from here on. Without
+    // it no counter exists, so an ordinary compile pays nothing.
+    var counter = CountingAllocator.init(init.gpa);
+    const gpa = if (cli_options.profile) counter.allocator() else init.gpa;
 
     var memoryManager = try MemoryManager.init(gpa);
     defer memoryManager.deinit();
@@ -1459,9 +1539,6 @@ pub fn main(init: std.process.Init) !void {
     var reporter = Reporter.init(init.io, gpa, .{}, &sourceCache);
     defer reporter.deinit();
     reporter.detectAnsi(init.environ_map);
-
-    const cli_options = try parseArgs(gpa, init);
-    defer cli_options.deinit(gpa);
 
     switch (cli_options.lsp_mode) {
         .none => {},
@@ -1477,8 +1554,10 @@ pub fn main(init: std.process.Init) !void {
 
     const script_path = cli_options.script_path orelse unreachable;
 
-    var profiler = Profiler.init(init.io, gpa, cli_options.profile);
+    // The profiler keeps its own tree on the uncounted allocator.
+    var profiler = Profiler.init(init.io, init.gpa, cli_options.profile);
     defer profiler.deinit();
+    if (cli_options.profile) profiler.attachCounter(&counter);
 
     const source = std.Io.Dir.cwd().readFileAlloc(
         init.io,
@@ -1570,6 +1649,7 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         return err;
     };
     defer graph_store.deinit();
+    graph_store.profiler = profiler;
 
     var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     const parsedStatements = parser.execute() catch |err| {
@@ -1662,7 +1742,7 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
 
     if (cli_options.mode == .RUN) {
         profiler.begin("execute");
-        const code = try runNativeExecutable(io, environ_map, exe_path, cli_options.program_args);
+        const code = try runNativeExecutable(io, allocator, environ_map, exe_path, cli_options.program_args);
         profiler.end();
 
         if (cli_options.reporter_options.debug_memory) {

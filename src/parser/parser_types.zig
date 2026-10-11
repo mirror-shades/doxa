@@ -354,6 +354,10 @@ pub const Parser = struct {
         // parse all statements (single pass)
         while (self.peek().type != .EOF) {
             const loop_start_pos = self.current;
+            // Every top-level statement spans its own source, first token
+            // (a `public` or `entry` marker included) to last.
+            const start = self.peek();
+            const count_before = statements.items.len;
 
             var is_public = false;
             var is_entry = false;
@@ -499,6 +503,10 @@ pub const Parser = struct {
                         try statements.append(expr_stmt);
                     }
                 },
+            }
+
+            if (statements.items.len > count_before) {
+                statements.items[statements.items.len - 1].base.span = self.spanFrom(start);
             }
 
             if (self.current == loop_start_pos and self.peek().type != .EOF) {

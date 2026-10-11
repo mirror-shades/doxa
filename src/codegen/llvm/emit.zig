@@ -14,6 +14,7 @@ const rt = @import("../../runtime/doxa_rt.zig");
 const layout_mod = @import("layout.zig");
 const Ranges = @import("ranges.zig").Ranges;
 const function = @import("function.zig");
+pub const debug = @import("debug.zig");
 const consteval = @import("../../analysis/consteval.zig");
 const module_graph = @import("../../module/graph.zig");
 
@@ -47,11 +48,16 @@ pub const Emitter = struct {
     next_global: u32 = 0,
     /// A fault in the HIR the emitter was handed: a compiler bug.
     fault: ?[]const u8 = null,
+    /// Debug metadata, under `-g`.
+    debug: ?debug.Debug = null,
 
     const BoxKey = struct { group: bool, id: u32 };
     const FaultSiteKey = struct { kind: rt.FaultKind, module: ir.ModuleId, line: u32, column: u32 };
 
-    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, overflow: OverflowPolicy) !Emitter {
+    /// `debug_options` asks for debug metadata (`-g`); without it the IR
+    /// carries none.
+    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, overflow: OverflowPolicy, debug_options: ?debug.Options) !Emitter {
+        const entry = module.functions[@intFromEnum(module.init)].span.module;
         return .{
             .alloc = alloc,
             .module = module,
@@ -59,6 +65,7 @@ pub const Emitter = struct {
             .ranges = Ranges.init(alloc, module),
             .overflow = overflow,
             .globals = std.Io.Writer.Allocating.init(alloc),
+            .debug = if (debug_options) |options| try debug.Debug.init(alloc, &module.program, entry, options) else null,
         };
     }
 
@@ -76,6 +83,7 @@ pub const Emitter = struct {
         try w.writeAll(self.globals.written());
         try w.writeAll(byte_pow);
         try w.writeAll("\nattributes #0 = { \"tune-cpu\"=\"generic\" }\n");
+        if (self.debug) |*d| try d.write(w);
     }
 
     pub fn faultf(self: *Emitter, comptime fmt: []const u8, args: anytype) Error {

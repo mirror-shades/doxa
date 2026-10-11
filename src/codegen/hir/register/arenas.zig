@@ -408,14 +408,21 @@ const Edit = struct {
                 if (b == 0) try roles.append(alloc, f.roles[k]);
             }
             var insts: std.ArrayListUnmanaged(ir.Inst) = .empty;
+            // A dropped statement head hands its mark to the next kept
+            // instruction of the same statement, so the statement keeps a
+            // place a debugger stops.
+            var head: ?u32 = null;
             for (block.insts, 0..) |inst, n| {
-                if (self.drop_inst[b][n]) continue;
+                if (self.drop_inst[b][n]) {
+                    if (inst.span.is_stmt) head = inst.span.stmt;
+                    continue;
+                }
                 const op = self.replace[b][n] orelse inst.op;
                 const result: ?ValueId = if (inst.result) |r| try map.value(r) else null;
                 if (result) |r| values.items[@intFromEnum(r)].def = .{ .inst = .{ .block = @enumFromInt(b), .index = @intCast(insts.items.len) } };
-                try insts.append(alloc, .{ .op = try ir.mapOperands(alloc, op, map, Map.value), .result = result, .span = inst.span });
+                try insts.append(alloc, .{ .op = try ir.mapOperands(alloc, op, map, Map.value), .result = result, .span = inheritHead(inst.span, &head) });
             }
-            out.* = .{ .params = params.items, .insts = insts.items, .term = try self.terminator(alloc, f, block.term, map), .term_span = block.term_span };
+            out.* = .{ .params = params.items, .insts = insts.items, .term = try self.terminator(alloc, f, block.term, map), .term_span = inheritHead(block.term_span, &head) };
         }
 
         // A role naming its arena parameter by index follows the renumbering.
@@ -435,7 +442,7 @@ const Edit = struct {
             out.* = slot;
             out.arena = try map.value(slot.arena);
         }
-        return .{ .name = f.name, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots };
+        return .{ .name = f.name, .display_name = f.display_name, .span = f.span, .statements = f.statements, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots };
     }
 
     fn terminator(self: *const Edit, alloc: Alloc, f: *const ir.Function, term: ir.Terminator, map: anytype) Alloc.Error!ir.Terminator {
@@ -466,3 +473,15 @@ const Edit = struct {
         };
     }
 };
+
+/// `span`, marked as its statement's head when the head was dropped just
+/// before it. The mark is spent either way: a statement whose head was the
+/// last of its instructions in the block has no other to take it.
+fn inheritHead(span: ir.SrcSpan, head: *?u32) ir.SrcSpan {
+    var out = span;
+    if (head.*) |stmt| {
+        if (span.stmt == stmt) out.is_stmt = true;
+    }
+    head.* = null;
+    return out;
+}

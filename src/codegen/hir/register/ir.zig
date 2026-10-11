@@ -32,6 +32,9 @@ pub const SrcSpan = struct {
     /// The first instruction of a statement: where a debugger's step stops
     /// and a line counter counts.
     is_stmt: bool = false,
+    /// The statement this belongs to: an index into its function's
+    /// `statements`. Statement 0 is the prologue, at the declaration.
+    stmt: u32 = 0,
 };
 
 pub const ValueId = enum(u32) { _ };
@@ -345,6 +348,13 @@ pub const ParamRole = union(enum) {
 
 pub const Function = struct {
     name: []const u8,
+    /// The name as the program spells it (`f`, `Point.norm`), for debug info.
+    display_name: []const u8,
+    /// Where the function is declared.
+    span: SrcSpan,
+    /// Each statement's own start, by `SrcSpan.stmt`: where a debugger stops
+    /// when it steps onto the statement.
+    statements: []const SrcSpan,
     /// The entry block's parameters are the function's; `roles[i]` says what
     /// parameter `i` is.
     roles: []const ParamRole,

@@ -61,6 +61,13 @@ const FunctionEmitter = struct {
     span: ir.SrcSpan = undefined,
     /// Each slot's alloca, made zeroed at the top of the entry block.
     slot_storage: []const []const u8 = &.{},
+    /// Under `-g`: the function's subprogram, the statement whose key
+    /// instruction is still to be written, and each location made so far.
+    scope: ?u32 = null,
+    head: ?u32 = null,
+    locations: std.AutoHashMapUnmanaged(Location, u32) = .empty,
+
+    const Location = struct { line: u32, column: u32, key_stmt: ?u32 };
 
     const Incoming = struct { label: []const u8, args: []const ValueId };
 
@@ -77,6 +84,7 @@ const FunctionEmitter = struct {
             try self.entry.writer.print("  store {s} zeroinitializer, ptr {s}\n", .{ layout.doxaType(slot.ty), s.* });
         }
         self.slot_storage = storage;
+        if (self.e.debug) |*d| self.scope = try d.subprogram(f, self.e.module.program.function_names[@intFromEnum(self.id)]);
         // Constants are operands, not instructions.
         for (f.blocks) |block| {
             for (block.insts) |inst| {
@@ -94,10 +102,10 @@ const FunctionEmitter = struct {
             self.label = try std.fmt.allocPrint(self.e.alloc, "b{d}", .{b});
             self.w = &self.bodies[b].writer;
             for (block.insts) |*inst| {
-                self.span = inst.span;
+                self.setSpan(inst.span);
                 try self.instruction(inst);
             }
-            self.span = block.term_span;
+            self.setSpan(block.term_span);
             try self.terminator(&block.term);
             self.exit_labels[b] = self.label;
         }
@@ -108,7 +116,9 @@ const FunctionEmitter = struct {
             if (i != 0) try out.writeAll(", ");
             try out.print("{s} {s}", .{ layout.llvmType(f.typeOf(p)), self.names[@intFromEnum(p)] });
         }
-        try out.writeAll(") #0 {\n");
+        try out.writeAll(") #0");
+        if (self.scope) |scope| try out.print(" !dbg !{d}", .{scope});
+        try out.writeAll(" {\n");
         for (f.blocks, 0..) |block, b| {
             try out.print("b{d}:\n", .{b});
             // The entry block's parameters are the function's, not phis.
@@ -151,20 +161,43 @@ const FunctionEmitter = struct {
         return std.fmt.allocPrint(self.e.alloc, "%t{d}", .{self.next_temp});
     }
 
+    /// Lower what follows at `span`. A statement's head makes the next
+    /// instruction written its key instruction.
+    fn setSpan(self: *FunctionEmitter, span: ir.SrcSpan) void {
+        self.span = span;
+        if (span.is_stmt) self.head = span.stmt;
+    }
+
+    /// End an instruction's line, with its location under `-g`.
+    fn eol(self: *FunctionEmitter) Error!void {
+        const scope = self.scope orelse return self.w.writeAll("\n");
+        var key: Location = .{ .line = self.span.line, .column = self.span.column, .key_stmt = null };
+        if (self.head == self.span.stmt) {
+            key.key_stmt = self.span.stmt;
+            self.head = null;
+        }
+        const entry = try self.locations.getOrPut(self.e.alloc, key);
+        if (!entry.found_existing) entry.value_ptr.* = try self.e.debug.?.location(scope, self.f, self.span, key.key_stmt != null);
+        try self.w.print(", !dbg !{d}\n", .{entry.value_ptr.*});
+    }
+
     fn line(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error!void {
-        try self.w.print("  " ++ fmt ++ "\n", args);
+        try self.w.print("  " ++ fmt, args);
+        try self.eol();
     }
 
     /// Define the result of `inst` as `rhs`.
     fn def(self: *FunctionEmitter, inst: *const ir.Inst, comptime fmt: []const u8, args: anytype) Error!void {
         try self.w.print("  {s} = ", .{self.name(inst.result.?)});
-        try self.w.print(fmt ++ "\n", args);
+        try self.w.print(fmt, args);
+        try self.eol();
     }
 
     /// A fresh temporary defined as `rhs`.
     fn tmp(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error![]const u8 {
         const t = try self.temp();
-        try self.w.print("  {s} = " ++ fmt ++ "\n", .{t} ++ args);
+        try self.w.print("  {s} = " ++ fmt, .{t} ++ args);
+        try self.eol();
         return t;
     }
 
@@ -199,7 +232,8 @@ const FunctionEmitter = struct {
     fn stringCall(self: *FunctionEmitter, func: []const u8, comptime args_fmt: []const u8, args: anytype) Error![]const u8 {
         const slots = try self.stringSlots();
         try self.w.print("  call void @{s}(" ++ args_fmt, .{func} ++ args);
-        try self.w.print("{s}ptr {s}, ptr {s})\n", .{ if (args_fmt.len == 0) "" else ", ", slots.ptr, slots.len });
+        try self.w.print("{s}ptr {s}, ptr {s})", .{ if (args_fmt.len == 0) "" else ", ", slots.ptr, slots.len });
+        try self.eol();
         return self.loadString(slots.ptr, slots.len);
     }
 
@@ -1544,7 +1578,8 @@ const FunctionEmitter = struct {
                 const ty = layout.doxaType(self.doxaOf(s.operand));
                 try self.w.print("  switch {s} {s}, label %{s} [", .{ ty, self.name(s.operand), try self.edge(s.default) });
                 for (s.cases) |case| try self.w.print(" {s} {d}, label %{s}", .{ ty, case.value, try self.edge(case.target) });
-                try self.w.writeAll(" ]\n");
+                try self.w.writeAll(" ]");
+                try self.eol();
             },
             .@"return" => |v| if (v) |value| {
                 try self.line("ret {s} {s}", .{ layout.doxaType(self.f.ret), self.name(value) });

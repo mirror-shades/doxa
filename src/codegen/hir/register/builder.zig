@@ -85,6 +85,8 @@ pub const FunctionBuilder = struct {
     /// Owns everything the builder makes, and the finished function.
     alloc: std.mem.Allocator,
     name: []const u8,
+    /// The name as the program spells it; `name` unless set.
+    display_name: []const u8,
     return_type: ir.HIRType,
     roles: std.ArrayListUnmanaged(ir.ParamRole) = .empty,
     values: std.ArrayListUnmanaged(ir.ValueInfo) = .empty,
@@ -94,8 +96,13 @@ pub const FunctionBuilder = struct {
     var_types: std.ArrayListUnmanaged(Type) = .empty,
     defs: std.AutoHashMapUnmanaged(VarBlock, ValueId) = .empty,
     current: BlockId = .entry,
+    /// The function's own span.
+    decl_span: ir.SrcSpan,
     /// The span every instruction emitted now takes.
     span: ir.SrcSpan,
+    /// Each statement's start, by `SrcSpan.stmt`; statement 0 is the
+    /// prologue, at the declaration.
+    statements: std.ArrayListUnmanaged(ir.SrcSpan) = .empty,
     /// Whether the next instruction or terminator begins a statement.
     stmt_pending: bool = false,
 
@@ -104,7 +111,9 @@ pub const FunctionBuilder = struct {
     /// prologue takes.
     pub fn init(alloc: std.mem.Allocator, name: []const u8, return_type: ir.HIRType, span: ir.SrcSpan) Error!FunctionBuilder {
         std.debug.assert(span.line != 0 and span.column != 0);
-        var self = FunctionBuilder{ .alloc = alloc, .name = name, .return_type = return_type, .span = span };
+        var self = FunctionBuilder{ .alloc = alloc, .name = name, .display_name = name, .return_type = return_type, .decl_span = span, .span = span };
+        self.span.stmt = 0;
+        try self.statements.append(alloc, self.span);
         try self.blocks.append(alloc, .{ .sealed = true });
         return self;
     }
@@ -247,16 +256,29 @@ pub const FunctionBuilder = struct {
 
     // ── Spans ──
 
-    /// Emit what follows at `span`; returns the span to restore.
+    /// Emit what follows at `span`, within the current statement; returns
+    /// the span `restore` takes back.
     pub fn at(self: *FunctionBuilder, span: ir.SrcSpan) ir.SrcSpan {
         std.debug.assert(span.line != 0 and span.column != 0);
         const saved = self.span;
         self.span = span;
+        self.span.stmt = saved.stmt;
         return saved;
     }
 
-    /// The next instruction or terminator emitted begins a statement.
-    pub fn beginStatement(self: *FunctionBuilder) void {
+    /// Return to a span `at` saved, and the statement it was in.
+    pub fn restore(self: *FunctionBuilder, saved: ir.SrcSpan) void {
+        self.span = saved;
+    }
+
+    /// A statement begins at the current span: the next instruction or
+    /// terminator emitted is its head, and what follows belongs to it.
+    pub fn beginStatement(self: *FunctionBuilder) Error!void {
+        var start = self.span;
+        start.is_stmt = false;
+        start.stmt = 0;
+        self.span.stmt = @intCast(self.statements.items.len);
+        try self.statements.append(self.alloc, start);
         self.stmt_pending = true;
     }
 
@@ -498,6 +520,9 @@ pub const FunctionBuilder = struct {
 
         return .{
             .name = self.name,
+            .display_name = self.display_name,
+            .span = self.decl_span,
+            .statements = self.statements.items,
             .roles = self.roles.items,
             .ret = self.return_type,
             .values = values.items,

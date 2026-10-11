@@ -22,6 +22,7 @@
 //! the layers that own each stage (`loader.zig`, semantic analysis).
 
 const std = @import("std");
+const Profiler = @import("../utils/profiler.zig").Profiler;
 const ast = @import("../ast/ast.zig");
 const hashing = @import("../utils/hashing.zig");
 const ids = @import("ids.zig");
@@ -450,6 +451,10 @@ pub const ModuleGraph = struct {
     import_stack: std.ArrayListUnmanaged(ModuleId) = .empty,
     /// Set by `finalizeMangling`; no record may join the graph afterwards.
     mangling_final: bool = false,
+    /// Under `--profile`, each stage run opens a `<Stage>` span with a child
+    /// named by the record's `stable_module_key`, so the report says which
+    /// file cost what.
+    profiler: ?*Profiler = null,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator, roots: []const Root) RootRegistryError!ModuleGraph {
         return .{
@@ -641,13 +646,20 @@ pub const ModuleGraph = struct {
     /// without reporting one is a compiler bug, surfaced as one internal
     /// diagnostic rather than a silent failure.
     pub fn runStage(self: *ModuleGraph, target: *ModuleRecord, stage: ModuleStage, reporter: *Reporter, ctx: *anyopaque, run: StageRunner) EnsureResult {
-        _ = self;
         if (target.status == .Failed) return .{ .failed = target };
         if (target.status == activeStatus(stage)) return .{ .in_progress = .{ .record = target, .stage = stage } };
         if (target.status.atLeast(doneStatus(stage))) return .{ .ready = target };
         std.debug.assert(target.status == requiredStatus(stage));
 
         target.status = activeStatus(stage);
+        if (self.profiler) |profiler| {
+            profiler.begin(@tagName(stage));
+            profiler.begin(target.stable_module_key);
+        }
+        defer if (self.profiler) |profiler| {
+            profiler.end();
+            profiler.end();
+        };
         const start = reporter.diagnostics.items.len;
         var errored = false;
         run(ctx, target) catch |err| {

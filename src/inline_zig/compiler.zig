@@ -559,6 +559,43 @@ fn generateWrapperZigFile(
 /// Compile every inline-Zig unit of the program to an object. `cache_dir` and
 /// `include_dirs` are absolute: each `zig build-obj` runs inside the cache
 /// directory, as every toolchain step does (`compileToNative`).
+pub const ShimKeyInputs = struct {
+    toolchain: []const u8,
+    zig_path: []const u8,
+    target_triple: []const u8,
+    /// Identity of the CPU the shim is compiled for — never the constant
+    /// `-mcpu=native` arg.
+    cpu_key: []const u8,
+    zig_opt_flag: []const u8,
+    include_dirs: []const []const u8,
+};
+
+/// Content-addressed cache key for a shim object.
+///
+/// The CPU contributes as `cpu_key`, the *resolved* host identity, never the
+/// `cpu_arg` the process is spawned with. Those differ for a native build:
+/// `cpu_arg` is the literal `-mcpu=native` on every host, so keying on it
+/// would let a shim built on one machine be linked on another that lacks the
+/// instructions it contains — an illegal-instruction trap surfacing as a
+/// crash in unrelated code, with nothing in the cache to explain it. A cross
+/// build contributes `""`, because its target's baseline CPU is already fixed
+/// by the triple and the toolchain.
+///
+/// Every field is a build input, so any of them changing produces a distinct
+/// object; all of them holding means the `build-obj` spawn is skipped.
+pub fn shimObjectKey(inputs: ShimKeyInputs) hashing.ShortHex {
+    var kb = hashing.KeyBuilder.init(cacheSeed());
+    kb.addBytes(inputs.toolchain);
+    kb.addBytes(inputs.zig_path);
+    kb.addBytes(inputs.target_triple);
+    kb.addBytes(inputs.cpu_key);
+    kb.addBytes(inputs.zig_opt_flag);
+    for (inputs.include_dirs) |dir| {
+        kb.addBytes(dir);
+    }
+    return hashing.shortHexOf(kb.finish());
+}
+
 pub fn compileInlineZigObjects(
     io: std.Io,
     memoryManager: *MemoryManager,
@@ -570,6 +607,7 @@ pub fn compileInlineZigObjects(
     target_triple: []const u8,
     target_os: []const u8,
     cpu_arg: []const u8,
+    cpu_key: []const u8,
     include_dirs: []const []const u8,
     toolchain: []const u8,
     profiler: *Profiler,
@@ -598,20 +636,14 @@ pub fn compileInlineZigObjects(
         const zig_dir = std.fs.path.dirname(gen.zig_path) orelse ".";
         const zig_stem = std.fs.path.stem(gen.zig_path);
 
-        // Content-addressed cache key: wrapper source (already hashed into the
-        // wrapper path) + toolchain + target triple + cpu + opt mode. Distinct
-        // targets, cpus, opt modes, or compilers therefore produce distinct
-        // objects, and unchanged source+target skips the `build-obj` spawn.
-        var kb = hashing.KeyBuilder.init(cacheSeed());
-        kb.addBytes(toolchain);
-        kb.addBytes(gen.zig_path);
-        kb.addBytes(target_triple);
-        kb.addBytes(cpu_arg);
-        kb.addBytes(zig_opt_flag);
-        for (include_dirs) |dir| {
-            kb.addBytes(dir);
-        }
-        const key_hex = hashing.shortHexOf(kb.finish());
+        const key_hex = shimObjectKey(.{
+            .toolchain = toolchain,
+            .zig_path = gen.zig_path,
+            .target_triple = target_triple,
+            .cpu_key = cpu_key,
+            .zig_opt_flag = zig_opt_flag,
+            .include_dirs = include_dirs,
+        });
 
         try out_paths.ensureUnusedCapacity(1);
         const obj_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/{s}.{s}.{s}", .{ zig_dir, zig_stem, key_hex[0..], obj_ext });
@@ -627,9 +659,15 @@ pub fn compileInlineZigObjects(
         if (!obj_already_compiled) {
             profiler.begin("build-obj");
             defer profiler.end();
-            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
-            defer std.heap.page_allocator.free(emit_flag);
-            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            // Only the final rename may write the published name: the object is built at
+            // `obj_path.tmp` and moved into place once it is complete. A shim
+            // truncated by an interrupted `build-obj` would otherwise be
+            // trusted by the `size > 0` check above on every later run.
+            const staging_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.tmp", .{obj_path});
+            defer memoryManager.getAllocator().free(staging_path);
+            const emit_flag = try std.fmt.allocPrint(memoryManager.getAllocator(), "-femit-bin={s}", .{staging_path});
+            defer memoryManager.getAllocator().free(emit_flag);
+            var args_list = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
             defer args_list.deinit();
             try args_list.appendSlice(&[_][]const u8{
                 zig_exe_path,
@@ -646,7 +684,7 @@ pub fn compileInlineZigObjects(
                 try args_list.append(cpu_arg);
             }
 
-            var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            var dir_arena = std.heap.ArenaAllocator.init(memoryManager.getAllocator());
             defer dir_arena.deinit();
             // The build module's `--include` dirs apply to every module's
             // @cImport, matching how the artifact's `zig cc` step consumes them.
@@ -674,6 +712,7 @@ pub fn compileInlineZigObjects(
                 .exited => |code| if (code != 0) return error.Unexpected,
                 else => return error.Unexpected,
             }
+            try std.Io.Dir.cwd().rename(staging_path, std.Io.Dir.cwd(), obj_path, io);
         }
     }
 

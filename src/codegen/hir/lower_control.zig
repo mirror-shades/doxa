@@ -55,7 +55,7 @@ fn fallOffValue(l: *Lowering) Error!?ValueId {
 pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
     const saved = try l.enter(stmt.base.location());
     defer l.leave(saved);
-    l.b.beginStatement();
+    try l.b.beginStatement();
 
     switch (stmt.data) {
         .Expression => |maybe| if (maybe) |e| return try effect(l, e) != null,
