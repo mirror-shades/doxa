@@ -42,11 +42,14 @@ pub const Emitter = struct {
     /// order they were first boxed (`DoxaBoxMeta`).
     box_ids: std.AutoHashMapUnmanaged(BoxKey, u32) = .empty,
     boxed: std.ArrayListUnmanaged(HIRType) = .empty,
+    /// One `%DoxaFaultSite` constant per kind of fault at each place.
+    fault_sites: std.AutoHashMapUnmanaged(FaultSiteKey, []const u8) = .empty,
     next_global: u32 = 0,
     /// A fault in the HIR the emitter was handed: a compiler bug.
     fault: ?[]const u8 = null,
 
     const BoxKey = struct { group: bool, id: u32 };
+    const FaultSiteKey = struct { kind: rt.FaultKind, module: ir.ModuleId, line: u32, column: u32 };
 
     pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, overflow: OverflowPolicy) !Emitter {
         return .{
@@ -160,6 +163,21 @@ pub const Emitter = struct {
     fn nextGlobal(self: *Emitter, comptime prefix: []const u8) Error![]const u8 {
         defer self.next_global += 1;
         return std.fmt.allocPrint(self.alloc, "@.doxa." ++ prefix ++ ".{d}", .{self.next_global});
+    }
+
+    // ── Faults ──
+
+    /// The `%DoxaFaultSite` constant for a `kind` fault at `span`, which
+    /// `doxa_fault` reports; a program's sites are its own data, so the runtime
+    /// stays program-independent.
+    pub fn faultSite(self: *Emitter, kind: rt.FaultKind, span: ir.SrcSpan) Error![]const u8 {
+        const key = FaultSiteKey{ .kind = kind, .module = span.module, .line = span.line, .column = span.column };
+        if (self.fault_sites.get(key)) |name| return name;
+        const file = try self.string(self.module.program.files[span.module]);
+        const name = try self.nextGlobal("fault");
+        try self.globals.writer.print("{s} = private unnamed_addr constant %DoxaFaultSite {{ i32 {d}, i32 {d}, i32 {d}, ptr {s} }}\n", .{ name, @intFromEnum(kind), span.line, span.column, file });
+        try self.fault_sites.put(self.alloc, key, name);
+        return name;
     }
 
     // ── Descriptors ──
@@ -364,6 +382,7 @@ const prelude =
     \\%DoxaValue = type { i32, i32, i64, i64 }
     \\%ArrayHeader = type { ptr, i64, i64, i64, i64, ptr, i64 }
     \\%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }
+    \\%DoxaFaultSite = type { i32, i32, i32, ptr }
     \\
     \\declare ptr @doxa_scope_root()
     \\declare ptr @doxa_scope_enter(ptr)
@@ -371,11 +390,8 @@ const prelude =
     \\declare void @doxa_scope_reset(ptr)
     \\declare ptr @doxa_scope_alloc(ptr, i64, i64)
     \\declare void @doxa_write_cstr(ptr, i64)
-    \\declare void @doxa_write_stderr(ptr, i64)
     \\declare void @doxa_exit(i64) noreturn
-    \\declare void @doxa_panic(ptr, i64) noreturn
-    \\declare void @doxa_trap_div_by_zero() noreturn
-    \\declare void @doxa_trap_unreachable() noreturn
+    \\declare void @doxa_fault(ptr, ptr, i64, i64, i64) noreturn
     \\declare void @doxa_print_i64(i64)
     \\declare void @doxa_print_f64(double)
     \\declare void @doxa_print_byte(i64)
@@ -398,9 +414,9 @@ const prelude =
     \\declare i8 @doxa_str_pop(ptr, ptr, i64, ptr, ptr)
     \\declare void @doxa_char_to_string(ptr, i8, ptr, ptr)
     \\declare i64 @doxa_find_str(ptr, i64, ptr, i64)
-    \\declare i64 @doxa_int_from_string(ptr, i64)
-    \\declare double @doxa_float_from_string(ptr, i64)
-    \\declare i64 @doxa_byte_from_string(ptr, i64)
+    \\declare i64 @doxa_int_from_string(ptr, i64, ptr)
+    \\declare double @doxa_float_from_string(ptr, i64, ptr)
+    \\declare i64 @doxa_byte_from_string(ptr, i64, ptr)
     \\declare i64 @doxa_byte_from_f64(double)
     \\declare void @doxa_int_to_string(ptr, i64, ptr, ptr)
     \\declare void @doxa_float_to_string(ptr, double, ptr, ptr)
@@ -477,7 +493,6 @@ fn tetraTables() []const u8 {
 }
 
 const overflow_prelude =
-    \\declare void @llvm.trap() noreturn
     \\declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
     \\declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
     \\declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)

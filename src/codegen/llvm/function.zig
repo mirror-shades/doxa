@@ -56,6 +56,9 @@ const FunctionEmitter = struct {
     /// The current block's writer.
     w: *Writer = undefined,
     str_slots: ?struct { ptr: []const u8, len: []const u8 } = null,
+    /// The span of the instruction or terminator being lowered: where a
+    /// fault it raises happened.
+    span: ir.SrcSpan = undefined,
     /// Each slot's alloca, made zeroed at the top of the entry block.
     slot_storage: []const []const u8 = &.{},
 
@@ -90,7 +93,11 @@ const FunctionEmitter = struct {
             self.block = block_id;
             self.label = try std.fmt.allocPrint(self.e.alloc, "b{d}", .{b});
             self.w = &self.bodies[b].writer;
-            for (block.insts) |*inst| try self.instruction(inst);
+            for (block.insts) |*inst| {
+                self.span = inst.span;
+                try self.instruction(inst);
+            }
+            self.span = block.term_span;
             try self.terminator(&block.term);
             self.exit_labels[b] = self.label;
         }
@@ -208,6 +215,16 @@ const FunctionEmitter = struct {
     }
 
     const Parts = struct { ptr: []const u8, len: []const u8 };
+
+    /// End the current block in a `kind` fault at the current span, with the
+    /// site's text (a message, or text that failed to parse) and the two
+    /// numbers an out-of-bounds fault reports.
+    fn fault(self: *FunctionEmitter, kind: rt.FaultKind, text: ?Parts, aux0: []const u8, aux1: []const u8) Error!void {
+        const site = try self.e.faultSite(kind, self.span);
+        const t = text orelse Parts{ .ptr = "null", .len = "0" };
+        try self.line("call void @doxa_fault(ptr {s}, ptr {s}, i64 {s}, i64 {s}, i64 {s})", .{ site, t.ptr, t.len, aux0, aux1 });
+        try self.line("unreachable", .{});
+    }
 
     fn stringParts(self: *FunctionEmitter, s: []const u8) Error!Parts {
         return .{
@@ -335,17 +352,24 @@ const FunctionEmitter = struct {
             },
             .str_char => |s| {
                 const a = try self.stringParts(self.name(s.string));
+                try self.boundsCheck(s.index, a.len, null, .element);
                 const at = try self.tmp("getelementptr inbounds i8, ptr {s}, i64 {s}", .{ a.ptr, self.name(s.index) });
                 const byte = try self.tmp("load i8, ptr {s}", .{at});
                 try self.defString(inst, try self.stringCall("doxa_char_to_string", "ptr {s}, i8 {s}", .{ self.name(s.arena), byte }));
             },
             .str_to_int, .str_to_float, .str_to_byte => |u| {
                 const a = try self.stringParts(self.name(u.operand));
+                const kind: rt.FaultKind = switch (inst.op) {
+                    .str_to_int => .parse_int,
+                    .str_to_float => .parse_float,
+                    else => .parse_byte,
+                };
+                const site = try self.e.faultSite(kind, self.span);
                 switch (inst.op) {
-                    .str_to_int => try self.def(inst, "call i64 @doxa_int_from_string(ptr {s}, i64 {s})", .{ a.ptr, a.len }),
-                    .str_to_float => try self.def(inst, "call double @doxa_float_from_string(ptr {s}, i64 {s})", .{ a.ptr, a.len }),
+                    .str_to_int => try self.def(inst, "call i64 @doxa_int_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site }),
+                    .str_to_float => try self.def(inst, "call double @doxa_float_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site }),
                     else => {
-                        const wide = try self.tmp("call i64 @doxa_byte_from_string(ptr {s}, i64 {s})", .{ a.ptr, a.len });
+                        const wide = try self.tmp("call i64 @doxa_byte_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site });
                         try self.def(inst, "trunc i64 {s} to i8", .{wide});
                     },
                 }
@@ -502,8 +526,7 @@ const FunctionEmitter = struct {
         const cont = try self.split("ovf.cont");
         try self.line("br i1 {s}, label %{s}, label %{s}", .{ overflowed, trap, cont });
         try self.enter(trap);
-        try self.line("call void @llvm.trap()", .{});
-        try self.line("unreachable", .{});
+        try self.fault(.overflow, null, "0", "0");
         try self.enter(cont);
         return result;
     }
@@ -517,8 +540,7 @@ const FunctionEmitter = struct {
         const cont = try self.split("div0.cont");
         try self.line("br i1 {s}, label %{s}, label %{s}", .{ zero, trap, cont });
         try self.enter(trap);
-        try self.line("call void @doxa_trap_div_by_zero()", .{});
-        try self.line("unreachable", .{});
+        try self.fault(.div_by_zero, null, "0", "0");
         try self.enter(cont);
     }
 
@@ -901,6 +923,40 @@ const FunctionEmitter = struct {
     }
 
     /// The address of element `index` of `array`.
+    /// Which indexes a bounds check admits: an element's, `0 <= i < length`,
+    /// or an insertion point's, `0 <= i <= length`.
+    const Bound = enum { element, insertion };
+
+    /// Fault unless `index` is in bounds for `length` (`fixed`, when the
+    /// length is a constant). One unsigned compare also rejects a negative
+    /// index. Out-of-bounds access is defined in every mode
+    /// (`docs/performance.md`); the check is dropped only where the ranges
+    /// prove the index in bounds.
+    fn boundsCheck(self: *FunctionEmitter, index: ValueId, length: []const u8, fixed: ?u64, bound: Bound) Error!void {
+        const r = self.ranges[@intFromEnum(index)];
+        if (fixed) |n| {
+            const limit: i64 = @intCast(if (bound == .element) n else n + 1);
+            if (r.lo >= 0 and r.hi < limit) return;
+        }
+        const i = self.name(index);
+        const out = try self.tmp("icmp {s} i64 {s}, {s}", .{ if (bound == .element) "uge" else "ugt", i, length });
+        const fault_label = try self.split("oob.fault");
+        const cont = try self.split("oob.cont");
+        try self.line("br i1 {s}, label %{s}, label %{s}", .{ out, fault_label, cont });
+        try self.enter(fault_label);
+        try self.fault(.index_out_of_bounds, null, i, length);
+        try self.enter(cont);
+    }
+
+    /// The bounds check of an element access to `array` at `index`.
+    fn elementCheck(self: *FunctionEmitter, array: ValueId, index: ValueId) Error!void {
+        const t = self.doxaOf(array);
+        if (t.Array.size) |n| {
+            return self.boundsCheck(index, try std.fmt.allocPrint(self.e.alloc, "{d}", .{n}), n, .element);
+        }
+        return self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .element);
+    }
+
     fn elementPtr(self: *FunctionEmitter, array: ValueId, index: []const u8) Error![]const u8 {
         const t = self.doxaOf(array);
         if (t.Array.size != null) {
@@ -911,9 +967,10 @@ const FunctionEmitter = struct {
         return self.tmp("getelementptr inbounds {s}, ptr {s}, i64 {s}", .{ layout.elementStorageType(t.Array.element.*), data, index });
     }
 
-    /// Element reads are unchecked (`docs/methods.md`): the address is
-    /// computed in the IR, so LLVM can hoist, unroll and vectorize the loop.
+    /// The address is computed in the IR, behind an in-IR bounds check, so
+    /// LLVM can hoist, unroll and vectorize the loop.
     fn arrayGet(self: *FunctionEmitter, inst: *const ir.Inst, array: ValueId, index: ValueId) Error!void {
+        try self.elementCheck(array, index);
         const t = self.doxaOf(array);
         const element = t.Array.element.*;
         const at = try self.elementPtr(array, self.name(index));
@@ -935,6 +992,7 @@ const FunctionEmitter = struct {
     }
 
     fn arraySet(self: *FunctionEmitter, array: ValueId, index: ValueId, value: ValueId) Error!void {
+        try self.elementCheck(array, index);
         const t = self.doxaOf(array);
         if (t.Array.size == null) return self.arraySetDynamic(self.name(array), self.name(index), value);
         const element = t.Array.element.*;
@@ -969,11 +1027,19 @@ const FunctionEmitter = struct {
     fn arrayPop(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
         const array = self.name(operand);
         const len = try self.arrayLen(array);
+        const empty = try self.tmp("icmp eq i64 {s}, 0", .{len});
+        const fault_label = try self.split("pop.fault");
+        const cont = try self.split("pop.cont");
+        try self.line("br i1 {s}, label %{s}, label %{s}", .{ empty, fault_label, cont });
+        try self.enter(fault_label);
+        try self.fault(.pop_empty, null, "0", "0");
+        try self.enter(cont);
         const last = try self.tmp("sub i64 {s}, 1", .{len});
         try self.arrayRemoveAt(inst, operand, last);
     }
 
     fn arrayRemove(self: *FunctionEmitter, inst: *const ir.Inst, array: ValueId, index: ValueId) Error!void {
+        try self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .element);
         try self.arrayRemoveAt(inst, array, self.name(index));
     }
 
@@ -999,6 +1065,7 @@ const FunctionEmitter = struct {
     }
 
     fn arrayInsert(self: *FunctionEmitter, array: ValueId, index: ValueId, value: ValueId) Error!void {
+        try self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .insertion);
         const element = self.doxaOf(value);
         const a = self.name(array);
         const i = self.name(index);
@@ -1484,31 +1551,13 @@ const FunctionEmitter = struct {
             } else {
                 try self.line("ret void", .{});
             },
-            .@"unreachable" => {
-                try self.line("call void @doxa_trap_unreachable()", .{});
-                try self.line("unreachable", .{});
-            },
-            .panic => |m| {
-                const s = try self.stringParts(self.name(m));
-                try self.line("call void @doxa_panic(ptr {s}, i64 {s})", .{ s.ptr, s.len });
-                try self.line("unreachable", .{});
-            },
+            .@"unreachable" => try self.fault(.unreachable_code, null, "0", "0"),
+            .panic => |m| try self.fault(.panic, try self.stringParts(self.name(m)), "0", "0"),
             .exit => |code| {
                 try self.line("call void @doxa_exit(i64 {s})", .{self.name(code)});
                 try self.line("unreachable", .{});
             },
-            .assert_fail => |a| {
-                const newline = try self.e.string("\n");
-                if (a.message) |m| {
-                    const s = try self.stringParts(self.name(m));
-                    try self.line("call void @doxa_write_stderr(ptr {s}, i64 {s})", .{ s.ptr, s.len });
-                    try self.line("call void @doxa_write_stderr(ptr {s}, i64 1)", .{newline});
-                }
-                try self.line("call void @doxa_write_stderr(ptr {s}, i64 16)", .{try self.e.string("Assertion failed")});
-                try self.line("call void @doxa_write_stderr(ptr {s}, i64 1)", .{newline});
-                try self.line("call void @doxa_exit(i64 1)", .{});
-                try self.line("unreachable", .{});
-            },
+            .assert_fail => |a| try self.fault(.assert_fail, if (a.message) |m| try self.stringParts(self.name(m)) else null, "0", "0"),
         }
     }
 

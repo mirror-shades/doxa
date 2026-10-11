@@ -103,43 +103,84 @@ fn writeStderr(slice: []const u8) void {
     _ = stderr.flush() catch return;
 }
 
-pub export fn doxa_trap_unreachable() callconv(.c) void {
-    writeStderr("Reached unreachable code\n");
-    std.process.exit(2);
-}
-
-/// Write a byte slice to stderr. Used by assertion failures and other
-/// diagnostics that must not pollute stdout.
-pub export fn doxa_write_stderr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
-    if (ptr) |p| {
-        writeStderr(p[0..@intCast(len)]);
-    }
-}
-
 /// Terminate the process with the given status code. Declared `noreturn` so the
 /// optimizer treats every `@exit` site as a genuine control-flow end.
-pub export fn doxa_exit(code: i64) callconv(.c) void {
+pub export fn doxa_exit(code: i64) callconv(.c) noreturn {
     std.process.exit(@intCast(code));
 }
 
-/// Integer division or modulo by zero. LLVM's `sdiv`/`srem`/`udiv`/`urem` are
-/// undefined behaviour on a zero divisor and the optimizer duly folds them to
-/// junk, so the lowering guards every runtime divisor and lands here. Declared
-/// `noreturn` so the optimizer treats the guard's taken arm as a genuine
-/// control-flow end rather than continuing into the division.
-pub export fn doxa_trap_div_by_zero() callconv(.c) void {
-    writeStderr("Division by zero\n");
-    std.process.exit(1);
-}
+// ── Faults ──
+//
+// Every way a program fails at run time ends in `doxa_fault`, one line on
+// stderr: what happened, where, then its details —
+// `Index out of bounds at main.doxa:4:12: index 7, length 3`.
 
-/// User-facing panic: write the message to stderr and terminate with code 1.
-/// Code 2 is reserved for compiler-internal traps (`doxa_trap_unreachable`).
-pub export fn doxa_panic(ptr: ?[*]const u8, len: u64) callconv(.c) void {
-    if (ptr) |p| {
-        writeStderr(p[0..@intCast(len)]);
+pub const FaultKind = enum(u32) {
+    panic,
+    assert_fail,
+    unreachable_code,
+    div_by_zero,
+    overflow,
+    index_out_of_bounds,
+    pop_empty,
+    parse_int,
+    parse_float,
+    parse_byte,
+
+    fn headline(self: FaultKind) []const u8 {
+        return switch (self) {
+            .panic => "Panic",
+            .assert_fail => "Assertion failed",
+            .unreachable_code => "Reached unreachable code",
+            .div_by_zero => "Division by zero",
+            .overflow => "Integer overflow",
+            .index_out_of_bounds => "Index out of bounds",
+            .pop_empty => "Pop from an empty array",
+            .parse_int => "Not a valid int",
+            .parse_float => "Not a valid float",
+            .parse_byte => "Not a valid byte",
+        };
+    }
+
+    /// 2 is reserved for a compiler-internal trap; every program fault is 1.
+    fn exitCode(self: FaultKind) u8 {
+        return if (self == .unreachable_code) 2 else 1;
+    }
+};
+
+/// Where a fault can happen: one constant per site in the program's IR, so
+/// the runtime stays program-independent. `file` is the record's display path.
+pub const DoxaFaultSite = extern struct {
+    kind: u32,
+    line: u32,
+    column: u32,
+    file: [*:0]const u8,
+};
+
+/// Report the fault at `site` and terminate. `text` is the site's message
+/// (a panic's or an assertion's) or the text that failed to parse; `aux0` and
+/// `aux1` are an out-of-bounds index and length.
+pub export fn doxa_fault(site: *const DoxaFaultSite, text_ptr: ?[*]const u8, text_len: u64, aux0: i64, aux1: i64) callconv(.c) noreturn {
+    const kind: FaultKind = @enumFromInt(site.kind);
+    const text: []const u8 = if (text_ptr) |p| p[0..@intCast(text_len)] else "";
+    var buffer: [128]u8 = undefined;
+    writeStderr(kind.headline());
+    writeStderr(std.fmt.bufPrint(&buffer, " at {s}:{d}:{d}", .{ std.mem.span(site.file), site.line, site.column }) catch unreachable);
+    switch (kind) {
+        .panic, .assert_fail => if (text.len != 0) {
+            writeStderr(": ");
+            writeStderr(text);
+        },
+        .parse_int, .parse_float, .parse_byte => {
+            writeStderr(": \"");
+            writeStderr(text);
+            writeStderr("\"");
+        },
+        .index_out_of_bounds => writeStderr(std.fmt.bufPrint(&buffer, ": index {d}, length {d}", .{ aux0, aux1 }) catch unreachable),
+        .unreachable_code, .div_by_zero, .overflow, .pop_empty => {},
     }
     writeStderr("\n");
-    std.process.exit(1);
+    std.process.exit(kind.exitCode());
 }
 
 pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
@@ -359,22 +400,19 @@ pub fn truncateToInt(value: f64) ?i64 {
     return @intFromFloat(value);
 }
 
-/// Text that names no number of the kind asked for. Terminates like a panic.
-fn trapUnparsable(comptime kind: []const u8, text: []const u8) noreturn {
-    writeStderr("@" ++ kind ++ ": \"");
-    writeStderr(text);
-    writeStderr("\" is not a valid " ++ kind ++ "\n");
-    std.process.exit(1);
+/// Text that names no number of the kind `site` converts to.
+fn faultUnparsable(site: *const DoxaFaultSite, text: []const u8) noreturn {
+    doxa_fault(site, text.ptr, text.len, 0, 0);
 }
 
-pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
+pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: u64, site: *const DoxaFaultSite) callconv(.c) i64 {
     const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    return parseIntText(text) orelse trapUnparsable("int", text);
+    return parseIntText(text) orelse faultUnparsable(site, text);
 }
 
-pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) f64 {
+pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: u64, site: *const DoxaFaultSite) callconv(.c) f64 {
     const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    return parseFloatText(text) orelse trapUnparsable("float", text);
+    return parseFloatText(text) orelse faultUnparsable(site, text);
 }
 
 pub export fn doxa_int_to_string(scope: *Scope, value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -1029,9 +1067,9 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
     }
 }
 
-pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
+pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64, site: *const DoxaFaultSite) callconv(.c) i64 {
     const text = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
-    return parseByteText(text) orelse trapUnparsable("byte", text);
+    return parseByteText(text) orelse faultUnparsable(site, text);
 }
 
 pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {

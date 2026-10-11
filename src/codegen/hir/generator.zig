@@ -428,7 +428,7 @@ pub const Generator = struct {
         names[@intFromEnum(init_id)] = "__doxa_init";
 
         const files = try self.alloc.alloc([]const u8, self.graph.count());
-        for (files, self.graph.records.items) |*file, record| file.* = record.source_name orelse self.graph.filePath(record.id);
+        for (files, 0..) |*file, id| file.* = self.graph.displayPath(@intCast(id));
 
         const zig_sigs = try self.alloc.alloc(ir.Signature, self.zig_functions.items.len);
         const zig_names = try self.alloc.alloc([]const u8, self.zig_functions.items.len);

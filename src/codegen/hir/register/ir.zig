@@ -171,8 +171,8 @@ pub const Op = union(enum) {
     /// `string` without the byte at `index`; an index out of range leaves it
     /// whole.
     str_remove: StringIndex,
-    /// The byte at `index`, as a one-byte string. Unchecked, like an array
-    /// element read (`docs/methods.md`).
+    /// The byte at `index`, as a one-byte string. Bounds-checked, like an
+    /// array element read.
     str_char: StringIndex,
     str_to_int: Unary,
     str_to_float: Unary,
@@ -400,8 +400,8 @@ pub const Program = struct {
     struct_fields: []const []const HIRType,
     /// Flattened members by `GroupId`, in the group's member order.
     group_members: []const []const HIRType,
-    /// The file each `SrcSpan.module` names, by `ModuleId`: the name its
-    /// tokens carry (`ModuleRecord.source_name`), which diagnostics show.
+    /// The file each `SrcSpan.module` names, by `ModuleId`: its display path
+    /// (`ModuleGraph.displayPath`), never a path on this machine.
     files: []const []const u8 = &.{},
     /// Display names by id, for the textual form; an id past the end prints
     /// as the id.

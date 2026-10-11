@@ -555,6 +555,18 @@ pub const ModuleGraph = struct {
         return self.filePath(rec.owner.?);
     }
 
+    /// How emitted output names a record's file — a fault, a peek, a HIR
+    /// span: its stable key, with the entry directory's own `pkg//` dropped
+    /// (`lib/util.doxa`, `std//io/io.doxa`). An inline block names its
+    /// owner's file. Never a path on this machine.
+    pub fn displayPath(self: *const ModuleGraph, id: ModuleId) []const u8 {
+        const rec = self.record(id);
+        if (rec.kind == .inline_zig) return self.displayPath(rec.owner.?);
+        const key = rec.stable_module_key;
+        const own = "pkg//";
+        return if (std.mem.startsWith(u8, key, own)) key[own.len..] else key;
+    }
+
     /// How diagnostics name a module: its stable key, never a path on this
     /// machine.
     pub fn moduleName(self: *const ModuleGraph, id: ModuleId) []const u8 {
