@@ -32,3 +32,4 @@ Doxa is a simple to write, highly readible language based on four corned logical
 - [Typed unions](unions.md) — `A | B` unions and narrowing
 - [Zig blocks](zig.md) — embedded Zig modules and the inline Zig ABI
 - [Performance](performance.md) — the arena and type model, its structural advantages, and the measured state of the lowering
+- [Debugging](debugging.md) — `-g`, and what an external debugger or sampling profiler sees

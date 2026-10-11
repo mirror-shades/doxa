@@ -112,7 +112,7 @@ var f is 10.0
 f /= 4      # f is now 2.5
 ```
 
-Dividing or taking a remainder by zero is a runtime trap (`Division by zero`, exit 1) rather than undefined behaviour. Float division is unaffected and follows IEEE 754, so `5 / 0` is `inf`.
+Dividing or taking a remainder by zero is a runtime fault (`Division by zero at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)) rather than undefined behaviour. Float division is unaffected and follows IEEE 754, so `5 / 0` is `inf`.
 
 ### Strings
 
@@ -232,7 +232,7 @@ res as int then {
 
 ### `unreachable`
 
-Use the `unreachable` keyword when a control-flow path should be impossible. It behaves like Zig's `unreachable`: the compiler treats it as a no-return expression for type checking and it traps at runtime with a helpful location if execution ever arrives there.
+Use the `unreachable` keyword when a control-flow path should be impossible. It behaves like Zig's `unreachable`: the compiler treats it as a no-return expression for type checking and reaching it at runtime is a fault: `Reached unreachable code at <file>:<line>:<column>`, exit 2 (see [Runtime faults](methods.md#runtime-faults)).
 
 ## Special Operators
 

@@ -28,7 +28,7 @@ my_array.@push(42)
 const my_value is my_array.@pop()
 ```
 
-Intrinsic methods can be considered inherently considered unsafe, and they may error. If an error occurs, there may be undefined behavior, panics, and other potentially unrecoverable errors. If you want bounds checking, and other safe wrappings, you must either define them yourself, or use the standard library which provides safe versions under the `method` sublibrary.
+Intrinsic methods are not forgiving: an index out of bounds, a `@pop` of an empty array, or text that names no number stops the program with a runtime fault (see [Runtime faults](#runtime-faults)). Nothing they do is undefined. When a failure must not stop the program, the standard library's `methods` sublibrary has versions that check first or fall back.
 
 ## List of Methods
 
@@ -70,9 +70,24 @@ These are required in value positions (assignment, function arguments, return va
 - `@exit(code :: int | byte)` -> `nothing`
 
 
-## Failure Behavior 
+## Failure Behavior
 
-Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument failures are accepted behavior and should be treated as runtime traps unless noted otherwise.
+### Runtime faults
+
+Every way a program fails at run time is a *fault*: it writes one line to stderr — what happened, where, then any details — and exits. Faults are checked in every `--opt-mode`; the compiler drops a check only where it proves the fault cannot happen.
+
+| Fault | Line | Exit |
+| --- | --- | --- |
+| `@panic(message)` | `Panic at main.doxa:3:5: message` | 1 |
+| `@assert` with a false condition | `Assertion failed at main.doxa:4:5: message` (no `: message` without one) | 1 |
+| Integer `//` or `%` by zero | `Division by zero at main.doxa:2:12` | 1 |
+| Signed `int` overflow, in `debug` and `safe` only (`fast` and `small` wrap) | `Integer overflow at main.doxa:2:12` | 1 |
+| An array or string index out of bounds, read or written; an `@insert` or `@remove` index out of bounds | `Index out of bounds at main.doxa:5:9: index 7, length 3` | 1 |
+| `@pop` of an empty array | `Pop from an empty array at main.doxa:6:5` | 1 |
+| `@int`, `@float` or `@byte` of text that names no such number | `Not a valid int at main.doxa:2:14: "abc"` | 1 |
+| Reaching `unreachable` | `Reached unreachable code at main.doxa:7:9` | 2 |
+
+Exit status 2 is reserved for `unreachable`, which marks code the program's author claims can never run. The location is the start of the expression that faulted. A file under the entry file's directory is named relative to it (`main.doxa`, `lib/util.doxa`); a file under another root keeps the root's tag (`std//io/io.doxa`). A string's `@insert` and `@remove`, and `@slice`, clamp to the bounds instead of faulting.
 
 ### Collection
 
@@ -83,15 +98,12 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Fails at compile time when the value type does not match: a non-string pushed into a `string`, or a non-element pushed into a typed array.
   - Can fail at runtime if target is not array/string in dynamic paths.
 - `@pop(collection)`
-  - Fails at runtime on empty array/string.
-  - Current implementation can cascade into a secondary `StackUnderflow` after the primary runtime error in some statement forms.
+  - Faults on an empty array.
 - `@insert(collection, index, value)`
   - Fails at compile time when the inserted value type does not match (a non-string into a `string`, or a non-element into a typed array).
-  - Fails at runtime for negative index, out-of-bounds index, wrong index type, or wrong inserted type for string targets.
-  - Current implementation can cascade into `StackUnderflow` after the primary runtime error in some variable-assignment forms.
+  - On an array, faults unless `0 <= index <= length`. On a string, the index is clamped to its bounds.
 - `@remove(collection, index)`
-  - Fails at runtime for negative index, out-of-bounds index, wrong index type, or non-collection target.
-  - Current implementation can cascade into `StackUnderflow` after the primary runtime error in some variable-assignment forms.
+  - On an array, faults unless `0 <= index < length`. On a string, an index out of range leaves it whole.
 - `@clear(collection)`
   - Fails at compile time for statically-known non-collection values.
   - Runtime form expects array/string.
@@ -113,10 +125,10 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Does not currently fail for supported runtime values.
 - `@int(value)`
   - Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.
-  - Text may be decimal, `0x` hex, or a decimal float (truncated toward zero), with surrounding whitespace. Text that names no int stops the program: `@int: "abc" is not a valid int`.
+  - Text may be decimal, `0x` hex, or a decimal float (truncated toward zero), with surrounding whitespace. Text that names no int faults: `Not a valid int at main.doxa:2:14: "abc"`.
 - `@float(value)`
   - Fails at runtime for invalid parse, non-finite values, or unsupported source type.
-  - Text may be a decimal float (`inf` and `nan` included) or `0x` hex. Text that names no float stops the program.
+  - Text may be a decimal float (`inf` and `nan` included) or `0x` hex. Text that names no float faults.
   - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly.
 - `@byte(value)`
   - String conversion path fails at runtime for invalid parse or out-of-range values: a one-character string is that character's code, otherwise decimal, `0x` hex, or a decimal float in 0–255.
@@ -133,9 +145,9 @@ In a constant expression (`docs/math.md`) a conversion of text the program could
 - `@print(format :: string)`
   - Argument must be a `string`. `@print` writes that string as-is; it does not interpolate or interpret `{...}`. Interpolation happens when a string value is produced (for example, in a double-quoted literal), so `@print("value is {value}")` still prints the current value because the literal is evaluated to a `string` before `@print` runs.
 - `@assert(condition :: tetra, message :: string?)`
-  - False condition writes the message (if any) and `Assertion failed` to stderr, then halts execution with exit code 1.
+  - A false condition faults: `Assertion failed at <file>:<line>:<column>`, then `: <message>` when one is given; exit code 1.
 - `@panic(message)`
-  - Writes the message to stderr and always terminates execution with exit code 1.
+  - Always faults: `Panic at <file>:<line>:<column>: <message>`; exit code 1.
 - `@exit(code)`
   - Terminates the process with the provided status code (`int | byte`).
 

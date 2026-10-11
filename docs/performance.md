@@ -45,12 +45,13 @@ representation are *user-observable*. Doxa makes all three *compiler-owned*. Con
   opaque to the compiler at link time.
 
 - **Safety is defined, not undefined.** Out-of-bounds access and integer overflow are *defined*
-  behavior, never UB. Signed `int` `add` / `sub` / `mul` trap on overflow in the checked modes
-  (`debug`, `safe`) and wrap in the unchecked ones (`fast`, `small`) — the same `--opt-mode` axis
-  that governs the runtime's own checks, so `--opt=2` produces exactly the wrapping arithmetic its
-  C twin does. That means the checks are ordinary code the compiler can reason about and remove — a
-  trap is dropped wherever the value-range analysis proves the result fits — not a wall of UB that
-  forbids every transformation.
+  behavior, never UB. An out-of-bounds index, read or written, is a fault in every mode
+  ([Runtime faults](methods.md#runtime-faults)). Signed `int` `add` / `sub` / `mul` fault on
+  overflow in the checked modes (`debug`, `safe`) and wrap in the unchecked ones (`fast`, `small`) —
+  the same `--opt-mode` axis that governs the runtime's own checks, so `--opt=2` produces exactly
+  the wrapping arithmetic its C twin does. Either way the checks are ordinary code the compiler can
+  reason about and remove — a check is dropped wherever the value-range analysis proves it cannot
+  fail — not a wall of UB that forbids every transformation.
 
 ### What C cannot do with any of this
 
@@ -323,10 +324,11 @@ in IR is an optimization opportunity.
 ### D. Wire the dormant static switches
 
 Several static decisions already exist in the HIR; some are honored, some not. Integer-overflow
-behavior is now selected from the safety axis — D-1 landed: the checked modes trap with
-`llvm.s*add.with.overflow` plus a real `llvm.trap`, the unchecked modes wrap, and a trap is skipped
-whenever the value-range lattice proves the result fits. Still dormant: `Call.tail` is set but no
-`tail`/`musttail` is ever emitted; `bounds_check` is carried but discarded; `@push` resize is
+behavior is now selected from the safety axis — D-1 landed: the checked modes fault with
+`llvm.s*add.with.overflow` plus a `doxa_fault` call, the unchecked modes wrap, and a check is skipped
+whenever the value-range lattice proves the result fits. Bounds are checked in every mode, in the
+IR, and a fixed array's check is skipped where the lattice proves the index in range. Still
+dormant: `Call.tail` is set but no `tail`/`musttail` is ever emitted; `@push` resize is
 hardcoded to `Double`. Wiring the rest turns the model's "defined, cheap safety" into reality: real
 tail calls (which, combined with copy-free returns from step A, need no post-call clone) and bounds
 removal where the index is statically safe.
@@ -405,7 +407,9 @@ document. `doxa compile … --emit-opt-ir` writes the post-LLVM-optimization IR 
 cache directory, which is the artifact the `struct` and `call` analyses in section 5 are based on.
 
 To see where compile time goes, `doxa compile … --profile` prints a per-phase span tree
-(`--profile-out=<path>` also writes it as JSON). The runtime object and the user `.ll` object are
+with the bytes each span drew and its peak, and one span per module record under each analysis
+stage (`--profile-out=<path>` also writes it as JSON). The bytes are arena growth, not logical
+allocations. The runtime object and the user `.ll` object are
 content-cached per (toolchain, target, optimizer level, source closure), so warm recompiles skip
 `zig cc` / `zig build-obj`; see `plan/artifact-cache.md`. When measuring compile time, note whether
 the cache is warm or cold.

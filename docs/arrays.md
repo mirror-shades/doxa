@@ -25,7 +25,7 @@ If an array is made constant it is stored statically and refrenced by pointer.
 const medals is ["gold", "silver", "bronze"]
 ```
 
-Arrays are handled by intrinsic methods such as @push, @pop, @slice, etc. These intrinsics are inherently unsafe so usage of the standard library is encouraged.
+Arrays are handled by intrinsic methods such as @push, @pop, @slice, etc. An index out of bounds, read or written, and a `@pop` of an empty array are runtime faults ([Runtime faults](methods.md#runtime-faults)); the standard library's `methods` sublibrary has versions that check first.
 
 Arrays will be automatically cast into the requested array storage if possible.
 

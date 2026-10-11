@@ -115,7 +115,7 @@ Anything else is not a constant, and the compiler never guesses its value. That 
 
 ## Division by zero
 
-Integer division and modulo by zero (`//`, `%`, on `int` or `byte`) are a runtime trap. Float division follows IEEE 754 instead: `1 / 0` is `inf`, `-1 / 0` is `-inf`, and `0 / 0` is NaN.
+Integer division and modulo by zero (`//`, `%`, on `int` or `byte`) are a runtime fault (`Division by zero at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)). Float division follows IEEE 754 instead: `1 / 0` is `inf`, `-1 / 0` is `-inf`, and `0 / 0` is NaN.
 
 ## Floating point
 
