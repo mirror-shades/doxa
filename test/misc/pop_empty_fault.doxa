@@ -1,0 +1,5 @@
+entry function main() {
+    var a :: int[] is []
+    var x is @pop(a)
+    @print("{x}")
+}

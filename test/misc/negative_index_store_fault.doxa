@@ -1,0 +1,6 @@
+entry function main() {
+    var a is [1, 2, 3]
+    var i is -1
+    a[i] is 9
+    @print("{a[0]}")
+}

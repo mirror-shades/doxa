@@ -1,0 +1,5 @@
+function power(x :: int) returns int {
+    return x * x * x * x
+}
+
+@print("{power(100000)}")

@@ -48,6 +48,7 @@ matchResult is match g {
 matchResult? # It's something else
 
 public function isAlpha(char :: string) returns tetra {
+    if @length(char) == 0 then return false
     match char[0] {
         "a", "b" then return true
     }

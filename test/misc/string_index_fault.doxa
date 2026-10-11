@@ -1,0 +1,5 @@
+entry function main() {
+    var s is "abc"
+    var i is 5
+    @print(s[i])
+}

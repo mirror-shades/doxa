@@ -20,10 +20,6 @@ pub const expected_brainfuck_results = [_]print_result{
     .{ .value = "Output: 0x09" },
 };
 
-pub const expected_array_storage_results = [_]print_result{
-    .{ .value = "3 3" },
-};
-
 pub const expected_fixed_field_array_results = [_]print_result{
     .{ .value = "8 8 false both" },
     .{ .value = "3 0 9 0" },

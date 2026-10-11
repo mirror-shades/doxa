@@ -1,0 +1,5 @@
+function divide(a :: int, b :: int) returns int {
+    return a // b
+}
+
+@print("{divide(7, 0)}")

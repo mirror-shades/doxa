@@ -112,7 +112,7 @@ test "emit: a checked build traps on signed overflow" {
     defer allocator.free(ir_text);
 
     try testing.expect(std.mem.indexOf(u8, ir_text, "call { i64, i1 } @llvm.sadd.with.overflow.i64") != null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @llvm.trap()") != null);
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @doxa_fault(") != null);
     try testing.expect(std.mem.indexOf(u8, ir_text, "ovf.trap.") != null);
     try testing.expect(std.mem.indexOf(u8, ir_text, "ovf.cont.") != null);
 }
@@ -126,7 +126,7 @@ test "emit: a fast build wraps and carries no trap" {
     defer allocator.free(ir_text);
 
     try testing.expect(std.mem.indexOf(u8, ir_text, "with.overflow") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "llvm.trap") == null);
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @doxa_fault(") == null);
     try testing.expect(std.mem.indexOf(u8, ir_text, "= add i64") != null);
 }
 
@@ -191,7 +191,7 @@ test "emit: bounded operands discharge the check even in a checked build" {
     // But the add's range proved it safe, so no check was emitted. Match the
     // *call* form: the module still declares the intrinsic it may have used.
     try testing.expect(std.mem.indexOf(u8, ir_text, "call { i64, i1 } @llvm.s") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @llvm.trap()") == null);
+    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @doxa_fault(") == null);
 }
 
 // ---------------------------------------------------------------------------

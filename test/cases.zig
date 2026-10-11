@@ -113,9 +113,11 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_complex_print_results[0..],
     },
     .{
-        .name = "array storage migration",
+        .name = "an index store past the end faults; only @push grows an array",
         .path = "./test/misc/array_storage_migration.doxa",
-        .expected_print = answers.expected_array_storage_results[0..],
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Index out of bounds at array_storage_migration.doxa:4:1: index 2, length 2",
     },
     .{
         .name = "alias arrays",
@@ -965,7 +967,7 @@ const shared_cases = [_]Case{
         .path = "./test/misc/panic.doxa",
         .mode = .terminate,
         .expect_code = 1,
-        .expect_stderr = "panic test message",
+        .expect_stderr = "Panic at panic.doxa:1:1: panic test message",
     },
     .{
         .name = "exit",
@@ -978,14 +980,49 @@ const shared_cases = [_]Case{
         .path = "./test/misc/assert_fail.doxa",
         .mode = .terminate,
         .expect_code = 1,
-        .expect_stderr = "assert test message",
+        .expect_stderr = "Assertion failed at assert_fail.doxa:1:1: assert test message",
     },
     .{
         .name = "unreachable keyword",
         .path = "./test/misc/unreachable.doxa",
         .mode = .terminate,
         .expect_code = 2,
-        .expect_stderr = "Reached unreachable code",
+        .expect_stderr = "Reached unreachable code at unreachable.doxa:7:9",
+    },
+    .{
+        .name = "an integer division by zero faults with its location",
+        .path = "./test/misc/division_by_zero.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Division by zero at division_by_zero.doxa:2:12",
+    },
+    .{
+        .name = "a checked integer overflow faults with its location",
+        .path = "./test/misc/overflow_fault.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at overflow_fault.doxa:2:12",
+    },
+    .{
+        .name = "a @pop of an empty array faults",
+        .path = "./test/misc/pop_empty_fault.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Pop from an empty array at pop_empty_fault.doxa:3:14",
+    },
+    .{
+        .name = "a string index past the end faults",
+        .path = "./test/misc/string_index_fault.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Index out of bounds at string_index_fault.doxa:4:12: index 5, length 3",
+    },
+    .{
+        .name = "a negative index store faults",
+        .path = "./test/misc/negative_index_store_fault.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Index out of bounds at negative_index_store_fault.doxa:4:5: index -1, length 3",
     },
 };
 
@@ -1288,7 +1325,7 @@ const rejected_cases = [_]Case{
         .path = "./test/syntax/unparsable_conversion_trap.doxa",
         .mode = .terminate,
         .expect_code = 1,
-        .expect_stderr = "@int: \"abc1\" is not a valid int",
+        .expect_stderr = "Not a valid int at unparsable_conversion_trap.doxa:6:14: \"abc1\"",
     },
     .{
         .name = "an array inferred from int literals is an int[], which @pack rejects",
