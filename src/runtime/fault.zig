@@ -118,12 +118,12 @@ fn writeBacktrace(first: usize) void {
     defer arena.deinit();
     const io = std.Options.debug_io;
     var shown: usize = 0;
-    var failure: ?anyerror = null;
+    var failure: ?struct { address: usize, err: anyerror } = null;
     for (trace.return_addresses) |return_address| {
         var symbols: std.ArrayList(std.debug.Symbol) = .empty;
         // A return address follows its call; one before it is in the call.
         info.getSymbols(io, arena.allocator(), arena.allocator(), return_address -| 1, true, &symbols) catch |err| {
-            if (failure == null) failure = err;
+            if (failure == null) failure = .{ .address = return_address -| 1, .err = err };
             continue;
         };
         for (symbols.items) |symbol| {
@@ -145,8 +145,20 @@ fn writeBacktrace(first: usize) void {
         }
     }
     if (shown != 0) return;
-    if (failure) |err| return noBacktrace("cannot resolve a frame's source", err);
+    if (failure) |f| return unresolved(info, io, arena.allocator(), f.address, f.err);
     noBacktrace("no frame has a .doxa source line", null);
+}
+
+/// Why the frame at `address` has no source: no loaded module holds it, or
+/// the module holding it has debug information the runtime cannot read.
+fn unresolved(info: *std.debug.SelfInfo, io: std.Io, arena: std.mem.Allocator, address: usize, err: anyerror) void {
+    var buffer: [512]u8 = undefined;
+    const module = info.getModuleName(io, address) catch {
+        return noBacktrace(std.fmt.bufPrint(&buffer, "no loaded module holds the frame at 0x{x}", .{address}) catch unreachable, err);
+    };
+    // The executable itself has no module name of its own.
+    const name = if (module.len != 0) module else std.process.executablePathAlloc(io, arena) catch "the executable";
+    noBacktrace(std.fmt.bufPrint(&buffer, "cannot read the debug information of {s} for the frame at 0x{x}", .{ name, address }) catch "cannot read a frame's debug information", err);
 }
 
 /// `  (no backtrace: <why>[: error.X])`.
