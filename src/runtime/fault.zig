@@ -94,9 +94,16 @@ pub const DoxaFaultSite = extern struct {
 };
 
 
-/// Set by a program built with `-g`: only then do its frames carry lines.
-/// The runtime's own frames always do, so their presence cannot decide it.
+/// Set by a program built with debug information: only then do its frames
+/// carry lines. The runtime's own frames always do, so their presence cannot
+/// decide it.
 pub var backtrace_enabled = false;
+
+/// The return address of the program's `__doxa_enter` (`emit.zig`): the
+/// return into `__doxa_init` from the call into the entry. A backtrace
+/// stops there, as every frame past it is the compiler's. Null until the
+/// entry runs, and in a program built without debug information.
+export var doxa_entry_return: ?*const anyopaque = null;
 
 
 /// The program's frames, innermost first, from the one that faulted at
@@ -120,6 +127,7 @@ fn writeBacktrace(first: usize) void {
     var shown: usize = 0;
     var failure: ?struct { address: usize, err: anyerror } = null;
     for (trace.return_addresses) |return_address| {
+        if (doxa_entry_return) |end| if (return_address == @intFromPtr(end)) break;
         var symbols: std.ArrayList(std.debug.Symbol) = .empty;
         // A return address follows its call; one before it is in the call.
         info.getSymbols(io, arena.allocator(), arena.allocator(), return_address -| 1, true, &symbols) catch |err| {
@@ -128,12 +136,7 @@ fn writeBacktrace(first: usize) void {
         };
         for (symbols.items) |symbol| {
             const location = symbol.source_location orelse continue;
-            // Line 0 is code the compiler made: the call into the entry.
-            // TODO: CodeView cannot hold a line-0 row (LLVM carries the
-            // previous line forward), so on Windows the trace still ends with
-            // `<globals>` at its declaration; a row in a non-`.doxa` file
-            // does not help either, as `std.debug.Pdb` resolves the address
-            // through the function's first file block.
+            // Line 0 is code the compiler made, which no source line stands for.
             if (location.line == 0 or !std.mem.endsWith(u8, location.file_name, ".doxa")) continue;
             writeStderr("  in ");
             writeStderr(symbol.name orelse "?");

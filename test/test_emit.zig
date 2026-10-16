@@ -994,22 +994,16 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     defer allocator.free(plain);
     try testing.expectEqualStrings(headline, plain);
 
-    // The entry's caller is the compiler's, and its frame is left out. DWARF
-    // marks the call with a line-0 row, so the trace is exact; CodeView cannot
-    // hold one, so on Windows a `<globals>` frame still follows (the TODO in
-    // `fault.zig`, `plan/diagnostics-follow-up.md` step 3) and only the
-    // prefix is pinned there.
+    // The trace ends at the entry, on every platform: the walk stops at the
+    // return `__doxa_enter` recorded, so the entry's caller, the compiler's
+    // `__doxa_init`, shows no frame.
     const frames = headline ++
         "  in get at probe.doxa:2:12\n" ++
         "  in outer at probe.doxa:6:5\n" ++
         "  in main at probe.doxa:11:5\n";
     const traced = try runFault(allocator, &tmp, faultSource, &.{"-O0"});
     defer allocator.free(traced);
-    if (builtin.os.tag == .windows) {
-        try testing.expectStringStartsWith(traced, frames);
-    } else {
-        try testing.expectEqualStrings(frames, traced);
-    }
+    try testing.expectEqualStrings(frames, traced);
 
     // Optimized, every Doxa frame still shows, innermost first, inlined ones
     // included. CodeView often records no column there, so columns are not
@@ -1021,7 +1015,7 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     const outer = std.mem.indexOf(u8, optimized, "  in outer at probe.doxa:6:") orelse return error.TestExpectedContains;
     const main = std.mem.indexOf(u8, optimized, "  in main at probe.doxa:11:") orelse return error.TestExpectedContains;
     try testing.expect(get < outer and outer < main);
-    if (builtin.os.tag != .windows) try testing.expect(std.mem.indexOf(u8, optimized, "<globals>") == null);
+    try testing.expect(std.mem.indexOf(u8, optimized, "<globals>") == null);
 
     // A fault under a global's initializer names that frame `<globals>`, at
     // the initializer's line, on every platform.
@@ -1036,9 +1030,15 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     defer allocator.free(ll);
     try expectContains(ll, "call void @doxa_enable_backtrace()");
     try expectContains(ll, "!DILocation(line: 0, scope: !");
+    // The entry is called through `__doxa_enter`, which records where the
+    // walk stops and calls the entry out of line.
+    try expectContains(ll, "call void @__doxa_enter(");
+    try expectContains(ll, "define internal void @__doxa_enter(");
+    try expectContains(ll, "store ptr %ra, ptr @doxa_entry_return");
     const bare = try emitIrFor(allocator, &tmp, faultSource, "-O0");
     defer allocator.free(bare);
     try testing.expect(std.mem.indexOf(u8, bare, "doxa_enable_backtrace") == null);
+    try testing.expect(std.mem.indexOf(u8, bare, "__doxa_enter") == null);
 }
 
 // ── Instrumentation: --instrument=calls and doxa report ──

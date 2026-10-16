@@ -1502,7 +1502,10 @@ const FunctionEmitter = struct {
             if (i != 0) try text.appendSlice(self.e.alloc, ", ");
             try text.print(self.e.alloc, "{s} {s}", .{ layout.llvmType(self.typeOf(a)), self.name(a) });
         }
-        const symbol = try self.e.functionSymbol(callee);
+        // With debug info, the call into the entry goes through
+        // `__doxa_enter`, where a backtrace ends (`Emitter.emitEnter`).
+        const enters = self.e.debug != null and self.id == self.e.module.init and callee == self.e.module.entry;
+        const symbol = if (enters) "@__doxa_enter" else try self.e.functionSymbol(callee);
         if (inst.result) |_| {
             try self.def(inst, "call {s} {s}({s})", .{ layout.returnType(sig.ret), symbol, text.items });
         } else {

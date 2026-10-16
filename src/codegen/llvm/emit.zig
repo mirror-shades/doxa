@@ -90,6 +90,7 @@ pub const Emitter = struct {
             try function.emitFunction(self, w, @enumFromInt(i), f);
         }
         try self.emitMain(w);
+        try self.emitEnter(w);
         try self.emitGlobals(w);
         try self.emitBoxRegistry();
         try w.writeAll(self.globals.written());
@@ -137,6 +138,34 @@ pub const Emitter = struct {
         }
         try w.writeAll("  call void @doxa_box_registry_init(ptr @.doxa.boxes, ptr @.doxa.box.count)\n");
         try w.print("  call void {s}()\n  ret void\n}}\n", .{try self.functionSymbol(self.module.init)});
+    }
+
+    /// `__doxa_enter`, under debug info: the entry's own signature, through
+    /// which `__doxa_init` calls it. It records its return address, the
+    /// return into `__doxa_init`, in `doxa_entry_return`, where the
+    /// runtime's backtrace stops (`fault.zig`): every frame past it is the
+    /// compiler's. It has no debug information of its own, so it shows no
+    /// frame, and the entry is called out of line so it keeps its own.
+    fn emitEnter(self: *Emitter, w: *std.Io.Writer) Error!void {
+        if (self.debug == null) return;
+        const entry = self.module.entry orelse return;
+        const sig = self.module.program.functions[@intFromEnum(entry)];
+        const ret = layout_mod.returnType(sig.ret);
+        var params: std.ArrayListUnmanaged(u8) = .empty;
+        var args: std.ArrayListUnmanaged(u8) = .empty;
+        for (sig.params, 0..) |param, i| {
+            const sep = if (i == 0) "" else ", ";
+            try params.print(self.alloc, "{s}{s} %a{d}", .{ sep, layout_mod.llvmType(param), i });
+            try args.print(self.alloc, "{s}{s} %a{d}", .{ sep, layout_mod.llvmType(param), i });
+        }
+        try w.print("\ndefine internal {s} @__doxa_enter({s}) noinline #0 {{\nentry:\n", .{ ret, params.items });
+        try w.writeAll("  %ra = call ptr @llvm.returnaddress(i32 0)\n  store ptr %ra, ptr @doxa_entry_return\n");
+        const callee = try self.functionSymbol(entry);
+        if (sig.ret == .Nothing) {
+            try w.print("  call void {s}({s}) noinline\n  ret void\n}}\n", .{ callee, args.items });
+        } else {
+            try w.print("  %r = call {s} {s}({s}) noinline\n  ret {s} %r\n}}\n", .{ ret, callee, args.items, ret });
+        }
     }
 
     // ── Instrumentation ──
@@ -557,6 +586,8 @@ const debug_prelude =
     \\declare void @llvm.dbg.declare(metadata, metadata)
     \\declare void @llvm.dbg.value(metadata, metadata)
     \\declare void @doxa_enable_backtrace()
+    \\declare ptr @llvm.returnaddress(i32)
+    \\@doxa_entry_return = external global ptr
     \\
 ;
 

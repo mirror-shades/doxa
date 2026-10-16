@@ -535,6 +535,9 @@ pub const Module = struct {
     zig_takes_arena: []const bool,
     /// `__doxa_init`: the globals' initializers and the entry program.
     init: FunctionId,
+    /// The `entry` function `__doxa_init` calls last, if the program has one:
+    /// where a backtrace ends (the emitter's `__doxa_enter`).
+    entry: ?FunctionId = null,
     /// Canonical keys of the struct types a reflection site reaches, sorted;
     /// those keep their runtime descriptor.
     reflected_structs: []const []const u8,

@@ -158,6 +158,7 @@ pub const Generator = struct {
             .functions = functions,
             .zig_takes_arena = try self.zigTakesArena(),
             .init = init_id,
+            .entry = self.entryId(),
             .reflected_structs = try self.reflectedStructs(),
             .force_struct_descriptors = self.force_struct_descriptors,
         };
@@ -435,16 +436,15 @@ pub const Generator = struct {
             if (!try lower_control.statement(&l, stmt)) return l.finish();
         }
 
-        // The call into the entry stands for no line: a backtrace ends at the
-        // entry, and a fault under a global's initializer still shows init.
-        for (self.functions.items, 0..) |decl, i| {
-            if (!decl.is_entry) continue;
+        // The call into the entry stands for no line, so a debugger never
+        // steps onto it. A backtrace ends at the entry: the emitter makes
+        // this call through `__doxa_enter`, where the runtime's walk stops.
+        if (self.entryId()) |id| {
             var span = l.b.span;
             span.artificial = true;
             const saved = l.b.at(span);
-            _ = try l.call(@enumFromInt(i), &.{l.root});
+            _ = try l.call(id, &.{l.root});
             l.b.restore(saved);
-            break;
         }
         if (!try l.popDefers()) return l.finish();
         try l.b.ret(null);
@@ -452,6 +452,13 @@ pub const Generator = struct {
     }
 
     // ── The module ──
+
+    fn entryId(self: *const Generator) ?ir.FunctionId {
+        for (self.functions.items, 0..) |decl, i| {
+            if (decl.is_entry) return @enumFromInt(i);
+        }
+        return null;
+    }
 
     fn program(self: *Generator, init_id: ir.FunctionId) Error!ir.Program {
         const count = self.functions.items.len + 1;
