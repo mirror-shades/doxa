@@ -19,6 +19,10 @@ const hir_verify = @import("./codegen/hir/register/verify.zig");
 const hir_arenas = @import("./codegen/hir/register/arenas.zig");
 const hir_print = @import("./codegen/hir/register/print.zig");
 const llvm_emit = @import("./codegen/llvm/emit.zig");
+const instrument = @import("./runtime/instrument.zig");
+const report = @import("./instrument/report.zig");
+const complexity = @import("./instrument/complexity.zig");
+const memory_report = @import("./instrument/memory.zig");
 
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -77,9 +81,19 @@ const CLI = struct {
     emit_opt_ir: bool,
     emit_asm: bool,
     emit_hir: bool,
-    /// `-g`: debug metadata in the program's object, for an external debugger
-    /// or a sampling profiler.
+    /// Debug metadata in the program's object, for an external debugger, a
+    /// sampling profiler and a fault's backtrace: on unless `--strip`. It
+    /// costs no run time (the code is the same) and no measurable compile
+    /// time (`plan/diagnostics-and-observability.md`, step 15).
     debug_info: bool,
+    /// `--instrument=`: counters the program keeps and writes at exit.
+    instrument: instrument.Members,
+    /// `--emit-complexity`: write `<binary>.complexity`, the static findings
+    /// `doxa report` renders.
+    emit_complexity: bool,
+    /// `--emit-memory`: write `<binary>.memory`, where each allocation lives
+    /// and every copy the compiler placed, for `doxa report`.
+    emit_memory: bool,
     lsp_mode: LspMode,
     lsp_debug_file: ?[]const u8,
     lsp_io_trace: bool,
@@ -305,6 +319,14 @@ fn lowerProgram(memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnaly
 }
 
 /// The textual register HIR of every function (`--emit-hir`).
+/// Remove a side file a previous build left, if there is one.
+fn removeSideFile(io: std.Io, path: []const u8) !void {
+    std.Io.Dir.cwd().deleteFile(io, path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
 fn writeHirText(allocator: std.mem.Allocator, module: *const hir.Module) ![]const u8 {
     var text = std.Io.Writer.Allocating.init(allocator);
     for (module.functions) |*f| {
@@ -410,14 +432,20 @@ fn stageRuntimeSources(io: std.Io, allocator: std.mem.Allocator, sources: []cons
 // The generated Zig root that owns the platform entry point and hands off to
 // the Doxa program. Its content is constant for a given compiler build; hashing
 // it into the object key keeps entry-glue changes from reusing stale objects.
-fn buildRootSource(allocator: std.mem.Allocator) ![]u8 {
+// An instrumented build declares its members here, which makes each set its
+// own runtime object; an uninstrumented root is unchanged.
+fn buildRootSource(allocator: std.mem.Allocator, members: instrument.Members) ![]u8 {
     var content = std.array_list.Managed(u8).init(allocator);
     errdefer content.deinit();
     try content.appendSlice("const std = @import(\"std\");\n");
     try content.appendSlice("const doxa_rt = @import(\"runtime/doxa_rt.zig\");\n");
 
     try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
+    if (members.any()) {
+        try content.print("\npub const doxa_instrument: doxa_rt.instrument.Members = .{{ .calls = {}, .lines = {}, .memtrace = {}, .memcheck = {} }};\n", .{ members.calls, members.lines, members.memtrace, members.memcheck });
+    }
     try content.appendSlice("\npub fn main(init: std.process.Init) void {\n");
+    if (members.any()) try content.appendSlice("    defer doxa_rt.instrument.flush();\n");
     try content.appendSlice("    const args = init.minimal.args.toSlice(init.arena.allocator()) catch {\n");
     try content.appendSlice("        doxa_program_main();\n");
     try content.appendSlice("        return;\n");
@@ -521,7 +549,10 @@ pub const NativeCpuKey = struct {
     /// cannot be shown to match a known one.
     known: bool,
 
-    pub fn bytes(self: NativeCpuKey) []const u8 {
+    /// This key's bytes. Takes the key by reference: the slice points into the
+    /// key itself, so a by-value receiver would return a pointer into a dead
+    /// copy and the key would vary with the stack.
+    pub fn bytes(self: *const NativeCpuKey) []const u8 {
         return &self.digest;
     }
 };
@@ -626,18 +657,6 @@ const Opt = struct {
         return self.mode.zigFlag();
     }
 
-    // Phase D-1: the integer-overflow policy that rides the safety axis. The
-    // checked modes (`debug`, `safe`) trap; the unchecked ones (`fast`,
-    // `small`) wrap, matching the C twins the benchmark suite compares against.
-    // `--opt=2`/`-O2` and up select `fast`, so the benchmark canaries see
-    // wrapping arithmetic exactly as C does.
-    fn arithOverflow(self: Opt) llvm_emit.OverflowPolicy {
-        return switch (self.mode) {
-            .debug, .safe => .trap,
-            .fast, .small => .wrap,
-        };
-    }
-
     fn fromMode(text: []const u8) ?Opt {
         return if (std.mem.eql(u8, text, "debug"))
             .{ .mode = .debug, .level = .o0 }
@@ -714,6 +733,31 @@ fn emitInspectionArtifact(io: std.Io, allocator: std.mem.Allocator, zig_exe_path
         },
     }
     std.debug.print("Wrote {s}/{s}\n", .{ cli_options.cache_dir, out_name });
+}
+
+/// `--instrument=<member>,...`: `calls`, `lines`, `memtrace`, `memcheck`.
+fn parseInstrument(list: []const u8) ?instrument.Members {
+    var members: instrument.Members = .{};
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |member| {
+        if (stringEquals(member, "calls")) {
+            members.calls = true;
+        } else if (stringEquals(member, "lines")) {
+            members.lines = true;
+        } else if (stringEquals(member, "memtrace")) {
+            members.memtrace = true;
+        } else if (stringEquals(member, "memcheck")) {
+            members.memcheck = true;
+        } else {
+            std.debug.print("Error: unknown --instrument member '{s}' (expected calls, lines, memtrace or memcheck)\n", .{member});
+            return null;
+        }
+    }
+    if (!members.any()) {
+        std.debug.print("Error: --instrument= names no member\n", .{});
+        return null;
+    }
+    return members;
 }
 
 fn compileToNative(
@@ -800,13 +844,40 @@ fn compileToNative(
             .format = if (target.isWindows()) .codeview else .dwarf,
             .optimized = cli_options.opt.level != .o0,
         } else null;
-        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, cli_options.opt.arithOverflow(), debug_options);
+        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, debug_options, cli_options.instrument);
         var ll = std.Io.Writer.Allocating.init(emit_alloc);
         emitter.emit(&ll.writer) catch |err| {
             if (err == error.EmitFault) reporter.reportInternal("the emitter rejected the register HIR: {s}. This is a compiler bug, not an error in the program", .{emitter.fault.?}, @src());
             return err;
         };
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ir_path, .data = ll.written() });
+        // Side files go beside the binary, where the binary writes its
+        // counts: in the cache for `doxa run`, the output folder for
+        // `doxa compile`.
+        const exe_stem = if (target.isWindows() and std.mem.endsWith(u8, exe, ".exe")) exe[0 .. exe.len - 4] else exe;
+        // A side file describes the build beside it: one this build does not
+        // write is removed, so `doxa report` never pairs a stale one with it.
+        const map_path = try std.mem.concat(emit_alloc, u8, &.{ exe_stem, ".profmap" });
+        const data_path = try std.mem.concat(emit_alloc, u8, &.{ exe_stem, ".profdata" });
+        const findings_path = try std.mem.concat(emit_alloc, u8, &.{ exe_stem, ".complexity" });
+        const memory_path = try std.mem.concat(emit_alloc, u8, &.{ exe_stem, ".memory" });
+        // Counts are the run's: the previous build's never outlive it.
+        try removeSideFile(io, data_path);
+        if (cli_options.instrument.any()) {
+            var map = std.Io.Writer.Allocating.init(emit_alloc);
+            try report.writeProfmap(&map.writer, cli_options.opt.clangFlag(), emitter.siteTable());
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = map_path, .data = map.written() });
+        } else try removeSideFile(io, map_path);
+        if (cli_options.emit_complexity) {
+            var findings = std.Io.Writer.Allocating.init(emit_alloc);
+            try complexity.write(emit_alloc, &findings.writer, module);
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = findings_path, .data = findings.written() });
+        } else try removeSideFile(io, findings_path);
+        if (cli_options.emit_memory) {
+            var rows = std.Io.Writer.Allocating.init(emit_alloc);
+            try memory_report.write(emit_alloc, &rows.writer, module);
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = memory_path, .data = rows.written() });
+        } else try removeSideFile(io, memory_path);
     }
 
     profiler.begin("cc-object");
@@ -890,7 +961,7 @@ fn compileToNative(
         defer allocator.free(runtime_src_dir);
         const runtime_sources = try readRuntimeSources(io, allocator, runtime_src_dir);
         defer freeRuntimeSources(allocator, runtime_sources);
-        const root_source = try buildRootSource(allocator);
+        const root_source = try buildRootSource(allocator, cli_options.instrument);
         defer allocator.free(root_source);
 
         const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(native_cpu_key.bytes()), cli_options.opt.zigFlag(), include_dirs);
@@ -1072,7 +1143,10 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         .emit_opt_ir = false,
         .emit_asm = false,
         .emit_hir = false,
-        .debug_info = false,
+        .debug_info = true,
+        .instrument = .{},
+        .emit_complexity = false,
+        .emit_memory = false,
         .lsp_mode = .none,
         .lsp_debug_file = null,
         .lsp_io_trace = false,
@@ -1093,6 +1167,10 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
             std.process.exit(EXIT_CODE_USAGE);
         };
         std.process.exit(0);
+    }
+
+    if (stringEquals(args[1], "report")) {
+        std.process.exit(report.command(init.io, init.arena.allocator(), args[2..], DEFAULT_CACHE_DIR));
     }
 
     if (stringEquals(args[1], "--lsp")) {
@@ -1259,8 +1337,17 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         } else if (stringEquals(arg, "--emit-hir")) {
             options.emit_hir = true;
             continue;
-        } else if (stringEquals(arg, "-g")) {
-            options.debug_info = true;
+        } else if (stringEquals(arg, "--strip")) {
+            options.debug_info = false;
+            continue;
+        } else if (stringEquals(arg, "--emit-complexity")) {
+            options.emit_complexity = true;
+            continue;
+        } else if (stringEquals(arg, "--emit-memory")) {
+            options.emit_memory = true;
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--instrument=")) {
+            options.instrument = parseInstrument(arg["--instrument=".len..]) orelse std.process.exit(EXIT_CODE_USAGE);
             continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
             printUsage();
@@ -1408,6 +1495,7 @@ fn printUsage() void {
     std.debug.print("  doxa init [project-name]        # Scaffold a new Doxa project\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
+    std.debug.print("  doxa report <binary> [--json]   # Show what --instrument / --emit-* found\n", .{});
     std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});
     std.debug.print("  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness\n", .{});
     std.debug.print("\nGeneral options:\n", .{});
@@ -1418,7 +1506,11 @@ fn printUsage() void {
     std.debug.print("                                    # lexer, parser, semantic, hir, memory\n", .{});
     std.debug.print("  --debug-verbose                   # Enable all debug output\n", .{});
     std.debug.print("  --cache-dir=<dir>                 # Build cache directory (default: .doxa-cache)\n", .{});
-    std.debug.print("  -g                                # Emit debug info for a debugger or sampling profiler\n", .{});
+    std.debug.print("  --strip                           # Omit debug info (on by default: debugger, profiler, backtraces)\n", .{});
+    std.debug.print("  --instrument=calls,lines,memtrace # Count calls / statements / memory by site; read with doxa report\n", .{});
+    std.debug.print("  --instrument=memcheck             # Fault on a read of memory an arena reclaimed\n", .{});
+    std.debug.print("  --emit-complexity                 # Write static loop findings; read with doxa report\n", .{});
+    std.debug.print("  --emit-memory                     # Write where allocations live and every copy; read with doxa report\n", .{});
     std.debug.print("\nCompile options:\n", .{});
     std.debug.print("  -o, --output <path>               # Output executable path (required)\n", .{});
     std.debug.print("  --arch=<arch>                     # Target CPU architecture (default: host)\n", .{});

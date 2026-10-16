@@ -309,6 +309,8 @@ pub const LexicalAnalyzer = struct {
                     }
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.ASTERISK_EQUAL);
+                } else if (self.match('%')) {
+                    try self.addMinimalToken(if (self.match('=')) .ASTERISK_WRAP_EQUAL else .ASTERISK_WRAP);
                 } else {
                     try self.addMinimalToken(.ASTERISK);
                 }
@@ -356,6 +358,8 @@ pub const LexicalAnalyzer = struct {
             '+' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.PLUS_EQUAL);
+                } else if (self.match('%')) {
+                    try self.addMinimalToken(if (self.match('=')) .PLUS_WRAP_EQUAL else .PLUS_WRAP);
                 } else {
                     try self.addMinimalToken(.PLUS);
                 }
@@ -363,6 +367,8 @@ pub const LexicalAnalyzer = struct {
             '-' => {
                 if (self.match('=')) {
                     try self.addMinimalToken(.MINUS_EQUAL);
+                } else if (self.match('%')) {
+                    try self.addMinimalToken(if (self.match('=')) .MINUS_WRAP_EQUAL else .MINUS_WRAP);
                 } else {
                     try self.addMinimalToken(.MINUS);
                 }

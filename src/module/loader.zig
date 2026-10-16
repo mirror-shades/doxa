@@ -442,7 +442,7 @@ fn blockOf(allocator: std.mem.Allocator, statements: []ast.Stmt) ErrorList!*ast.
     const body = try allocator.create(ast.Expr);
     body.* = .{
         .base = .{ .id = ast.generateNodeId(), .span = null },
-        .data = .{ .Block = .{ .statements = statements, .value = null } },
+        .data = .{ .Block = .{ .statements = statements, .value = null, .braced = false } },
     };
     return body;
 }

@@ -60,6 +60,10 @@ const BlockState = struct {
     /// How many of `params` the generator declared; the rest are variables.
     explicit_params: u32 = 0,
     insts: std.ArrayListUnmanaged(ir.Inst) = .empty,
+    /// How many `debug_value` instructions `varParam` has placed at the head
+    /// of `insts`: a name for a variable that became a parameter sits before
+    /// the block's own work, after its phis.
+    head_insts: u32 = 0,
     term: ?PendingTerm = null,
     term_span: ir.SrcSpan = undefined,
     preds: std.ArrayListUnmanaged(u32) = .empty,
@@ -93,6 +97,12 @@ pub const FunctionBuilder = struct {
     blocks: std.ArrayListUnmanaged(BlockState) = .empty,
     edges: std.ArrayListUnmanaged(Edge) = .empty,
     slots: std.ArrayListUnmanaged(ir.SlotInfo) = .empty,
+    locals: std.ArrayListUnmanaged(ir.LocalInfo) = .empty,
+    loops: std.ArrayListUnmanaged(ir.LoopInfo) = .empty,
+    plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty,
+    /// The name each variable is shown under, for a debugger. A variable
+    /// without one is a compiler temporary.
+    named: std.AutoHashMapUnmanaged(Var, ir.LocalId) = .empty,
     var_types: std.ArrayListUnmanaged(Type) = .empty,
     defs: std.AutoHashMapUnmanaged(VarBlock, ValueId) = .empty,
     current: BlockId = .entry,
@@ -149,10 +159,25 @@ pub const FunctionBuilder = struct {
         return value;
     }
 
-    pub fn addSlot(self: *FunctionBuilder, ty: ir.HIRType, arena: ValueId, name: []const u8) Error!ir.SlotId {
+    pub fn addSlot(self: *FunctionBuilder, ty: ir.HIRType, arena: ValueId) Error!ir.SlotId {
         const id: ir.SlotId = @enumFromInt(self.slots.items.len);
-        try self.slots.append(self.alloc, .{ .ty = ty, .arena = arena, .name = name });
+        try self.slots.append(self.alloc, .{ .ty = ty, .arena = arena });
         return id;
+    }
+
+    /// A name a debugger shows. Its storage is `slot` for a lent local, or the
+    /// `debug_value` instructions `nameVar` adds for an SSA one.
+    /// `arg` is its parameter number, or 0 for a local (`LocalInfo.arg`).
+    pub fn addLocal(self: *FunctionBuilder, name: []const u8, span: ir.SrcSpan, slot: ?ir.SlotId, arg: u32) Error!ir.LocalId {
+        const id: ir.LocalId = @enumFromInt(self.locals.items.len);
+        try self.locals.append(self.alloc, .{ .name = name, .span = span, .slot = slot, .arg = arg });
+        return id;
+    }
+
+    /// SSA variable `variable` is shown under `local`: every `defVar` of it
+    /// gets a `debug_value`, so a re-assignment re-names it.
+    pub fn nameVar(self: *FunctionBuilder, variable: Var, local: ir.LocalId) Error!void {
+        try self.named.put(self.alloc, variable, local);
     }
 
     pub fn switchTo(self: *FunctionBuilder, block: BlockId) void {
@@ -201,6 +226,16 @@ pub const FunctionBuilder = struct {
         try self.defs.put(self.alloc, .{ .variable = variable, .block = self.current }, value);
     }
 
+    /// Define `variable` as `value`, and name it here if a debugger shows it:
+    /// every definition re-names a local, so an assignment in a branch is not
+    /// read as a stale value.
+    pub fn defineVar(self: *FunctionBuilder, variable: Var, value: ValueId) Error!void {
+        try self.defVar(variable, value);
+        if (self.named.get(variable)) |local| {
+            try self.effect(.{ .debug_value = .{ .local = local, .value = value } });
+        }
+    }
+
     pub fn useVar(self: *FunctionBuilder, variable: Var) Error!ValueId {
         return self.useVarIn(variable, self.current);
     }
@@ -239,6 +274,17 @@ pub const FunctionBuilder = struct {
         const s = self.blockState(block);
         const value = try self.newValue(self.var_types.items[@intFromEnum(variable)], .{ .param = .{ .block = block, .index = @intCast(s.params.items.len) } });
         try s.params.append(self.alloc, value);
+        if (self.named.get(variable)) |local| {
+            var span = self.span;
+            span.is_stmt = false;
+            const head = s.head_insts;
+            try s.insts.insert(self.alloc, head, .{
+                .op = .{ .debug_value = .{ .local = local, .value = value } },
+                .result = null,
+                .span = span,
+            });
+            s.head_insts = head + 1;
+        }
         return value;
     }
 
@@ -263,12 +309,32 @@ pub const FunctionBuilder = struct {
         const saved = self.span;
         self.span = span;
         self.span.stmt = saved.stmt;
+        self.span.loop = saved.loop;
         return saved;
     }
 
     /// Return to a span `at` saved, and the statement it was in.
     pub fn restore(self: *FunctionBuilder, saved: ir.SrcSpan) void {
         self.span = saved;
+    }
+
+    /// A loop begins at the current span: what is emitted until `leaveLoop`
+    /// runs every iteration. `arena` is the body's, reset each iteration.
+    /// Returns the loop to go back to.
+    pub fn enterLoop(self: *FunctionBuilder, arena: ?ValueId) Error!ir.LoopId {
+        const outer = self.span.loop;
+        try self.loops.append(self.alloc, .{ .span = self.span, .parent = outer, .arena = arena });
+        self.span.loop = @enumFromInt(self.loops.items.len);
+        return outer;
+    }
+
+    pub fn leaveLoop(self: *FunctionBuilder, outer: ir.LoopId) void {
+        self.span.loop = outer;
+    }
+
+    /// `value` is bound to a local, or assigned to one, here.
+    pub fn plainStore(self: *FunctionBuilder, value: ValueId) Error!void {
+        try self.plain_stores.append(self.alloc, .{ .span = self.span, .value = value });
     }
 
     /// A statement begins at the current span: the next instruction or
@@ -286,6 +352,9 @@ pub const FunctionBuilder = struct {
     /// statement start.
     fn take(self: *FunctionBuilder) ir.SrcSpan {
         var span = self.span;
+        // An artificial instruction is no statement's head: the mark waits
+        // for the next instruction with a line.
+        if (span.artificial) return span;
         span.is_stmt = self.stmt_pending;
         self.stmt_pending = false;
         return span;
@@ -517,6 +586,18 @@ pub const FunctionBuilder = struct {
             out.* = slot;
             out.arena = try map.value(slot.arena);
         }
+        // A loop whose arena only a dead block defined keeps none.
+        const loops = try self.alloc.alloc(ir.LoopInfo, self.loops.items.len);
+        for (self.loops.items, loops) |info, *out| {
+            out.* = info;
+            out.arena = if (info.arena) |a| map.value(a) catch null else null;
+        }
+        // A store only a dead block made is not one.
+        var plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty;
+        for (self.plain_stores.items) |st| {
+            const value = map.value(st.value) catch continue;
+            try plain_stores.append(self.alloc, .{ .span = st.span, .value = value });
+        }
 
         return .{
             .name = self.name,
@@ -528,6 +609,9 @@ pub const FunctionBuilder = struct {
             .values = values.items,
             .blocks = blocks,
             .slots = slots,
+            .locals = self.locals.items,
+            .loops = loops,
+            .plain_stores = plain_stores.items,
         };
     }
 

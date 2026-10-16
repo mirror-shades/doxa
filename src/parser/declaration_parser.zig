@@ -481,14 +481,11 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             };
             try methods.append(method);
         } else {
-            // Check if this is a map field declaration (pub var map or pub const map)
+            // A field takes no `var` / `const`; only a map field is spelled with a keyword.
             if (self.peek().type == .VAR or self.peek().type == .CONST) {
-                const map_const = self.peek().type == .CONST;
-                self.advance();
-
-                if (self.peek().type != .MAP_KEYWORD) {
-                    return error.ExpectedMapKeyword;
-                }
+                return error.MapDeclaredWithVarOrConst;
+            }
+            if (self.peek().type == .MAP_KEYWORD) {
                 self.advance();
 
                 // Parse map name
@@ -523,7 +520,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                         .Map = .{
                             .key_type = key_type_expr,
                             .value_type = value_type_expr,
-                            .is_mutable = !map_const,
+                            .is_mutable = true,
                         },
                     },
                 };
@@ -1006,9 +1003,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
     }
 
-    if (self.peek().type == .MAP_KEYWORD) {
-        return try parseMapDecl(self, is_public);
-    }
+    if (self.peek().type == .MAP_KEYWORD) return error.MapDeclaredWithVarOrConst;
 
     const name = if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;

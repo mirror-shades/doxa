@@ -18,6 +18,10 @@
 //!   walk.
 //! - **Values.** An instruction whose value nothing uses and that has no
 //!   effect is removed.
+//!
+//! What it removes it records on the module (`ir.ArenaDecisions`): each copy
+//! kept as the value itself or dropped as dead, each arena and `@caller`
+//! dropped. What it keeps is the HIR itself. `--emit-memory` reads both.
 
 const std = @import("std");
 const ir = @import("ir.zig");
@@ -33,26 +37,109 @@ pub fn run(alloc: Alloc, module: *ir.Module) Alloc.Error!void {
     module.functions = functions;
     module.program.functions = signatures;
 
+    var record: Record = .{ .alloc = alloc };
     var changed = true;
     while (changed) {
         changed = false;
-        for (functions) |*f| {
-            if (try refineCopies(alloc, &module.program, f)) |next| {
+        for (functions, 0..) |*f, i| {
+            record.function = @enumFromInt(i);
+            if (try refineCopies(alloc, &module.program, f, &record)) |next| {
                 f.* = next;
                 changed = true;
             }
-            if (try removeDeadValues(alloc, f)) |next| {
+            if (try removeDeadValues(alloc, f, &record)) |next| {
                 f.* = next;
                 changed = true;
             }
         }
-        if (try dropDeadArenas(alloc, functions, signatures)) changed = true;
+        if (try dropDeadArenas(alloc, functions, signatures, &record)) changed = true;
     }
+    module.arena_decisions = .{
+        .removed_copies = record.copies.items,
+        .dropped_arenas = record.arenas.items,
+        .dropped_callers = record.callers.items,
+    };
+}
+
+/// The decisions `run` makes, as it makes them.
+const Record = struct {
+    alloc: Alloc,
+    function: ir.FunctionId = @enumFromInt(0),
+    copies: std.ArrayListUnmanaged(ir.RemovedCopy) = .empty,
+    arenas: std.ArrayListUnmanaged(ir.DroppedArena) = .empty,
+    callers: std.ArrayListUnmanaged(ir.FunctionId) = .empty,
+
+    fn copy(self: *Record, f: *const ir.Function, inst: ir.Inst, why: @FieldType(ir.RemovedCopy, "why")) Alloc.Error!void {
+        const result = inst.result.?;
+        try self.copies.append(self.alloc, .{ .function = self.function, .span = inst.span, .ty = f.typeOf(result).doxa, .why = why, .reason = copyReason(f, result) });
+    }
+};
+
+/// What the copy `value` is for: the first use of it that needed a copy.
+pub fn copyReason(f: *const ir.Function, value: ValueId) ir.CopyReason {
+    for (f.blocks) |block| {
+        for (block.insts) |inst| {
+            const reason: ?ir.CopyReason = switch (inst.op) {
+                .store => |st| if (st.value == value) .store else null,
+                .global_store => |g| if (g.value == value) .global else null,
+                .array_set => |st| if (st.value == value) .element else null,
+                .array_push => |st| if (st.value == value) .element else null,
+                .array_insert => |st| if (st.value == value) .element else null,
+                .map_set => |st| if (st.value == value) .element else null,
+                .field_set => |st| if (st.value == value) .element else null,
+                .call => |c| if (std.mem.indexOfScalar(ValueId, c.args, value) != null) .argument else null,
+                .call_zig => |c| if (std.mem.indexOfScalar(ValueId, c.args, value) != null) .argument else null,
+                else => null,
+            };
+            if (reason) |r| return r;
+        }
+        switch (block.term) {
+            .@"return" => |r| if (r == value) return .@"return",
+            else => {},
+        }
+        const Edge = struct {
+            value: ValueId,
+            found: *bool,
+            fn visit(ctx: @This(), call: ir.BlockCall) error{}!void {
+                if (std.mem.indexOfScalar(ValueId, call.args, ctx.value) != null) ctx.found.* = true;
+            }
+        };
+        var found = false;
+        block.term.forEachSuccessor(Edge{ .value = value, .found = &found }, Edge.visit) catch unreachable;
+        if (found) return .merge;
+    }
+    return .other;
+}
+
+/// What the arena opened by the `scope_enter` defining `arena` is for.
+pub fn arenaRole(f: *const ir.Function, arena: ValueId) ir.ArenaRole {
+    for (f.loops) |info| {
+        const body = info.arena orelse continue;
+        if (body == arena) return .loop_body;
+        if (opening(f, body)) |enter| if (enter.parent == arena) return .loop_state;
+    }
+    const enter = opening(f, arena) orelse return .block;
+    return switch (f.values[@intFromEnum(enter.parent)].def) {
+        // Opened under a parameter (`@caller`) or the root: the body's.
+        .param => .body,
+        .inst => |at| if (f.blocks[@intFromEnum(at.block)].insts[at.index].op == .root_arena) .body else .block,
+    };
+}
+
+fn opening(f: *const ir.Function, arena: ValueId) ?@FieldType(ir.Op, "scope_enter") {
+    const at = switch (f.values[@intFromEnum(arena)].def) {
+        .inst => |at| at,
+        .param => return null,
+    };
+    return switch (f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
+        .scope_enter => |e| e,
+        else => null,
+    };
 }
 
 // ── Copies ──
 
-fn refineCopies(alloc: Alloc, program: *const ir.Program, f: *const ir.Function) Alloc.Error!?ir.Function {
+fn refineCopies(alloc: Alloc, program: *const ir.Program, f: *const ir.Function, record: *Record) Alloc.Error!?ir.Function {
     // A function that does not verify is left for the verifier to report.
     const facts = try verify.facts(alloc, program, f) orelse return null;
     var edit = try Edit.init(alloc, f);
@@ -66,6 +153,7 @@ fn refineCopies(alloc: Alloc, program: *const ir.Program, f: *const ir.Function)
             const region = facts.region(c.operand) orelse continue;
             if (facts.outlives(region, c.arena)) {
                 // Already placed: the value itself.
+                try record.copy(f, inst, .outlives);
                 edit.alias[@intFromEnum(inst.result.?)] = c.operand;
                 edit.drop_inst[b][i] = true;
                 any = true;
@@ -98,7 +186,7 @@ fn isRemovable(op: ir.Op) bool {
     };
 }
 
-fn removeDeadValues(alloc: Alloc, f: *const ir.Function) Alloc.Error!?ir.Function {
+fn removeDeadValues(alloc: Alloc, f: *const ir.Function, record: *Record) Alloc.Error!?ir.Function {
     const used = try alloc.alloc(bool, f.values.len);
     var edit = try Edit.init(alloc, f);
     var any = false;
@@ -112,6 +200,10 @@ fn removeDeadValues(alloc: Alloc, f: *const ir.Function) Alloc.Error!?ir.Functio
                 if (edit.drop_inst[b][i]) continue;
                 const r = inst.result orelse continue;
                 if (used[@intFromEnum(r)] or !isRemovable(inst.op)) continue;
+                switch (inst.op) {
+                    .clone, .rehome => try record.copy(f, inst, .dead),
+                    else => {},
+                }
                 edit.drop_inst[b][i] = true;
                 changed = true;
                 any = true;
@@ -119,7 +211,26 @@ fn removeDeadValues(alloc: Alloc, f: *const ir.Function) Alloc.Error!?ir.Functio
         }
     }
     if (!any) return null;
+    // A `debug_value` names a value that is now dead: drop it with the value,
+    // or `Edit.apply` keeps a use of a dropped value.
+    for (f.blocks, 0..) |block, b| {
+        for (block.insts, 0..) |inst, i| {
+            if (edit.drop_inst[b][i]) continue;
+            if (std.meta.activeTag(inst.op) != .debug_value) continue;
+            if (survives(f, &edit, inst.op.debug_value.value)) continue;
+            edit.drop_inst[b][i] = true;
+        }
+    }
     return try edit.apply(alloc, f);
+}
+
+/// Whether `v` still has a definition after `edit`: a parameter always does
+/// (this pass drops none), an instruction unless it was dropped.
+fn survives(f: *const ir.Function, edit: *const Edit, v: ValueId) bool {
+    return switch (f.values[@intFromEnum(edit.resolve(v))].def) {
+        .param => true,
+        .inst => |d| !edit.drop_inst[@intFromEnum(d.block)][d.index],
+    };
 }
 
 /// Mark every value an instruction or terminator kept by `edit` reads.
@@ -135,6 +246,8 @@ fn markUses(f: *const ir.Function, used: []bool, edit: *const Edit) Alloc.Error!
     for (f.blocks, 0..) |block, b| {
         for (block.insts, 0..) |inst, i| {
             if (edit.drop_inst[b][i]) continue;
+            // A debug name is not a use: a value only a debugger reads is dead.
+            if (std.meta.activeTag(inst.op) == .debug_value) continue;
             ir.forEachOperand(&inst.op, m, Mark.mark) catch unreachable;
         }
         ir.forEachTermOperand(&block.term, m, Mark.mark) catch unreachable;
@@ -143,7 +256,7 @@ fn markUses(f: *const ir.Function, used: []bool, edit: *const Edit) Alloc.Error!
 
 // ── Arenas ──
 
-fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signature) Alloc.Error!bool {
+fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signature, record: *Record) Alloc.Error!bool {
     // Which callees' `@caller` is dead: the greatest fixpoint. Every
     // candidate starts dead and is revived when its arena is used even with
     // the other dead ones dropped, so a recursive cycle that allocates
@@ -182,6 +295,7 @@ fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signa
             for (block.insts, 0..) |inst, n| {
                 switch (inst.op) {
                     .scope_enter => if (!fam.used[fam.of(inst.result.?)]) {
+                        try record.arenas.append(alloc, .{ .function = @enumFromInt(i), .span = inst.span, .role = arenaRole(f, inst.result.?) });
                         edit.drop_inst[b][n] = true;
                         touched = true;
                     },
@@ -206,6 +320,7 @@ fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signa
             }
         }
         if (dead_caller[i]) {
+            try record.callers.append(alloc, @enumFromInt(i));
             edit.drop_param[0][f.callerArena().?] = true;
             touched = true;
         }
@@ -243,11 +358,11 @@ fn without(alloc: Alloc, comptime T: type, items: []const T, index: usize) Alloc
 
 /// The arena values of a function grouped by the arena they are: an opened
 /// arena with its resets and the block parameters that carry it.
-const Families = struct {
+pub const Families = struct {
     parent: []u32,
     used: []bool,
 
-    fn init(alloc: Alloc, f: *const ir.Function) Alloc.Error!Families {
+    pub fn init(alloc: Alloc, f: *const ir.Function) Alloc.Error!Families {
         const parent = try alloc.alloc(u32, f.values.len);
         for (parent, 0..) |*p, i| p.* = @intCast(i);
         var self = Families{ .parent = parent, .used = try alloc.alloc(bool, f.values.len) };
@@ -270,7 +385,7 @@ const Families = struct {
         return self;
     }
 
-    fn of(self: *const Families, v: ValueId) u32 {
+    pub fn of(self: *const Families, v: ValueId) u32 {
         var x = @intFromEnum(v);
         while (self.parent[x] != x) x = self.parent[x];
         return x;
@@ -297,7 +412,7 @@ const Families = struct {
         for (f.slots) |slot| use.mark(slot.arena) catch unreachable;
         for (f.blocks) |block| {
             for (block.insts) |inst| switch (inst.op) {
-                .scope_enter, .scope_exit, .scope_reset => {},
+                .scope_enter, .scope_exit, .scope_reset, .debug_value => {},
                 .call => |c| for (c.args, 0..) |a, k| {
                     const sig = signatures[@intFromEnum(c.callee)];
                     if (dead_caller[@intFromEnum(c.callee)] and k == sig.callerArena().?) continue;
@@ -442,7 +557,19 @@ const Edit = struct {
             out.* = slot;
             out.arena = try map.value(slot.arena);
         }
-        return .{ .name = f.name, .display_name = f.display_name, .span = f.span, .statements = f.statements, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots };
+        // A loop whose arena was dropped allocates nothing in it.
+        const loops = try alloc.alloc(ir.LoopInfo, f.loops.len);
+        for (f.loops, loops) |info, *out| {
+            out.* = info;
+            out.arena = if (info.arena) |a| if (renumber[@intFromEnum(self.resolve(a))] == none) null else try map.value(a) else null;
+        }
+        // A store of a value the pass removed stores nothing.
+        var plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty;
+        for (f.plain_stores) |st| {
+            if (renumber[@intFromEnum(self.resolve(st.value))] == none) continue;
+            try plain_stores.append(alloc, .{ .span = st.span, .value = try map.value(st.value) });
+        }
+        return .{ .name = f.name, .display_name = f.display_name, .span = f.span, .statements = f.statements, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots, .locals = f.locals, .loops = loops, .plain_stores = plain_stores.items };
     }
 
     fn terminator(self: *const Edit, alloc: Alloc, f: *const ir.Function, term: ir.Terminator, map: anytype) Alloc.Error!ir.Terminator {

@@ -85,7 +85,7 @@ pub const ErrorList = error{
     MissingEntryPointFunction,
     FunctionNotFound,
     UnsupportedFunctionCallType,
-    ExpectedMapKeyword,
+    MapDeclaredWithVarOrConst,
     ExpectedReturnsKeyword,
     ExpectedMethod,
     ExpectedLeftBraceOrReturnsKeyword,
@@ -157,6 +157,7 @@ pub const ErrorList = error{
     CodepointTooLarge,
 
     // Syntax & Parsing
+    NestingTooDeep,
     ExpectedNewline,
     ExpectedClosingParen,
     ExpectedExpression,
@@ -175,6 +176,7 @@ pub const ErrorList = error{
     ExpectedRightBrace,
     ExpectedRightUnion,
     ExpectedThen,
+    ExpectedMapThen,
     ExpectedElse,
     ExpectedColon,
     ExpectedCommaOrBracket,
@@ -409,6 +411,7 @@ pub const ErrorCode = struct {
     pub const INVALID_PLACEHOLDER_EXPRESSION = "E2028";
     pub const NESTED_DECLARATION = "E2029";
     pub const INVALID_THIS = "E2030";
+    pub const NESTING_TOO_DEEP = "E2031";
 
     // 3xxx - Memory & Ownership
     pub const MEMORY_ERROR = "E3001";

@@ -63,6 +63,8 @@ pub fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
+    try self.enterNesting();
+    defer self.leaveNesting();
     self.advance();
 
     var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
@@ -475,7 +477,11 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     // Create ForEach expression
     // Desugar foreach into Loop (init; cond; body; step)
     // for idx is 0; while idx < length(array); step idx += 1 { item is array[idx]; <body> }
-    const idx_name = if (index_name) |tok| tok else token.Token.init(.IDENTIFIER, "__idx", .{ .nothing = {} }, iterated.line, iterated.column, self.current_file, self.current_file_uri);
+    const idx_name = if (index_name) |tok| tok else blk: {
+        var t = token.Token.init(.IDENTIFIER, "__idx", .{ .nothing = {} }, iterated.line, iterated.column, self.current_file, self.current_file_uri);
+        t.synthetic = true;
+        break :blk t;
+    };
 
     const idx_type = ast.TypeInfo{ .base = .Int };
     const zero_expr = try self.allocator.create(ast.Expr);

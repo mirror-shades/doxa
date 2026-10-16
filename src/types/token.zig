@@ -26,12 +26,18 @@ pub const TokenType = enum {
     MODULO_EQUAL, // %=
     ASTERISK, // *
     ASTERISK_EQUAL, // *=
+    ASTERISK_WRAP, // *%
+    ASTERISK_WRAP_EQUAL, // *%=
     POWER, // **
     POWER_EQUAL, // **=
     PLUS, // +
     PLUS_EQUAL, // +=
+    PLUS_WRAP, // +%
+    PLUS_WRAP_EQUAL, // +%=
     MINUS, // -
     MINUS_EQUAL, // -=
+    MINUS_WRAP, // -%
+    MINUS_WRAP_EQUAL, // -%=
     BANG, // !
     BANG_EQUAL, // !=
     GREATER, // >
@@ -167,6 +173,9 @@ pub const Token = struct {
     column: usize,
     file: []const u8,
     file_uri: []const u8,
+    /// The parser made this token, not the source: a desugaring's own name.
+    /// A binding it names is not one a debugger shows.
+    synthetic: bool = false,
 
     pub fn init(token_type: TokenType, lexeme: []const u8, literal: TokenLiteral, line: usize, column: usize, file: []const u8, file_uri: []const u8) Token {
         return Token{

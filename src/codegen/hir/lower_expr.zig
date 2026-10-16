@@ -44,8 +44,8 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .ReturnExpr => |r| lower_control.returnFrom(l, r.value),
         .Unreachable => lower_control.unreachableAt(l),
         .Cast => lower_control.cast(l, e, true),
-        .ForAll => |q| lower_control.quantifier(l, q.array, q.condition, q.storage, .forall),
-        .Exists => |q| lower_control.quantifier(l, q.array, q.condition, q.storage, .exists),
+        .ForAll => |q| lower_control.quantifier(l, q.variable, q.array, q.condition, q.storage, .forall),
+        .Exists => |q| lower_control.quantifier(l, q.variable, q.array, q.condition, q.storage, .exists),
         .Break => lower_control.breakLoop(l),
         .Assert => |a| lower_control.assert(l, a.condition, a.message, a.location),
 
@@ -225,6 +225,9 @@ fn arithOp(t: anytype) ?ir.ArithOp {
         .DOUBLE_SLASH => .IntDiv,
         .MODULO => .Mod,
         .POWER => .Pow,
+        .PLUS_WRAP => .WrapAdd,
+        .MINUS_WRAP => .WrapSub,
+        .ASTERISK_WRAP => .WrapMul,
         else => null,
     };
 }
@@ -373,6 +376,12 @@ fn unary(l: *Lowering, e: *ast.Expr, u: ast.Unary) Error!?ValueId {
             const v = try l.exprAs(u.right.?, ty) orelse return null;
             return try l.define(.{ .neg = .{ .operand = v } }, ty);
         },
+        // `-%x` is `0 -% x`.
+        .MINUS_WRAP => {
+            const v = try l.exprAs(u.right.?, ty) orelse return null;
+            const zero = try l.constant(if (ty == .Byte) .{ .byte = 0 } else .{ .int = 0 }, ty);
+            return try l.define(.{ .arith = .{ .op = .WrapSub, .lhs = zero, .rhs = v } }, ty);
+        },
         .PLUS => return l.exprAs(u.right.?, ty),
         else => {
             l.g.report(ast.SourceSpan.fromToken(u.operator).location, ErrorCode.UNSUPPORTED_OPERATOR, "Unsupported unary operator: {}", .{u.operator.type});
@@ -388,6 +397,7 @@ fn assignment(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const target = try l.g.storeTarget(&e.base);
     const slot_type = try l.g.lowerType(target.slot);
     const v = try l.exprAs(assign.value.?, slot_type) orelse return null;
+    if (ir.isHeapType(slot_type)) try l.b.plainStore(v);
     try l.writeStorage(target, assign.name.lexeme, v);
     return try result(l, e, v, slot_type);
 }
@@ -723,7 +733,7 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
         // A member lent to a union parameter, or a fixed array to a dynamic
         // one, goes through a converted temporary that is read back after.
         const arena_value = try l.arena();
-        const slot = try l.b.addSlot(param_type, arena_value, "loan");
+        const slot = try l.b.addSlot(param_type, arena_value);
         const ref = try l.b.define(.{ .slot_addr = slot }, .{ .ref = param_type });
         const current = try l.readStorage(target, e.data.Variable.lexeme);
         const converted = try l.convert(current, slot_type, param_type);
@@ -734,7 +744,7 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
         return;
     }
     if (target.global) {
-        const id = try l.g.globalId(e.data.Variable.lexeme, slot_type);
+        const id = try l.g.globalId(e.data.Variable.lexeme, slot_type, l.b.span);
         try args.append(l.g.alloc, try l.b.define(.{ .global_addr = .{ .global = id, .root = l.root } }, .{ .ref = slot_type }));
         try args.append(l.g.alloc, l.root);
         return;

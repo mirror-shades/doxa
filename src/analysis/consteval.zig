@@ -7,9 +7,9 @@
 //! stand-in value — and is left to run.
 //!
 //! The arithmetic here is the program's arithmetic, operation for operation:
-//! `int` is checked, `byte` wraps mod 256, `float` is IEEE 754, `//` and `%`
+//! `int` and `byte` are checked, `float` is IEEE 754, `//` and `%`
 //! are floored, and the tetra operators read the same truth tables codegen
-//! emits. Where the program would trap — an `int` overflow, an integer
+//! emits. Where the program would trap — an `int` or `byte` overflow, an integer
 //! division by zero, a conversion with no value, text that names no number —
 //! a constant expression has no value, and that is a compile error at the
 //! operator (`report`). Text is read by the runtime's own parsers.
@@ -123,7 +123,7 @@ fn at(expr: *const ast.Expr, outcome: Outcome) Evaluation {
 /// `l op r` for a binary arithmetic, comparison or tetra operator.
 pub fn binary(op: TokenType, l: TokenLiteral, r: TokenLiteral) Outcome {
     return switch (op) {
-        .PLUS, .MINUS, .ASTERISK, .SLASH, .DOUBLE_SLASH, .MODULO, .POWER => arithmetic(op, l, r),
+        .PLUS, .MINUS, .ASTERISK, .SLASH, .DOUBLE_SLASH, .MODULO, .POWER, .PLUS_WRAP, .MINUS_WRAP, .ASTERISK_WRAP => arithmetic(op, l, r),
         .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL, .EQUALITY, .BANG_EQUAL => compare(op, l, r),
         .AND, .OR, .XOR, .IFF, .NAND, .NOR, .IMPLIES => switch (l) {
             .tetra => |a| switch (r) {
@@ -142,6 +142,11 @@ pub fn unary(op: TokenType, v: TokenLiteral) Outcome {
         .MINUS => switch (v) {
             .int => |i| if (std.math.negate(i)) |n| .{ .value = .{ .int = n } } else |_| .{ .fault = .overflow },
             .float => |f| .{ .value = .{ .float = -f } },
+            .byte => |b| if (b == 0) .{ .value = .{ .byte = 0 } } else .{ .fault = .overflow },
+            else => .not_constant,
+        },
+        .MINUS_WRAP => switch (v) {
+            .int => |i| .{ .value = .{ .int = 0 -% i } },
             .byte => |b| .{ .value = .{ .byte = 0 -% b } },
             else => .not_constant,
         },
@@ -258,6 +263,9 @@ fn intArithmetic(op: TokenType, a: i64, b: i64) Outcome {
         .PLUS => std.math.add(i64, a, b) catch return .{ .fault = .overflow },
         .MINUS => std.math.sub(i64, a, b) catch return .{ .fault = .overflow },
         .ASTERISK => std.math.mul(i64, a, b) catch return .{ .fault = .overflow },
+        .PLUS_WRAP => a +% b,
+        .MINUS_WRAP => a -% b,
+        .ASTERISK_WRAP => a *% b,
         .DOUBLE_SLASH => blk: {
             if (b == 0) return .{ .fault = .division_by_zero };
             if (a == std.math.minInt(i64) and b == -1) return .{ .fault = .overflow };
@@ -269,30 +277,50 @@ fn intArithmetic(op: TokenType, a: i64, b: i64) Outcome {
             if (b == -1) break :blk 0;
             break :blk @mod(a, b);
         },
-        // `int ** int` is computed in float and truncated, as at run time;
-        // a power with no int value overflows.
-        .POWER => rt.truncateToInt(std.math.pow(f64, @floatFromInt(a), @floatFromInt(b))) orelse return .{ .fault = .overflow },
+        .POWER => intPower(a, b) orelse return .{ .fault = .overflow },
         else => return .not_constant,
     };
     return .{ .value = .{ .int = result } };
 }
 
+/// `a ** b` exactly, as `@doxa.int.pow`: null when the power has no `int`
+/// value. A negative exponent truncates the fraction toward zero, and `0` to
+/// one is infinite.
+fn intPower(a: i64, b: i64) ?i64 {
+    if (b < 0) return switch (a) {
+        0 => null,
+        1 => 1,
+        -1 => if (b & 1 != 0) -1 else 1,
+        else => 0,
+    };
+    var acc: i64 = 1;
+    var base = a;
+    var exp = b;
+    while (exp != 0) {
+        if (exp & 1 != 0) acc = std.math.mul(i64, acc, base) catch return null;
+        exp >>= 1;
+        // Squaring past the range matters only when a later bit uses it.
+        if (exp != 0) base = std.math.mul(i64, base, base) catch return null;
+    }
+    return acc;
+}
+
 fn byteArithmetic(op: TokenType, a: u8, b: u8) Outcome {
     const result: u8 = switch (op) {
-        .PLUS => a +% b,
-        .MINUS => a -% b,
-        .ASTERISK => a *% b,
+        .PLUS => std.math.add(u8, a, b) catch return .{ .fault = .overflow },
+        .MINUS => std.math.sub(u8, a, b) catch return .{ .fault = .overflow },
+        .ASTERISK => std.math.mul(u8, a, b) catch return .{ .fault = .overflow },
+        .PLUS_WRAP => a +% b,
+        .MINUS_WRAP => a -% b,
+        .ASTERISK_WRAP => a *% b,
         .DOUBLE_SLASH => if (b == 0) return .{ .fault = .division_by_zero } else a / b,
         .MODULO => if (b == 0) return .{ .fault = .division_by_zero } else a % b,
         .POWER => blk: {
-            // Square-and-multiply mod 256, as `@doxa.byte.pow`.
-            var base = a;
-            var exp = b;
+            // For a base of at least 2 the running product only grows, so
+            // the first step past 255 is the power's overflow.
+            if (a <= 1) break :blk if (a == 0 and b != 0) 0 else 1;
             var acc: u8 = 1;
-            while (exp != 0) : (exp >>= 1) {
-                if (exp & 1 != 0) acc *%= base;
-                base *%= base;
-            }
+            for (0..b) |_| acc = std.math.mul(u8, acc, a) catch return .{ .fault = .overflow };
             break :blk acc;
         },
         else => return .not_constant,
@@ -429,12 +457,28 @@ test "int arithmetic is checked" {
     try std.testing.expectEqual(Outcome{ .value = .{ .int = 1024 } }, binary(.POWER, .{ .int = 2 }, .{ .int = 10 }));
 }
 
-test "byte arithmetic wraps and float division follows IEEE 754" {
-    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 44 } }, binary(.PLUS, .{ .byte = 200 }, .{ .byte = 100 }));
-    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 0 } }, binary(.POWER, .{ .byte = 2 }, .{ .byte = 8 }));
+test "byte arithmetic faults on overflow and float division follows IEEE 754" {
+    try std.testing.expectEqual(Outcome{ .fault = .overflow }, binary(.PLUS, .{ .byte = 200 }, .{ .byte = 100 }));
+    try std.testing.expectEqual(Outcome{ .fault = .overflow }, binary(.MINUS, .{ .byte = 0 }, .{ .byte = 1 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 255 } }, binary(.PLUS, .{ .byte = 200 }, .{ .byte = 55 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 44 } }, binary(.PLUS_WRAP, .{ .byte = 200 }, .{ .byte = 100 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 255 } }, unary(.MINUS_WRAP, .{ .byte = 1 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .int = std.math.minInt(i64) } }, binary(.PLUS_WRAP, .{ .int = std.math.maxInt(i64) }, .{ .int = 1 }));
+    try std.testing.expectEqual(Outcome{ .fault = .overflow }, binary(.POWER, .{ .byte = 2 }, .{ .byte = 8 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 128 } }, binary(.POWER, .{ .byte = 2 }, .{ .byte = 7 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .byte = 1 } }, binary(.POWER, .{ .byte = 1 }, .{ .byte = 255 }));
     try std.testing.expectEqual(Outcome{ .fault = .division_by_zero }, binary(.DOUBLE_SLASH, .{ .byte = 1 }, .{ .byte = 0 }));
     const inf = binary(.SLASH, .{ .int = 1 }, .{ .int = 0 });
     try std.testing.expect(std.math.isPositiveInf(inf.value.float));
+}
+
+test "an int power is exact and faults past the range" {
+    try std.testing.expectEqual(Outcome{ .value = .{ .int = 50031545098999707 } }, binary(.POWER, .{ .int = 3 }, .{ .int = 35 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .int = std.math.minInt(i64) } }, binary(.POWER, .{ .int = -2 }, .{ .int = 63 }));
+    try std.testing.expectEqual(Outcome{ .fault = .overflow }, binary(.POWER, .{ .int = 2 }, .{ .int = 63 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .int = 0 } }, binary(.POWER, .{ .int = 2 }, .{ .int = -1 }));
+    try std.testing.expectEqual(Outcome{ .value = .{ .int = -1 } }, binary(.POWER, .{ .int = -1 }, .{ .int = -3 }));
+    try std.testing.expectEqual(Outcome{ .fault = .overflow }, binary(.POWER, .{ .int = 0 }, .{ .int = -1 }));
 }
 
 test "conversions without a value fault" {

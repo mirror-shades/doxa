@@ -582,6 +582,8 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
 }
 
 pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
+    try self.enterNesting();
+    defer self.leaveNesting();
     const type_token = self.peek();
     const type_name = type_token.lexeme;
 

@@ -93,6 +93,10 @@ pub const rules = blk: {
     r.set(.PLUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
     r.set(.MINUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
     r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
+    // Wrapping arithmetic (`docs/math.md`): `-%x` negates with wrapping.
+    r.set(.PLUS_WRAP, .{ .infix = binary, .precedence = .TERM });
+    r.set(.MINUS_WRAP, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
+    r.set(.ASTERISK_WRAP, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.DOUBLE_SLASH, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.MODULO, .{ .infix = binary, .precedence = .FACTOR });
@@ -103,6 +107,9 @@ pub const rules = blk: {
     r.set(.MINUS_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.POWER_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.PLUS_WRAP_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.MINUS_WRAP_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.ASTERISK_WRAP_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.DOUBLE_SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
@@ -245,6 +252,8 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
 /// spans its own source, first token to last: the rules build a node around
 /// one token (an operator, a keyword), and the span is set here, once.
 pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*ast.Expr {
+    try self.enterNesting();
+    defer self.leaveNesting();
     const current_token = self.peek();
     const prefix_rule = getRule(current_token.type).prefix;
 
@@ -325,6 +334,9 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                 .MINUS_EQUAL => .MINUS,
                 .POWER_EQUAL => .POWER,
                 .ASTERISK_EQUAL => .ASTERISK,
+                .PLUS_WRAP_EQUAL => .PLUS_WRAP,
+                .MINUS_WRAP_EQUAL => .MINUS_WRAP,
+                .ASTERISK_WRAP_EQUAL => .ASTERISK_WRAP,
                 .SLASH_EQUAL => .SLASH,
                 .DOUBLE_SLASH_EQUAL => .DOUBLE_SLASH,
                 .MODULO_EQUAL => .MODULO,

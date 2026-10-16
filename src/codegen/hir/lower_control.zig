@@ -53,6 +53,12 @@ fn fallOffValue(l: *Lowering) Error!?ValueId {
 /// Lower one statement. False when control does not reach its end, so the
 /// statements after it are dead.
 pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
+    // Declarations and imports are compile time only: no statement, so no
+    // step stop or line count is left pending for the code after them.
+    switch (stmt.data) {
+        .FunctionDecl, .ZigDecl, .EnumDecl, .GroupDecl, .Import => return true,
+        else => {},
+    }
     const saved = try l.enter(stmt.base.location());
     defer l.leave(saved);
     try l.b.beginStatement();
@@ -73,8 +79,7 @@ pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
         },
         .Lift => |lift| return try effect(l, lift.value) != null,
         .Assert => |a| return try assert(l, a.condition, a.message, a.location) != null,
-        // Declarations and imports are compile time only.
-        .FunctionDecl, .ZigDecl, .EnumDecl, .GroupDecl, .Import => {},
+        .FunctionDecl, .ZigDecl, .EnumDecl, .GroupDecl, .Import => unreachable,
     }
     return true;
 }
@@ -99,11 +104,14 @@ fn varDecl(l: *Lowering, stmt: ast.Stmt, name: ast.Token, initializer: ?*ast.Exp
         if (init.data == .Array and init.data.Array.len == 0 and ty == .Array) break :blk try emptyArray(l, ty);
         break :blk try l.exprAs(init, ty) orelse return false;
     } else try defaultValue(l, ty, target.slot);
+    if (ir.isHeapType(ty)) try l.b.plainStore(value);
 
     if (target.global) {
-        try l.writeStorage(target, name.lexeme, value);
+        try l.declareGlobalStorage(target, name.lexeme, value);
     } else {
-        try l.declareLocal(target.storage, name.lexeme, ty, value);
+        // A token the parser synthesized (an `each` index) is not a name the
+        // program spells.
+        try l.declareLocal(target.storage, if (name.synthetic) null else name.lexeme, ty, value, 0);
     }
     return true;
 }
@@ -343,7 +351,37 @@ pub fn assert(l: *Lowering, condition: *ast.Expr, message: ?*ast.Expr, location:
 
 // ── Blocks and branches ──
 
+/// A braced block is a lifetime: it opens an arena, a child of the innermost
+/// one, that its `}` and every edge out of it close. Its value is re-homed
+/// into the arena around it. The arena pass drops the arena of a block that
+/// allocates nothing.
 pub fn blockExpr(l: *Lowering, e: *ast.Expr, want: bool) Error!?ValueId {
+    if (!e.data.Block.braced) return blockBody(l, e, want);
+    const outer_depth = l.arenas.items.len;
+    const outer = try l.arena();
+    try l.pushArena(try l.b.define(.{ .scope_enter = .{ .parent = outer } }, .arena), .owned);
+    defer l.arenas.shrinkRetainingCapacity(outer_depth);
+
+    var value = try blockBody(l, e, want) orelse return null;
+    if (want) value = try l.rehome(outer, value, try l.g.typeOf(e));
+    // Falling off the end closes it at its `}`.
+    const saved = try l.enter(closingBrace(e.base.location()));
+    defer l.leave(saved);
+    try l.exitArenas(outer_depth);
+    return value;
+}
+
+/// The `}` that ends a node spanning `{ … }`.
+fn closingBrace(span: Location) Location {
+    var at = span;
+    at.range.start_line = span.range.end_line;
+    at.range.start_col = span.range.end_col - 1;
+    return at;
+}
+
+/// A block's statements and value, in the arena already innermost: a loop's
+/// body runs in the loop's own body arena.
+fn blockBody(l: *Lowering, e: *ast.Expr, want: bool) Error!?ValueId {
     const data = e.data.Block;
     try l.pushDefers();
     for (data.statements) |stmt| {
@@ -447,6 +485,8 @@ pub fn loop(l: *Lowering, lp: ast.Loop) Error!?ValueId {
     const exit = try l.b.createBlock();
     try l.b.jump(.{ .block = header });
 
+    // The header, the body and the step run every iteration.
+    const outer_loop = try l.b.enterLoop(body_arena);
     l.b.switchTo(header);
     const c = if (lp.condition) |condition| try l.cond(condition) else try l.b.define(.{ .tetra_holds = .{ .operand = try l.constant(.{ .tetra = .true }, .Tetra) } }, .cond);
     if (c) |go| try l.b.branch(go, .{ .block = body }, .{ .block = exit });
@@ -461,7 +501,10 @@ pub fn loop(l: *Lowering, lp: ast.Loop) Error!?ValueId {
             .arena_depth = l.arenas.items.len,
             .defer_depth = l.defers.items.len,
         });
-        const reached = try effect(l, lp.body);
+        const reached = switch (lp.body.data) {
+            .Block => try blockBody(l, lp.body, false),
+            else => try effect(l, lp.body),
+        };
         _ = l.loops.pop();
         if (reached != null) try l.b.jump(.{ .block = latch });
     }
@@ -474,6 +517,7 @@ pub fn loop(l: *Lowering, lp: ast.Loop) Error!?ValueId {
         if (stepped != null) try l.b.jump(.{ .block = header });
     }
     try l.b.seal(header);
+    l.b.leaveLoop(outer_loop);
 
     try l.b.seal(exit);
     if (l.b.isDead(exit)) return null;
@@ -488,7 +532,7 @@ pub const Quantifier = enum { exists, forall };
 /// element to `x`. `exists` is `true` at the first element `p` holds for and
 /// `false` after the last; `forall` is `false` at the first it does not and
 /// `true` after the last.
-pub fn quantifier(l: *Lowering, array: *ast.Expr, condition: *ast.Expr, storage: ?u32, kind: Quantifier) Error!?ValueId {
+pub fn quantifier(l: *Lowering, variable: ast.Token, array: *ast.Expr, condition: *ast.Expr, storage: ?u32, kind: Quantifier) Error!?ValueId {
     const array_type = try l.g.typeOf(array);
     const element = array_type.Array.element.*;
     const items = try l.expr(array) orelse return null;
@@ -505,6 +549,7 @@ pub fn quantifier(l: *Lowering, array: *ast.Expr, condition: *ast.Expr, storage:
     const decided = try l.constant(.{ .tetra = if (kind == .exists) .true else .false }, .Tetra);
     try l.b.jump(.{ .block = header });
 
+    const outer_loop = try l.b.enterLoop(null);
     l.b.switchTo(header);
     const i = try l.b.useVar(index);
     const more = try l.b.define(.{ .cmp = .{ .op = .Lt, .lhs = i, .rhs = count } }, .cond);
@@ -513,7 +558,7 @@ pub fn quantifier(l: *Lowering, array: *ast.Expr, condition: *ast.Expr, storage:
 
     l.b.switchTo(body);
     const item = try l.define(.{ .array_get = .{ .array = items, .index = i } }, element);
-    if (storage) |s| try l.declareLocal(s, "quantified", element, item);
+    if (storage) |s| try l.declareLocal(s, variable.lexeme, element, item, 0);
     if (try l.cond(condition)) |holds| {
         if (kind == .exists) {
             try l.b.branch(holds, .{ .block = done, .args = &.{decided} }, .{ .block = next });
@@ -529,6 +574,7 @@ pub fn quantifier(l: *Lowering, array: *ast.Expr, condition: *ast.Expr, storage:
         try l.b.jump(.{ .block = header });
     }
     try l.b.seal(header);
+    l.b.leaveLoop(outer_loop);
     try l.b.seal(done);
     l.b.switchTo(done);
     return answer;
@@ -583,7 +629,7 @@ pub fn cast(l: *Lowering, e: *ast.Expr, want: bool) Error!?ValueId {
 /// branch's narrowed type.
 fn bindCast(l: *Lowering, name: []const u8, binding: ast.CastBinding, subject: ValueId, subject_type: HIRType) Error!void {
     const narrowed = try l.g.lowerType(binding.type_info);
-    try l.declareLocal(binding.storage, name, narrowed, try l.convert(subject, subject_type, narrowed));
+    try l.declareLocal(binding.storage, name, narrowed, try l.convert(subject, subject_type, narrowed), 0);
 }
 
 const Test = union(enum) {
@@ -866,6 +912,6 @@ fn bindDestructured(l: *Lowering, case: ast.MatchCase, subject: ValueId, subject
             if (std.mem.eql(u8, f.name, name.lexeme)) break f;
         } else unreachable; // analysis bound only declared fields
         const v = try l.define(.{ .field_get = .{ .object = object, .index = field.index } }, field.hir_type);
-        try l.declareLocal(storage, name.lexeme, field.hir_type, v);
+        try l.declareLocal(storage, name.lexeme, field.hir_type, v, 0);
     }
 }

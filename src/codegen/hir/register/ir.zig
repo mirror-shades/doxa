@@ -17,7 +17,9 @@ pub const EnumId = hir_types.EnumId;
 
 /// `IntDiv` and `Mod` are floored (`docs/math.md`); `Div` of two ints is a
 /// float division the generator converts into.
-pub const ArithOp = enum { Add, Sub, Mul, Div, IntDiv, Mod, Pow };
+/// `WrapAdd`, `WrapSub` and `WrapMul` are `+%`, `-%` and `*%`: modular, never
+/// checked. Every other `int` or `byte` `Add` / `Sub` / `Mul` faults on overflow.
+pub const ArithOp = enum { Add, Sub, Mul, Div, IntDiv, Mod, Pow, WrapAdd, WrapSub, WrapMul };
 pub const CompareOp = enum { Eq, Ne, Lt, Le, Gt, Ge };
 pub const ModuleId = ids.ModuleId;
 
@@ -35,6 +37,44 @@ pub const SrcSpan = struct {
     /// The statement this belongs to: an index into its function's
     /// `statements`. Statement 0 is the prologue, at the declaration.
     stmt: u32 = 0,
+    /// Code the compiler made that no source line stands for (the call from
+    /// `__doxa_init` into the entry): a debugger shows it at line 0, so a
+    /// step never stops on it and a backtrace omits its frame. `line` and
+    /// `column` still name the place, for a fault there.
+    artificial: bool = false,
+    /// The innermost loop this runs in, every iteration: a `LoopId` into its
+    /// function's `loops`, or `.none` outside every loop. A loop's set-up (its
+    /// counter's declaration, its arenas' entry) and its exit are outside it.
+    loop: LoopId = .none,
+};
+
+/// A loop of a function, by `SrcSpan.loop`. Lowering records it; nothing
+/// reconstructs it from the control-flow graph.
+pub const LoopId = enum(u32) {
+    none = 0,
+    _,
+};
+
+pub const LoopInfo = struct {
+    /// The loop's own statement.
+    span: SrcSpan,
+    /// The loop it is nested in.
+    parent: LoopId,
+    /// The arena its body allocates in, reset every iteration; null for a
+    /// loop that opens none (a quantifier), or once the arena pass finds it
+    /// unused.
+    arena: ?ValueId,
+};
+
+/// A plain store: a heap value bound to a local or assigned to one, as
+/// lowering wrote it (`plan/diagnostics-and-observability.md` step 14). The
+/// value is the one stored, before any copy into the local's arena. Today
+/// the local shares it; under B (plain stores copy) a value another binding
+/// still holds would be copied here. `--emit-memory` reads it; nothing in
+/// code generation does.
+pub const PlainStore = struct {
+    span: SrcSpan,
+    value: ValueId,
 };
 
 pub const ValueId = enum(u32) { _ };
@@ -43,6 +83,7 @@ pub const BlockId = enum(u32) {
     _,
 };
 pub const SlotId = enum(u32) { _ };
+pub const LocalId = enum(u32) { _ };
 pub const GlobalId = enum(u32) { _ };
 pub const FunctionId = enum(u32) { _ };
 pub const ZigFunctionId = enum(u32) { _ };
@@ -251,6 +292,12 @@ pub const Op = union(enum) {
     // ── Input and output ──
     print: Unary,
     peek: struct { operand: ValueId, display: PeekDisplay },
+
+    // ── Debug names ──
+    /// The value a named binding holds, here. An effect, and not a use: a
+    /// value a debugger names is still dead if nothing else reads it
+    /// (`arenas.zig`). Lowered to `#dbg_value` under `-g`, nothing otherwise.
+    debug_value: struct { local: LocalId, value: ValueId },
 };
 
 /// What a peek shows beside the value.
@@ -326,11 +373,29 @@ pub const Block = struct {
 
 /// Addressable storage: a local lent as `^`, or a narrowed receiver read
 /// through its box. Its heap contents live in `arena`, which must outlive
-/// every value stored in it.
+/// every value stored in it. A slot a program binds is named by the `LocalInfo`
+/// that holds it; a slot lowering makes for itself (a converted loan) has no
+/// name.
 pub const SlotInfo = struct {
     ty: HIRType,
     arena: ValueId,
+};
+
+/// A name a debugger shows for one binding. The slot a lent local holds is
+/// named here, never on `SlotInfo`: a slot a program binds has one, a slot
+/// lowering makes for itself does not.
+pub const LocalInfo = struct {
     name: []const u8,
+    /// Where the name is written.
+    span: SrcSpan,
+    /// The addressable storage the name holds (`#dbg_declare`), or null when
+    /// it is an SSA value named by a `debug_value` (`#dbg_value`).
+    slot: ?SlotId,
+    /// The parameter it is, 1-based over the parameters the program declares
+    /// (`this` first), or 0 for a local. A property of the binding, never of
+    /// the value it holds: `var current is x` holds `x`'s value and is no
+    /// parameter.
+    arg: u32 = 0,
 };
 
 /// What a function parameter is, beyond its type.
@@ -362,6 +427,14 @@ pub const Function = struct {
     values: []const ValueInfo,
     blocks: []const Block,
     slots: []const SlotInfo,
+    /// Every name the program binds and a debugger shows: a visible parameter,
+    /// `this`, a `^` parameter, a local, an `as` or match binding. A compiler
+    /// temporary is not here.
+    locals: []const LocalInfo,
+    /// Every loop, by `SrcSpan.loop`: `loops[id - 1]`.
+    loops: []const LoopInfo = &.{},
+    /// Every plain store, in lowering order.
+    plain_stores: []const PlainStore = &.{},
 
     pub fn params(self: *const Function) []const ValueId {
         return self.blocks[0].params;
@@ -376,6 +449,11 @@ pub const Function = struct {
             if (role == .caller_arena) return @intCast(i);
         }
         return null;
+    }
+
+    pub fn loop(self: *const Function, id: LoopId) ?*const LoopInfo {
+        if (id == .none) return null;
+        return &self.loops[@intFromEnum(id) - 1];
     }
 };
 
@@ -394,8 +472,14 @@ pub const Signature = struct {
 };
 
 pub const Global = struct {
+    /// The link name the global's storage is emitted under (mangled).
     name: []const u8,
+    /// The name as the program spells it, for debug info.
+    display_name: []const u8,
     ty: HIRType,
+    /// Where the global is declared. A use registers the global first (in
+    /// whatever function reaches it), and the declaration overwrites this.
+    span: SrcSpan,
 };
 
 /// What the verifier and the printer need to know about the program around a
@@ -421,7 +505,6 @@ pub const Program = struct {
     /// Canonical keys (`ModuleGraph.typeKey`) by id: the identity a runtime
     /// lookup by type uses.
     struct_keys: []const []const u8 = &.{},
-    enum_keys: []const []const u8 = &.{},
     /// Field names by `StructId`, in declaration order.
     struct_field_names: []const []const []const u8 = &.{},
     /// Variant names by `EnumId`, by variant index.
@@ -458,6 +541,43 @@ pub const Module = struct {
     /// A reflection site whose struct types cannot be enumerated: every
     /// struct keeps its descriptor.
     force_struct_descriptors: bool,
+    /// What the arena pass removed, recorded where it decided
+    /// (`arenas.zig`); `--emit-memory` reads it, and never re-derives it.
+    arena_decisions: ArenaDecisions = .{},
+};
+
+/// The arena pass's removals. What it keeps is the HIR itself.
+pub const ArenaDecisions = struct {
+    removed_copies: []const RemovedCopy = &.{},
+    dropped_arenas: []const DroppedArena = &.{},
+    /// Functions whose `@caller` parameter was dropped.
+    dropped_callers: []const FunctionId = &.{},
+};
+
+/// What a copy's result was for: why lowering placed a copy there.
+pub const CopyReason = enum { store, global, element, argument, @"return", merge, other };
+
+pub const RemovedCopy = struct {
+    function: FunctionId,
+    span: SrcSpan,
+    ty: HIRType,
+    why: enum {
+        /// The value already lived where it was going: the copy is the value.
+        outlives,
+        /// Nothing used the copy.
+        dead,
+    },
+    reason: CopyReason,
+};
+
+/// What an arena a function opens is for.
+pub const ArenaRole = enum { body, loop_state, loop_body, block };
+
+pub const DroppedArena = struct {
+    function: FunctionId,
+    /// Its `scope_enter`'s.
+    span: SrcSpan,
+    role: ArenaRole,
 };
 
 /// Call `f` with every operand of `op`, in field order.

@@ -83,6 +83,8 @@ pub const Generator = struct {
     zig_ids: std.StringHashMapUnmanaged(ir.ZigFunctionId) = .empty,
     globals: std.ArrayListUnmanaged(ir.Global) = .empty,
     global_ids: std.StringHashMapUnmanaged(ir.GlobalId) = .empty,
+    /// The name each global's link name was declared under, for debug info.
+    global_display: std.StringHashMapUnmanaged([]const u8) = .empty,
 
     /// Struct types that reach a reflection site (`"{x}"`, `@string`, a peek)
     /// keep their runtime descriptor; a group or unresolved reflection target
@@ -128,6 +130,7 @@ pub const Generator = struct {
     fn bindGlobalLinkNames(self: *Generator) !void {
         for (self.semantic.global_sites.values()) |site| {
             const link = try self.graph.mangle(self.alloc, site.symbol.module, .global, &.{site.symbol.name});
+            try self.global_display.put(self.alloc, link, site.symbol.name);
             switch (site.place) {
                 .name => |token| token.lexeme = link,
                 .member => |expr| {
@@ -332,12 +335,27 @@ pub const Generator = struct {
     // ── Globals ──
 
     /// The global a module-level binding names, by its link name and the
-    /// type of its storage.
-    pub fn globalId(self: *Generator, link_name: []const u8, ty: HIRType) Error!ir.GlobalId {
+    /// type of its storage. `span` is where it is read or written; the
+    /// declaration overwrites it (`declareGlobal`).
+    pub fn globalId(self: *Generator, link_name: []const u8, ty: HIRType, span: ir.SrcSpan) Error!ir.GlobalId {
         if (self.global_ids.get(link_name)) |id| return id;
         const id: ir.GlobalId = @enumFromInt(self.globals.items.len);
-        try self.globals.append(self.alloc, .{ .name = link_name, .ty = ty });
+        try self.globals.append(self.alloc, .{
+            .name = link_name,
+            .display_name = self.global_display.get(link_name) orelse link_name,
+            .ty = ty,
+            .span = span,
+        });
         try self.global_ids.put(self.alloc, link_name, id);
+        return id;
+    }
+
+    /// A module-level `var`: the global's own declaration, whose line a
+    /// debugger's "go to definition" lands on. A use registers the global
+    /// first, so the span is set here rather than at first mention.
+    pub fn declareGlobal(self: *Generator, link_name: []const u8, ty: HIRType, span: ir.SrcSpan) Error!ir.GlobalId {
+        const id = try self.globalId(link_name, ty, span);
+        self.globals.items[@intFromEnum(id)].span = span;
         return id;
     }
 
@@ -361,21 +379,27 @@ pub const Generator = struct {
         try l.pushArena(body, .owned);
 
         var next: usize = 1;
+        // Each parameter's number as a debugger shows it: `this` first.
+        var arg: u32 = 0;
         if (decl.receiver != null) {
             l.this = values[1];
+            arg += 1;
+            try l.nameValue("this", values[1], arg);
             next = 2;
         }
         for (decl.params, decl.param_types, decl.param_mutated) |param, ty, mutated| {
             const storage = try self.paramStorage(param);
+            arg += 1;
             if (param.is_alias) {
                 try l.locals.put(self.alloc, storage, .{ .alias = .{ .ref = values[next], .arena = values[next + 1] } });
+                try l.nameValue(param.name.lexeme, values[next], arg);
                 next += 2;
             } else {
                 var value = values[next];
                 // A by-value heap parameter the body writes through is copied,
                 // so the caller's object is not changed (`docs/alias.md`).
                 if (mutated and ir.isHeapType(ty)) value = try l.b.define(.{ .clone = .{ .arena = body, .operand = value } }, .of(ty));
-                try l.declareLocal(storage, param.name.lexeme, ty, value);
+                try l.declareLocal(storage, param.name.lexeme, ty, value, arg);
                 next += 1;
             }
         }
@@ -392,6 +416,8 @@ pub const Generator = struct {
         // Its prologue (the root arena) belongs to no statement: the entry
         // file's start.
         var l = try Lowering.init(self, "__doxa_init", .Nothing, entry, .{ .module = entry, .line = 1, .column = 1 });
+        // What a debugger and a backtrace call it: no program spells it.
+        l.b.display_name = "<globals>";
         try l.start();
         try l.pushArena(l.root, .borrowed);
         try l.pushDefers();
@@ -409,9 +435,15 @@ pub const Generator = struct {
             if (!try lower_control.statement(&l, stmt)) return l.finish();
         }
 
+        // The call into the entry stands for no line: a backtrace ends at the
+        // entry, and a fault under a global's initializer still shows init.
         for (self.functions.items, 0..) |decl, i| {
             if (!decl.is_entry) continue;
+            var span = l.b.span;
+            span.artificial = true;
+            const saved = l.b.at(span);
             _ = try l.call(@enumFromInt(i), &.{l.root});
+            l.b.restore(saved);
             break;
         }
         if (!try l.popDefers()) return l.finish();
@@ -468,11 +500,9 @@ pub const Generator = struct {
 
         const enums = &self.semantic.enum_table;
         const enum_names = try self.alloc.alloc([]const u8, enums.entries.items.len);
-        const enum_keys = try self.alloc.alloc([]const u8, enums.entries.items.len);
         const enum_variants = try self.alloc.alloc([]const []const u8, enums.entries.items.len);
-        for (enums.entries.items, enum_names, enum_keys, enum_variants) |entry, *name, *key, *variants| {
+        for (enums.entries.items, enum_names, enum_variants) |entry, *name, *variants| {
             name.* = entry.ref.name;
-            key.* = entry.key.?;
             const variant_names = try self.alloc.alloc([]const u8, entry.variants.len);
             for (entry.variants) |v| variant_names[v.index] = v.name;
             variants.* = variant_names;
@@ -500,7 +530,6 @@ pub const Generator = struct {
             .enum_names = enum_names,
             .group_names = group_names,
             .struct_keys = struct_keys,
-            .enum_keys = enum_keys,
             .struct_field_names = struct_field_names,
             .enum_variants = enum_variants,
             .files = files,
@@ -839,27 +868,45 @@ pub const Lowering = struct {
 
     // ── Locals ──
 
+    /// A parameter a debugger shows (`this`, a `^` parameter): its value is
+    /// named where the parameter arrives.
+    pub fn nameValue(self: *Lowering, name: []const u8, value: ValueId, arg: u32) Error!void {
+        const id = try self.b.addLocal(name, self.b.span, null, arg);
+        try self.b.effect(.{ .debug_value = .{ .local = id, .value = value } });
+    }
+
     /// Bind a new local of `ty`, initialized to `value`, in the innermost
-    /// arena. A local lent as `^` is a slot; any other is an SSA variable.
-    pub fn declareLocal(self: *Lowering, storage: u32, name: []const u8, ty: HIRType, value: ValueId) Error!void {
+    /// arena. A local lent as `^` is a slot; any other is an SSA variable. A
+    /// `name` is one a debugger shows; a null one is a desugaring's binding.
+    /// `arg` is the parameter it is, or 0 (`LocalInfo.arg`).
+    pub fn declareLocal(self: *Lowering, storage: u32, name: ?[]const u8, ty: HIRType, value: ValueId, arg: u32) Error!void {
         if (self.lent.contains(storage)) {
             const home = try self.arena();
-            const slot = try self.b.addSlot(ty, home, name);
+            const slot = try self.b.addSlot(ty, home);
+            if (name) |n| _ = try self.b.addLocal(n, self.b.span, slot, arg);
             const ref = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty });
             try self.b.effect(.{ .store = .{ .ref = ref, .value = try self.rehome(home, value, ty) } });
             try self.locals.put(self.g.alloc, storage, .{ .slot = slot });
             return;
         }
         const v = try self.b.declareVar(.of(ty));
-        try self.b.defVar(v, value);
+        if (name) |n| try self.b.nameVar(v, try self.b.addLocal(n, self.b.span, null, arg));
+        try self.b.defineVar(v, value);
         try self.locals.put(self.g.alloc, storage, .{ .ssa = .{ .v = v, .home = self.innermostArenaVar() } });
+    }
+
+    /// A module-level `var`: `value` initializes the global `target` names, and
+    /// this is its declaration.
+    pub fn declareGlobalStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId) Error!void {
+        const ty = try self.g.lowerType(target.slot);
+        try self.storeGlobal(try self.g.declareGlobal(name, ty, self.b.span), ty, value);
     }
 
     /// Read the storage `target` names, of its slot type.
     pub fn readStorage(self: *Lowering, target: StoreTarget, name: []const u8) Error!ValueId {
         const ty = try self.g.lowerType(target.slot);
         if (target.global) {
-            return self.b.define(.{ .global_load = try self.g.globalId(name, ty) }, .of(ty));
+            return self.b.define(.{ .global_load = try self.g.globalId(name, ty, self.b.span) }, .of(ty));
         }
         return switch (self.local(target.storage)) {
             .ssa => |s| self.b.useVar(s.v),
@@ -874,12 +921,11 @@ pub const Lowering = struct {
     pub fn writeStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId) Error!void {
         const ty = try self.g.lowerType(target.slot);
         if (target.global) {
-            const id = try self.g.globalId(name, ty);
-            try self.b.effect(.{ .global_store = .{ .global = id, .value = try self.rehome(self.root, value, ty) } });
+            try self.storeGlobal(try self.g.globalId(name, ty, self.b.span), ty, value);
             return;
         }
         switch (self.local(target.storage)) {
-            .ssa => |s| try self.b.defVar(s.v, try self.rehome(try self.b.useVar(s.home), value, ty)),
+            .ssa => |s| try self.b.defineVar(s.v, try self.rehome(try self.b.useVar(s.home), value, ty)),
             .slot => |slot| {
                 const ref = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty });
                 const home = self.b.slots.items[@intFromEnum(slot)].arena;
@@ -887,6 +933,11 @@ pub const Lowering = struct {
             },
             .alias => |a| try self.b.effect(.{ .store = .{ .ref = a.ref, .value = try self.rehome(a.arena, value, ty) } }),
         }
+    }
+
+    /// Store `value` into the global `id`, in the root arena.
+    fn storeGlobal(self: *Lowering, id: ir.GlobalId, ty: HIRType, value: ValueId) Error!void {
+        try self.b.effect(.{ .global_store = .{ .global = id, .value = try self.rehome(self.root, value, ty) } });
     }
 
     /// The local `storage` names. Analysis bound every name lowering reads.

@@ -3,6 +3,12 @@ const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
 const scope_arena = @import("scope_arena.zig");
 const win32 = @import("win32.zig");
+pub const instrument = @import("instrument.zig");
+const fault = @import("fault.zig");
+const writeStderr = fault.writeStderr;
+const writeWasiFd = fault.writeWasiFd;
+pub const FaultKind = fault.FaultKind;
+pub const DoxaFaultSite = fault.DoxaFaultSite;
 
 const Scope = scope_arena.Scope;
 
@@ -55,15 +61,6 @@ pub export fn doxa_peek_end() callconv(.c) void {
     peek_output_active = false;
 }
 
-/// Write a slice to a raw WASI file descriptor. `std.Io.Threaded`'s syscall
-/// path is not usable under wasi preview1 (writes fail with ENOTCAPABLE), so —
-/// like the Windows branch — the runtime uses the platform's direct write call.
-fn writeWasiFd(fd: i32, slice: []const u8) void {
-    if (slice.len == 0) return;
-    var iov = [1]std.os.wasi.ciovec_t{.{ .base = slice.ptr, .len = slice.len }};
-    var written: usize = 0;
-    _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
-}
 
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
@@ -87,104 +84,25 @@ fn writeStdout(slice: []const u8) void {
     _ = stdout.flush() catch return;
 }
 
-fn writeStderr(slice: []const u8) void {
-    if (builtin.os.tag == .windows) {
-        const handle = win32.GetStdHandle(win32.STD_ERROR_HANDLE);
-        if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
-        var written: u32 = 0;
-        _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
-        return;
-    }
-    if (builtin.os.tag == .wasi) {
-        writeWasiFd(2, slice);
-        return;
-    }
-    var stderr_buffer: [1024]u8 = undefined;
-    var stderr_writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
-    const stderr = &stderr_writer.interface;
-    _ = stderr.write(slice) catch return;
-    _ = stderr.flush() catch return;
+
+/// Report the fault at `site` and terminate (`fault.report`).
+pub export fn doxa_fault(site: *const DoxaFaultSite, text_ptr: ?[*]const u8, text_len: u64, aux0: i64, aux1: i64) callconv(.c) noreturn {
+    const text: []const u8 = if (text_ptr) |p| p[0..@intCast(text_len)] else "";
+    fault.report(@enumFromInt(site.kind), site, text, aux0, aux1, @returnAddress());
+}
+
+/// Set by a program built with `-g`: only then do its frames carry lines.
+pub export fn doxa_enable_backtrace() callconv(.c) void {
+    fault.backtrace_enabled = true;
 }
 
 /// Terminate the process with the given status code. Declared `noreturn` so the
 /// optimizer treats every `@exit` site as a genuine control-flow end.
 pub export fn doxa_exit(code: i64) callconv(.c) noreturn {
+    instrument.flush();
     std.process.exit(@intCast(code));
 }
 
-// ── Faults ──
-//
-// Every way a program fails at run time ends in `doxa_fault`, one line on
-// stderr: what happened, where, then its details —
-// `Index out of bounds at main.doxa:4:12: index 7, length 3`.
-
-pub const FaultKind = enum(u32) {
-    panic,
-    assert_fail,
-    unreachable_code,
-    div_by_zero,
-    overflow,
-    index_out_of_bounds,
-    pop_empty,
-    parse_int,
-    parse_float,
-    parse_byte,
-
-    fn headline(self: FaultKind) []const u8 {
-        return switch (self) {
-            .panic => "Panic",
-            .assert_fail => "Assertion failed",
-            .unreachable_code => "Reached unreachable code",
-            .div_by_zero => "Division by zero",
-            .overflow => "Integer overflow",
-            .index_out_of_bounds => "Index out of bounds",
-            .pop_empty => "Pop from an empty array",
-            .parse_int => "Not a valid int",
-            .parse_float => "Not a valid float",
-            .parse_byte => "Not a valid byte",
-        };
-    }
-
-    /// 2 is reserved for a compiler-internal trap; every program fault is 1.
-    fn exitCode(self: FaultKind) u8 {
-        return if (self == .unreachable_code) 2 else 1;
-    }
-};
-
-/// Where a fault can happen: one constant per site in the program's IR, so
-/// the runtime stays program-independent. `file` is the record's display path.
-pub const DoxaFaultSite = extern struct {
-    kind: u32,
-    line: u32,
-    column: u32,
-    file: [*:0]const u8,
-};
-
-/// Report the fault at `site` and terminate. `text` is the site's message
-/// (a panic's or an assertion's) or the text that failed to parse; `aux0` and
-/// `aux1` are an out-of-bounds index and length.
-pub export fn doxa_fault(site: *const DoxaFaultSite, text_ptr: ?[*]const u8, text_len: u64, aux0: i64, aux1: i64) callconv(.c) noreturn {
-    const kind: FaultKind = @enumFromInt(site.kind);
-    const text: []const u8 = if (text_ptr) |p| p[0..@intCast(text_len)] else "";
-    var buffer: [128]u8 = undefined;
-    writeStderr(kind.headline());
-    writeStderr(std.fmt.bufPrint(&buffer, " at {s}:{d}:{d}", .{ std.mem.span(site.file), site.line, site.column }) catch unreachable);
-    switch (kind) {
-        .panic, .assert_fail => if (text.len != 0) {
-            writeStderr(": ");
-            writeStderr(text);
-        },
-        .parse_int, .parse_float, .parse_byte => {
-            writeStderr(": \"");
-            writeStderr(text);
-            writeStderr("\"");
-        },
-        .index_out_of_bounds => writeStderr(std.fmt.bufPrint(&buffer, ": index {d}, length {d}", .{ aux0, aux1 }) catch unreachable),
-        .unreachable_code, .div_by_zero, .overflow, .pop_empty => {},
-    }
-    writeStderr("\n");
-    std.process.exit(kind.exitCode());
-}
 
 pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     if (ptr) |p| {
@@ -486,17 +404,8 @@ pub export fn doxa_nothing_to_string(scope: *Scope, out_ptr: *?[*]u8, out_len: *
     out_len.* = ds.len;
 }
 
-pub export fn doxa_enum_to_string(scope: *Scope, type_name_ptr: ?[*]const u8, type_name_len: u64, bits: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
-    defer list.deinit();
-    printEnumImpl(&list.writer, sliceFromDoxaString(.{ .ptr = type_name_ptr, .len = type_name_len }), bits) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    const ds = allocDoxaString(scope, list.written());
-    out_ptr.* = @constCast(ds.ptr);
-    out_len.* = ds.len;
+pub export fn doxa_enum_to_string(scope: *Scope, desc: *const EnumDesc, bits: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
+    renderInto(scope, writeVariant, .{ desc, bits }, out_ptr, out_len);
 }
 
 pub export fn doxa_struct_to_string(scope: *Scope, instance: ?*anyopaque, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -506,17 +415,7 @@ pub export fn doxa_struct_to_string(scope: *Scope, instance: ?*anyopaque, out_pt
         out_len.* = ds.len;
         return;
     }
-    const addr: u64 = @intFromPtr(instance.?);
-    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
-    defer list.deinit();
-    printStructImpl(&list.writer, addr) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    const ds = allocDoxaString(scope, list.written());
-    out_ptr.* = @constCast(ds.ptr);
-    out_len.* = ds.len;
+    renderInto(scope, printStructImpl, .{@as(u64, @intFromPtr(instance.?))}, out_ptr, out_len);
 }
 
 pub export fn doxa_array_to_string(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -526,16 +425,7 @@ pub export fn doxa_array_to_string(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *
         out_len.* = ds.len;
         return;
     }
-    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
-    defer list.deinit();
-    printArrayHdrImpl(&list.writer, hdr.?) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    const ds = allocDoxaString(scope, list.written());
-    out_ptr.* = @constCast(ds.ptr);
-    out_len.* = ds.len;
+    renderInto(scope, printArrayHdrImpl, .{hdr.?}, out_ptr, out_len);
 }
 
 /// Render a boxed `DoxaValue` as a string in `scope`, dispatching on its
@@ -544,14 +434,19 @@ pub export fn doxa_array_to_string(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *
 /// asking the tag would format whatever the payload happens to hold — a string
 /// arm would be rendered as the address of its characters.
 pub export fn doxa_value_to_string(scope: *Scope, val: *const DoxaValue, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
-    defer list.deinit();
-    writeValue(&list.writer, val) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    outString(scope, list.written(), out_ptr, out_len);
+    renderInto(scope, writeValue, .{val}, out_ptr, out_len);
+}
+
+/// Render `render(writer, args...)` straight into `scope`'s arena: the text is
+/// built where it lives, grown in place while it is the arena's newest
+/// allocation and trimmed to its length after, so every byte is counted to
+/// the site that asked for it and running out of memory is the arena's fault.
+fn renderInto(scope: *Scope, render: anytype, args: anytype, out_ptr: *?[*]u8, out_len: *u64) void {
+    var text: std.Io.Writer.Allocating = .init(scope_arena.allocator(scope));
+    @call(.auto, render, .{&text.writer} ++ args) catch fault.outOfMemory();
+    const bytes = text.toOwnedSlice() catch fault.outOfMemory();
+    out_ptr.* = if (bytes.len == 0) null else bytes.ptr;
+    out_len.* = bytes.len;
 }
 
 /// Write a box's text: what `@string` of it yields.
@@ -571,7 +466,7 @@ fn writeValue(out: *std.Io.Writer, val: *const DoxaValue) anyerror!void {
         .Struct => if (payloadAs(val, anyopaque)) |instance| try printStructImpl(out, @intFromPtr(instance)),
         // A boxed enum is named through the box registry; a bare
         // discriminant the IR printer could not name shows its number.
-        .Enum => if (!try writeBoxedEnum(out, val)) try printEnumImpl(out, "", val.payload_bits),
+        .Enum => if (!try writeBoxedEnum(out, val)) try out.print("<enum:{d}>", .{val.payload_bits}),
         .Function => try out.writeAll("<function>"),
         .Map => try out.writeAll("<map>"),
     }
@@ -601,12 +496,6 @@ fn payloadAs(val: *const DoxaValue, comptime T: type) ?*T {
     if (addr == 0) return null;
     const any_ptr: *anyopaque = @ptrFromInt(@as(usize, @intCast(addr)));
     return @ptrCast(@alignCast(any_ptr));
-}
-
-fn outString(scope: *Scope, bytes: []const u8, out_ptr: *?[*]u8, out_len: *u64) void {
-    const ds = allocDoxaString(scope, bytes);
-    out_ptr.* = @constCast(ds.ptr);
-    out_len.* = ds.len;
 }
 
 pub export fn doxa_pack_bytes(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -690,7 +579,7 @@ pub export fn doxa_str_clone(scope: *Scope, ptr: ?[*]const u8, len: u64, out_ptr
 pub export fn doxa_str_clone_raw(scope: *Scope, ptr: ?[*]const u8, len: u64) callconv(.c) ?[*:0]u8 {
     if (ptr) |p| {
         const slice: []const u8 = p[0..@intCast(len)];
-        const out = scope_arena.allocator(scope).allocSentinel(u8, slice.len, 0) catch return null;
+        const out = scope_arena.allocator(scope).allocSentinel(u8, slice.len, 0) catch fault.outOfMemory();
         @memcpy(out[0..slice.len], slice);
         return out.ptr;
     }
@@ -745,22 +634,6 @@ pub export fn doxa_print_byte(value: i64) callconv(.c) void {
     const byte_val: u8 = @intCast(value & 0xff);
     const rendered = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch return;
     doxaWrite(rendered);
-}
-
-fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
-    const desc = findEnumDescByName(type_name) orelse return "Unknown";
-    if (variant_index < 0) return "Unknown";
-    const idx: usize = @intCast(@as(u64, @intCast(variant_index)));
-    const count: usize = @intCast(desc.variant_count);
-    if (idx >= count) return "Unknown";
-
-    if (desc.variant_names) |names_ptr| {
-        const names = names_ptr[0..count];
-        if (names[idx]) |n| {
-            return std.mem.span(n);
-        }
-    }
-    return "Unknown";
 }
 
 pub export fn doxa_int(value: f64) callconv(.c) i64 {
@@ -1196,8 +1069,8 @@ pub const ArrayHeader = extern struct {
     /// the array are re-homed here so they survive the pushing scope's teardown.
     scope: *Scope,
     /// For struct elements (tag 7) of a descriptor-free scalar struct, the
-    /// struct's size in i64 words, so an element store copies it without a
-    /// registry lookup; 0 otherwise. Set by `doxa_array_set_elem_words` and
+    /// struct's size in i64 words, so an element store copies it word for
+    /// word (it has no header); 0 otherwise. Set by `doxa_array_set_elem_words` and
     /// carried to every array built from this one.
     elem_words: u64,
 };
@@ -1207,51 +1080,47 @@ pub const StructDesc = extern struct {
     field_count: u64,
     field_names: ?[*]const ?[*:0]const u8,
     field_tags: ?[*]const u64,
-    field_enum_type_names: ?[*]const ?[*:0]const u8,
+    /// Per field: the descriptor of an enum field (tag 8), else null.
+    field_enums: ?[*]const ?*const EnumDesc,
     /// Per field: the word count of a nested descriptor-free scalar struct
-    /// (tag 7), which has no registry entry to clone it by; 0 for any other
-    /// field. Null when the struct has no such field.
+    /// (tag 7), which has no header to clone it by; 0 for any other field.
+    /// Null when the struct has no such field.
     field_struct_words: ?[*]const u64,
 };
 
-/// What the runtime knows about a heap struct instance: its layout descriptor
-/// (null when it was registered for scope tracking only) and the arena that
-/// owns it. One map keyed by instance address, so registering an instance is a
-/// single hash-table write.
-const StructMeta = struct {
-    desc: ?*const StructDesc,
+/// What a described struct carries, in the two words just before its fields:
+/// its layout and the arena that owns it, as an `ArrayHeader` carries its
+/// arena. A struct pointer points at the fields, so field offsets
+/// (`layout.zig`) do not see the header. Only a struct that keeps its
+/// descriptor has one; a descriptor-skipped struct is stored flat and copied
+/// by its word count, and nothing reads a header from it.
+pub const StructHeader = extern struct {
+    desc: *const StructDesc,
     scope: *Scope,
 };
 
-var struct_meta: std.AutoHashMapUnmanaged(usize, StructMeta) = .{};
-
-/// Starting size of `struct_meta`, so a program that registers many structs
-/// does not pay for the table's first several rehashes.
-const struct_meta_initial_capacity = 4096;
-
-fn registerStruct(inst: *anyopaque, desc: ?*const StructDesc, scope: *Scope) void {
-    // Best-effort registration; OOM in a runtime struct registry is non-recoverable
-    if (struct_meta.capacity() == 0) struct_meta.ensureTotalCapacity(std.heap.page_allocator, struct_meta_initial_capacity) catch {};
-    struct_meta.put(std.heap.page_allocator, @intFromPtr(inst), .{ .desc = desc, .scope = scope }) catch {};
+fn headerOf(instance: *const anyopaque) *StructHeader {
+    return @ptrFromInt(@intFromPtr(instance) - @sizeOf(StructHeader));
 }
 
-/// The descriptor registered for the struct at `ptr`, if any.
-fn structDescOf(ptr: *const anyopaque) ?*const StructDesc {
-    const meta = struct_meta.get(@intFromPtr(ptr)) orelse return null;
-    return meta.desc;
+/// A zeroed struct of `words` field words in `scope`, behind its header.
+fn structAllocIn(scope: *Scope, desc: *const StructDesc, words: usize) *anyopaque {
+    const block = scope_arena.allocSlice(scope, i64, 2 + words);
+    @memset(block, 0);
+    const header: *StructHeader = @ptrCast(@alignCast(block.ptr));
+    header.* = .{ .desc = desc, .scope = scope };
+    return @ptrCast(block[2..].ptr);
 }
 
-/// Register a struct allocated in `scope` under its descriptor, so it can be
-/// printed, cloned and re-homed.
-pub export fn doxa_struct_register(scope: *Scope, instance: *anyopaque, desc: *const StructDesc) callconv(.c) void {
-    registerStruct(instance, desc, scope);
+/// A new described struct in `scope`, its fields zeroed.
+pub export fn doxa_struct_new(scope: *Scope, desc: *const StructDesc) callconv(.c) *anyopaque {
+    const field_count: usize = @intCast(desc.field_count);
+    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
+    return structAllocIn(scope, desc, structTotalWords(tags, field_count));
 }
 
-/// The arena that owns a registered struct: where a field store places a
-/// string or a box. Every struct with a heap field is registered; a struct
-/// without one has no field that needs placing.
-pub export fn doxa_struct_scope(instance: *anyopaque) callconv(.c) *Scope {
-    return (struct_meta.get(@intFromPtr(instance)) orelse @panic("doxa_struct_scope: an unregistered struct has a heap field")).scope;
+fn structDescOf(ptr: *const anyopaque) *const StructDesc {
+    return headerOf(ptr).desc;
 }
 
 /// Default the struct elements of a fixed array that stores pointers: each
@@ -1278,77 +1147,12 @@ fn structTotalWords(tags: []const u64, field_count: usize) usize {
     return total;
 }
 
-/// Construct defaults for a fixed array of structs that is not flat-allocatable
-/// (a struct with a heap/union field, or a multidimensional struct array).
-/// Every innermost struct-tagged slot is filled with a zeroed struct registered
-/// under `desc`. Scalars default to zero and a union/group field (tag 9)
-/// defaults to a `nothing` box. A string/array/nested-struct field is left
-/// null. TODO: recursively default those field kinds.
-pub export fn doxa_array_fill_default_structs(hdr: *ArrayHeader, desc: ?*const StructDesc) callconv(.c) void {
-    const d = desc orelse return;
-    fillDefaultStructsRec(hdr, d);
-}
-
-fn fillDefaultStructsRec(hdr: *ArrayHeader, desc: *const StructDesc) void {
-    if (hdr.len == 0) return;
-
-    if (hdr.elem_tag == ARRAY_TAG) {
-        var i: u64 = 0;
-        while (i < hdr.len) : (i += 1) {
-            const elem = doxa_array_get_i64(hdr, i);
-            if (elem == 0) continue;
-            fillDefaultStructsRec(@ptrFromInt(@as(usize, @intCast(elem))), desc);
-        }
-        return;
-    }
-    if (hdr.elem_tag != 7) return;
-
-    const field_count: usize = @intCast(desc.field_count);
-    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
-    const words = structTotalWords(tags, field_count);
-    const scope = hdr.scope;
-
-    var i: u64 = 0;
-    while (i < hdr.len) : (i += 1) {
-        if (doxa_array_get_i64(hdr, i) != 0) continue;
-
-        const dst = scope_arena.allocSlice(scope, i64, words);
-        @memset(dst, 0);
-
-        var word: usize = 0;
-        for (0..field_count) |fi| {
-            const ftag: u64 = if (fi < tags.len) tags[fi] else 255;
-            if (ftag == 9) {
-                const box_words = scope_arena.allocSlice(scope, i64, 3);
-                const box: *DoxaValue = @ptrCast(@alignCast(box_words.ptr));
-                box.* = .{ .tag = @intFromEnum(DoxaTag.Nothing), .reserved = 0, .payload_bits = 0, .payload_len = 0 };
-                dst[word] = @intCast(@intFromPtr(box));
-            }
-            word += structFieldWordCount(ftag);
-        }
-
-        const inst: *anyopaque = @ptrCast(dst.ptr);
-        registerStruct(inst, desc, scope);
-        doxa_array_set_i64(hdr, i, @as(i64, @intCast(@intFromPtr(inst))));
-    }
-}
-
-/// Word count of a registered struct instance, or null when it has no
-/// descriptor. Used to write an assigned element through a non-owning view's
-/// existing slot.
-fn structWordCountInRegistry(ptr: *anyopaque) ?usize {
-    const desc = structDescOf(ptr) orelse return null;
-    const field_count: usize = @intCast(desc.field_count);
-    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
-    return structTotalWords(tags, field_count);
-}
-
 fn structCloneInto(scope: *Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
-    const desc = structDescOf(src) orelse return null;
+    const desc = structDescOf(src);
     const field_count: usize = @intCast(desc.field_count);
     const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
-    const dst = scope_arena.allocSlice(scope, i64, structTotalWords(tags, field_count));
+    const dst: [*]i64 = @ptrCast(@alignCast(structAllocIn(scope, desc, structTotalWords(tags, field_count))));
     const src_fields: [*]const i64 = @ptrCast(@alignCast(src));
     var word: usize = 0;
     for (0..field_count) |i| {
@@ -1385,7 +1189,7 @@ fn structCloneInto(scope: *Scope, ptr: ?*anyopaque) ?*anyopaque {
                 structCloneScalarInto(scope, @intCast(nested_words), nested_src)
             else
                 structCloneInto(scope, nested_src);
-            dst[word] = @intCast(@intFromPtr(nested orelse nested_src));
+            dst[word] = @intCast(@intFromPtr(nested.?));
             word += 1;
         } else if (tag == 9 and bits != 0) {
             // Boxed union/group field: the word is a pointer to a %DoxaValue.
@@ -1403,14 +1207,10 @@ fn structCloneInto(scope: *Scope, ptr: ?*anyopaque) ?*anyopaque {
             word += 1;
         }
     }
-    const result: ?*anyopaque = @ptrCast(dst.ptr);
-    // Register the clone so its fields can be introspected/printed (and cloned
-    // again) under the same descriptor as the source.
-    registerStruct(@ptrCast(dst.ptr), desc, scope);
-    return result;
+    return @ptrCast(dst);
 }
 
-/// Deep-copy a struct into `scope`: `clone` of a registered struct. String
+/// Deep-copy a struct into `scope`: `clone` of a described struct. String
 /// (tag 3) and array (tag 6) fields are cloned recursively so their storage
 /// outlives the scope that constructed the struct; other fields are copied
 /// verbatim.
@@ -1418,24 +1218,24 @@ pub export fn doxa_struct_clone(scope: *Scope, ptr: ?*anyopaque) callconv(.c) ?*
     return structCloneInto(scope, ptr);
 }
 
-/// B2/B3 scalar-struct typed clone: copy `word_count` i64 words into `scope`
+/// Scalar-struct typed clone: copy `word_count` i64 words into `scope`
 /// verbatim. A struct with only scalar fields has no heap field to re-clone,
-/// so it needs no descriptor registry lookup — this is what lets a
-/// non-reflected scalar struct skip `doxa_struct_register` entirely.
+/// so it needs no descriptor, and carries no header.
 pub export fn doxa_struct_clone_scalar(scope: *Scope, word_count: u64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
     return structCloneScalarInto(scope, @intCast(word_count), ptr);
 }
 
-/// Rehome for a descriptor-free scalar struct, which has no `struct_meta`
-/// entry to say which arena owns it. Keeps the original pointer when its arena
-/// outlives `scope`, or when no live arena holds it (as the registry path does
-/// for an unregistered pointer), and otherwise copies `word_count` words into
-/// `scope`. Identity therefore survives the same cases it does for a
-/// registered struct, such as an `each` binding writing through to an element.
+/// Rehome for a descriptor-free scalar struct, which has no header to say
+/// which arena owns it (it may be an element stored flat in a fixed array).
+/// Keeps the original pointer when its arena outlives `scope`, or when no live
+/// arena holds it, and otherwise copies `word_count` words into `scope`.
+/// Identity therefore survives the same cases it does for a described struct,
+/// such as an `each` binding writing through to an element.
 fn structRehomeScalarInto(scope: *Scope, word_count: usize, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
-    const owner = scope_arena.ownerOf(src) orelse return src;
-    if (scope_arena.isEqualOrDescendant(scope, owner)) return src;
+    const owner = scope_arena.ownerOf(src) orelse return kept(src);
+    if (scope_arena.isEqualOrDescendant(scope, owner)) return kept(src);
+    instrument.rehomed(true);
     return structCloneScalarInto(scope, word_count, src);
 }
 
@@ -1451,23 +1251,17 @@ fn structCloneScalarInto(scope: *Scope, word_count: usize, ptr: ?*anyopaque) ?*a
     return @ptrCast(dst.ptr);
 }
 
-/// `rehome` of a registered struct, the one runtime-checked copy
+/// `rehome` of a described struct, the one runtime-checked copy
 /// (`plan/register-hir.md`, "What stays a runtime check").
-/// Like `structCloneInto`, but keep the original pointer when its allocating
+/// Like `structCloneInto`, but keep the original pointer when its owning
 /// arena already outlives `scope` (same arena or an ancestor). That preserves
-/// identity for `each n in arr { n.field is ... }` — a snapshot clone would
+/// identity for `each n in arr { n.field is ... }`: a snapshot clone would
 /// disconnect `n` from the array element.
-///
-/// Unknown allocation scope keeps identity too. Array elements and other
-/// long-lived heap objects are often not in `struct_meta`; cloning them
-/// would silently snapshot field writes off the source.
 fn structRehomeInto(scope: *Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
-    if (struct_meta.get(@intFromPtr(src))) |meta| {
-        if (scope_arena.isEqualOrDescendant(scope, meta.scope)) return src;
-        return structCloneInto(scope, src);
-    }
-    return src;
+    if (scope_arena.isEqualOrDescendant(scope, headerOf(src).scope)) return kept(src);
+    instrument.rehomed(true);
+    return structCloneInto(scope, src);
 }
 
 pub export fn doxa_struct_rehome(scope: *Scope, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
@@ -1475,41 +1269,9 @@ pub export fn doxa_struct_rehome(scope: *Scope, ptr: ?*anyopaque) callconv(.c) ?
 }
 
 pub const EnumDesc = extern struct {
-    type_name: ?[*:0]const u8,
     variant_count: u64,
     variant_names: ?[*]const ?[*:0]const u8,
 };
-
-var enum_registry: std.AutoHashMapUnmanaged(usize, *const EnumDesc) = .{};
-
-pub export fn doxa_enum_register(desc: ?*const EnumDesc) callconv(.c) void {
-    const ed = desc orelse return;
-    const tn = ed.type_name orelse return;
-    // Best-effort registration; OOM in a runtime enum registry is non-recoverable
-    enum_registry.put(std.heap.page_allocator, @intFromPtr(tn), ed) catch {};
-}
-
-fn findEnumDescByName(type_name: []const u8) ?*const EnumDesc {
-    var it = enum_registry.iterator();
-    while (it.next()) |entry| {
-        const registered_ptr: [*:0]const u8 = @ptrFromInt(entry.key_ptr.*);
-        const registered_name = std.mem.span(registered_ptr);
-        if (std.mem.eql(u8, registered_name, type_name)) {
-            return entry.value_ptr.*;
-        }
-    }
-    return null;
-}
-
-fn lookupEnumDesc(type_name_ptr: ?[*:0]const u8) ?*const EnumDesc {
-    const tn = type_name_ptr orelse return null;
-    if (enum_registry.get(@intFromPtr(tn))) |desc| return desc;
-    return findEnumDescByName(std.mem.span(tn));
-}
-
-fn lookupEnumDescBySlice(type_name: []const u8) ?*const EnumDesc {
-    return findEnumDescByName(type_name);
-}
 
 const ARRAY_MIN_CAPACITY: u64 = 8;
 
@@ -1691,33 +1453,29 @@ pub export fn doxa_array_from_fixed(
 }
 
 /// Materialize a fixed, flat array of scalar-only struct slots into a heap
-/// `ArrayHeader` of boxed struct pointers in `scope`.
+/// `ArrayHeader` of struct pointers in `scope`.
 ///
 /// A fixed array of structs stores each element inline as its raw
 /// `struct_words` i64 words (`emitArrayNew`'s flat path). A dynamic array's
-/// struct element is a heap pointer (tag 7) that the descriptor registry clones
-/// through, so each flat slot is boxed — allocated in the owning arena and
-/// registered under `desc` — and the array holds the box pointers.
+/// struct element is a heap pointer (tag 7), so each slot is copied into
+/// `scope` on its own. The struct is descriptor-free, so it has no header:
+/// the array carries its word count (`elem_words`), and every later copy of
+/// an element is that many words.
 pub export fn doxa_array_from_fixed_structs(
     scope: *Scope,
     src: [*]const u8,
     count: u64,
     struct_words: u64,
-    desc: ?*const StructDesc,
 ) callconv(.c) *ArrayHeader {
     const arr = arrayNewIn(scope, @sizeOf(*anyopaque), 7, count);
+    arr.elem_words = struct_words;
     if (arr.data == null or count == 0) return arr;
 
     const src_words: [*]const i64 = @ptrCast(@alignCast(src));
     const slots: [*]?*anyopaque = @ptrCast(@alignCast(arr.data.?));
     const words: usize = @intCast(struct_words);
-    var idx: u64 = 0;
-    while (idx < count) : (idx += 1) {
-        const box = scope_arena.allocSlice(scope, i64, words);
-        @memcpy(box, src_words[@intCast(idx * struct_words)..][0..words]);
-        const box_ptr: *anyopaque = @ptrCast(box.ptr);
-        registerStruct(box_ptr, desc, scope);
-        slots[@intCast(idx)] = box_ptr;
+    for (0..@intCast(count)) |idx| {
+        slots[idx] = structCloneScalarInto(scope, words, @constCast(@ptrCast(src_words[idx * words ..])));
     }
     return arr;
 }
@@ -1834,8 +1592,26 @@ pub export fn doxa_array_clone(scope: *Scope, hdr: *ArrayHeader) callconv(.c) *A
 /// `rehome` of an array: keep it when its arena already outlives `scope`, and
 /// clone it there otherwise. The one runtime-checked copy.
 pub export fn doxa_array_rehome(scope: *Scope, hdr: *ArrayHeader) callconv(.c) *ArrayHeader {
-    if (scope_arena.isEqualOrDescendant(scope, hdr.scope)) return hdr;
+    if (scope_arena.isEqualOrDescendant(scope, hdr.scope)) return kept(hdr);
+    instrument.rehomed(true);
     return arrayCloneIn(scope, hdr);
+}
+
+/// Under memcheck: fault at `site` when the program reads `ptr` and it lies
+/// in memory an arena reclaimed.
+fn memcheckRead(ptr: ?*const anyopaque, site: *const DoxaFaultSite) callconv(.c) void {
+    const p = ptr orelse return;
+    if (scope_arena.isReclaimed(p)) doxa_fault(site, null, 0, 0, 0);
+}
+
+comptime {
+    if (instrument.memcheck) @export(&memcheckRead, .{ .name = "doxa_memcheck" });
+}
+
+/// A `rehome` that keeps the value itself, counted under memtrace.
+fn kept(value: anytype) @TypeOf(value) {
+    instrument.rehomed(false);
+    return value;
 }
 
 pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
@@ -1947,19 +1723,9 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
                 sp.* = structCloneInto(hdr.scope, src.?);
             }
         },
-        // Default: store raw 64-bit payload (pointers/unknown).
-        // When the element type is unknown (e.g. an empty `[]` literal) and the
-        // payload is a registered struct pointer, re-home it into this array's
-        // scope so it survives the source scope being freed.
+        // A scalar word. Every element is typed, so a struct element takes
+        // the tag-7 branch and nothing here is a pointer to re-home.
         else => {
-            const addr: u64 = @bitCast(value);
-            if (addr != 0) {
-                if (structCloneInto(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))))) |cloned| {
-                    const ip: *i64 = @ptrCast(@alignCast(p));
-                    ip.* = @intCast(@intFromPtr(cloned));
-                    return;
-                }
-            }
             const ip: *i64 = @ptrCast(@alignCast(p));
             ip.* = value;
         },
@@ -2204,47 +1970,14 @@ fn printTaggedBitsImpl(out: *std.Io.Writer, tag: u64, bits: i64) anyerror!void {
     }
 }
 
-fn printEnumImpl(out: *std.Io.Writer, type_name: []const u8, bits: i64) anyerror!void {
-    if (type_name.len == 0) {
-        try out.print("<enum:{d}>", .{bits});
-        return;
-    }
-    const desc = lookupEnumDescBySlice(type_name) orelse {
-        try out.print("<enum:{d}>", .{bits});
-        return;
-    };
-
-    const count: usize = @intCast(desc.variant_count);
-    const idx_i64 = bits;
-    if (idx_i64 < 0) {
-        try out.print(".Unknown", .{});
-        return;
-    }
-    const idx: usize = @intCast(@as(u64, @intCast(idx_i64)));
-    if (idx >= count) {
-        try out.print(".Unknown", .{});
-        return;
-    }
-
-    const name = getEnumVariantName(type_name, bits);
-    if (!std.mem.eql(u8, name, "Unknown")) {
-        try out.print(".{s}", .{name});
-    } else {
-        try out.print(".Unknown", .{});
-    }
-}
-
 fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
     const key: usize = @intCast(addr);
-    const desc = structDescOf(@ptrFromInt(key)) orelse {
-        try out.print("<struct@0x{x}>", .{addr});
-        return;
-    };
+    const desc = structDescOf(@ptrFromInt(key));
 
     const field_count: usize = @intCast(desc.field_count);
     const names = if (desc.field_names) |p| p[0..field_count] else &[_]?[*:0]const u8{};
     const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
-    const enum_type_names = if (desc.field_enum_type_names) |p| p[0..field_count] else &[_]?[*:0]const u8{};
+    const enums = if (desc.field_enums) |p| p[0..field_count] else &[_]?*const EnumDesc{};
     const fields: [*]const i64 = @ptrCast(@alignCast(@as(*anyopaque, @ptrFromInt(key))));
 
     try out.print("{{ ", .{});
@@ -2272,9 +2005,8 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
             try out.writeAll("\"");
             try writeEscaped(out, s);
             try out.writeAll("\"");
-        } else if (tag == 8 and idx < enum_type_names.len) {
-            const etn: []const u8 = if (enum_type_names[idx]) |n| std.mem.span(n) else "";
-            try printEnumImpl(out, etn, bits);
+        } else if (tag == 8 and idx < enums.len) {
+            if (enums[idx]) |ed| try writeVariant(out, ed, bits) else try out.print("<enum:{d}>", .{bits});
         } else if (tag == 9) {
             // Boxed union/group field: render the boxed %DoxaValue.
             try writeValue(out, @ptrFromInt(@as(usize, @intCast(bits))));

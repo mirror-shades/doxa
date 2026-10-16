@@ -573,6 +573,9 @@ const op: []const u8 = switch (bin.operator.type) {
     .PLUS => "+",
     .MINUS => "-",
     .ASTERISK => "*",
+    .PLUS_WRAP => "+%",
+    .MINUS_WRAP => "-%",
+    .ASTERISK_WRAP => "*%",
     .SLASH => "/",
     .DOUBLE_SLASH => "//",
     .MODULO => "%",
@@ -594,7 +597,7 @@ const op: []const u8 = switch (bin.operator.type) {
             const is_arithmetic = std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or
                 std.mem.eql(u8, op, "*") or std.mem.eql(u8, op, "/") or
                 std.mem.eql(u8, op, "//") or std.mem.eql(u8, op, "%") or
-                std.mem.eql(u8, op, "**");
+                std.mem.eql(u8, op, "**") or isWrapping(op);
             if (is_arithmetic and (left_type.base == .Union or right_type.base == .Union)) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
@@ -658,6 +661,25 @@ const op: []const u8 = switch (bin.operator.type) {
                     return type_info;
                 }
 
+                if (left_type.base == .Int or right_type.base == .Int) {
+                    type_info.* = .{ .base = .Int };
+                } else {
+                    type_info.* = .{ .base = .Byte };
+                }
+            } else if (isWrapping(op)) {
+                if ((left_type.base != .Int and left_type.base != .Byte) or
+                    (right_type.base != .Int and right_type.base != .Byte))
+                {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.MODULO_REQUIRES_INTEGER_OR_BYTE_OPERANDS,
+                        "Wrapping {s} requires integer or byte operands",
+                        .{op},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
                 if (left_type.base == .Int or right_type.base == .Int) {
                     type_info.* = .{ .base = .Int };
                 } else {
@@ -861,6 +883,19 @@ const op: []const u8 = switch (bin.operator.type) {
                 if (operand_type.comptime_int) |v| {
                     type_info.comptime_int = -v;
                 }
+            } else if (unary.operator.type == .MINUS_WRAP) {
+                if (operand_type.base != .Int and operand_type.base != .Byte) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.MODULO_REQUIRES_INTEGER_OR_BYTE_OPERANDS,
+                        "Wrapping -% requires an integer or byte operand",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+                type_info.comptime_int = null;
             } else {
                 type_info.comptime_int = null;
             }
@@ -2773,4 +2808,9 @@ fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, 
         },
     }
     return type_info;
+}
+
+/// `+%`, `-%` or `*%`: arithmetic that wraps instead of faulting.
+fn isWrapping(op: []const u8) bool {
+    return std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%") or std.mem.eql(u8, op, "*%");
 }

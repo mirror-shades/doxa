@@ -1,4 +1,6 @@
 const std = @import("std");
+const instrument = @import("instrument.zig");
+const fault = @import("fault.zig");
 
 /// Scope arenas, the runtime half of the arena memory model
 /// (`docs/memory.md`). A scope is a value the program holds: `enter(parent)`
@@ -7,6 +9,12 @@ const std = @import("std");
 /// allocation names the scope it is made in; there is no implicit current
 /// scope. The register HIR states each arena (`plan/register-hir.md`, "Arenas")
 /// and its verifier checks that scopes open and close innermost first.
+///
+/// Under `--instrument=memcheck`, a reset or exit does not reclaim an arena's
+/// buffers for reuse: it poisons them and keeps them aside (`reclaimed`), so a
+/// read of a value that lived there is caught (`isReclaimed`) rather than
+/// passing on reused pages. The kept bytes are capped at `reclaimed_limit`,
+/// oldest freed first; a stale read into a freed buffer is not caught.
 ///
 /// Exited nodes are kept on a spare list instead of being returned to the OS,
 /// so a scoped call costs no page-allocator round trip. A spare node's arena is
@@ -21,6 +29,8 @@ const ScopeNode = struct {
     /// between its `enter` and its `exit`.
     live_prev: ?*ScopeNode,
     live_next: ?*ScopeNode,
+    /// Under `--instrument=memtrace`, what was allocated in it and by whom.
+    trace: if (instrument.memtrace) instrument.ArenaTrace else void,
 };
 
 /// One Windows allocation granule; the page allocator reserves no less.
@@ -64,10 +74,12 @@ fn open(parent: ?*ScopeNode) *Scope {
         spare_count -= 1;
         break :blk reused;
     } else blk: {
-        const fresh = std.heap.page_allocator.create(ScopeNode) catch @panic("scope_arena: OOM");
+        const fresh = std.heap.page_allocator.create(ScopeNode) catch fault.outOfMemory();
         fresh.arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        if (instrument.memtrace) fresh.trace = .{};
         break :blk fresh;
     };
+    if (instrument.memtrace) node.trace.open(parent == null);
     node.parent = parent;
     node.live_prev = null;
     node.live_next = live;
@@ -81,6 +93,8 @@ pub fn exit(scope: *Scope) void {
     const node = nodeOf(scope);
     if (node.live_prev) |prev| prev.live_next = node.live_next else live = node.live_next;
     if (node.live_next) |next| next.live_prev = node.live_prev;
+    if (instrument.memtrace) node.trace.reclaimed(node.arena.queryCapacity(), .exit);
+    if (instrument.memcheck) bury(node);
     if (spare_count == max_spare_nodes) {
         node.arena.deinit();
         std.heap.page_allocator.destroy(node);
@@ -101,7 +115,52 @@ pub fn exit(scope: *Scope) void {
 /// (a loop body).
 pub fn reset(scope: *Scope) void {
     const node = nodeOf(scope);
+    if (instrument.memtrace) node.trace.reclaimed(node.arena.queryCapacity(), .reset);
+    if (instrument.memcheck) return bury(node);
     if (!isRewound(&node.arena)) _ = node.arena.reset(.retain_capacity);
+}
+
+/// The poison a reclaimed buffer is filled with.
+pub const poison: u8 = 0xDD;
+const reclaimed_limit = 256 * 1024 * 1024;
+
+const Reclaimed = struct { start: usize, len: usize };
+/// Oldest first.
+var reclaimed: std.ArrayListUnmanaged(Reclaimed) = .empty;
+var reclaimed_bytes: usize = 0;
+
+/// Take every buffer `node`'s arena has handed out, poison it, and keep it
+/// aside; the arena starts over with fresh ones.
+fn bury(node: *ScopeNode) void {
+    var buf = node.arena.state.used_list;
+    node.arena.state.used_list = null;
+    while (buf) |b| {
+        const next = b.next;
+        // The low bit of `size` is the arena's resize flag, not size.
+        const size = @as(usize, @bitCast(b.size)) & ~@as(usize, 1);
+        const bytes = @as([*]u8, @ptrCast(b))[0..size];
+        @memset(bytes, poison);
+        reclaimed.append(std.heap.page_allocator, .{ .start = @intFromPtr(bytes.ptr), .len = size }) catch fault.outOfMemory();
+        reclaimed_bytes += size;
+        buf = next;
+    }
+    while (reclaimed_bytes > reclaimed_limit) {
+        const oldest = reclaimed.orderedRemove(0);
+        reclaimed_bytes -= oldest.len;
+        std.heap.page_allocator.rawFree(@as([*]u8, @ptrFromInt(oldest.start))[0..oldest.len], .of(usize), @returnAddress());
+    }
+}
+
+/// Whether `ptr` points into memory an arena has reclaimed (memcheck only).
+pub fn isReclaimed(ptr: *const anyopaque) bool {
+    const addr = @intFromPtr(ptr);
+    var i = reclaimed.items.len;
+    while (i > 0) {
+        i -= 1;
+        const r = reclaimed.items[i];
+        if (addr >= r.start and addr < r.start + r.len) return true;
+    }
+    return false;
 }
 
 /// True when nothing has been allocated from `arena` since it was created or
@@ -116,8 +175,52 @@ fn isRewound(arena: *const std.heap.ArenaAllocator) bool {
 }
 
 pub fn allocator(scope: *Scope) std.mem.Allocator {
+    if (instrument.memtrace) return .{ .ptr = nodeOf(scope), .vtable = &traced };
     return nodeOf(scope).arena.allocator();
 }
+
+/// The bytes the root arena holds from the system: what globals retain.
+pub fn rootCapacity() usize {
+    return nodeOf(root()).arena.queryCapacity();
+}
+
+/// Under memtrace, an arena's allocator counts what it hands out, however it
+/// is reached (an allocation, a buffer grown or shrunk in place), to the
+/// running site.
+/// A free is the arena's no-op and is not counted: an arena gives back only
+/// on reset or exit.
+const traced: std.mem.Allocator.VTable = .{
+    .alloc = struct {
+        fn f(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+            const node: *ScopeNode = @ptrCast(@alignCast(ctx));
+            const mem = node.arena.allocator().rawAlloc(len, alignment, ret_addr) orelse return null;
+            node.trace.allocated(len, .new);
+            return mem;
+        }
+    }.f,
+    .resize = struct {
+        fn f(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+            const node: *ScopeNode = @ptrCast(@alignCast(ctx));
+            if (!node.arena.allocator().rawResize(memory, alignment, new_len, ret_addr)) return false;
+            if (new_len > memory.len) node.trace.allocated(new_len - memory.len, .grown) else node.trace.shrunk(memory.len - new_len);
+            return true;
+        }
+    }.f,
+    .remap = struct {
+        fn f(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+            const node: *ScopeNode = @ptrCast(@alignCast(ctx));
+            const mem = node.arena.allocator().rawRemap(memory, alignment, new_len, ret_addr) orelse return null;
+            if (new_len > memory.len) node.trace.allocated(new_len - memory.len, .grown) else node.trace.shrunk(memory.len - new_len);
+            return mem;
+        }
+    }.f,
+    .free = struct {
+        fn f(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+            const node: *ScopeNode = @ptrCast(@alignCast(ctx));
+            node.arena.allocator().rawFree(memory, alignment, ret_addr);
+        }
+    }.f,
+};
 
 /// True when `child` is `ancestor` or a scope opened inside it: a value in
 /// `ancestor` outlives `child`. This is `rehome`'s test, the one copy decided
@@ -155,7 +258,7 @@ pub fn alloc(scope: *Scope, len: usize, alignment: std.mem.Alignment, ret_addr: 
     // An empty allocation owns no bytes: any aligned, non-null address will
     // do, and the arena is not asked for one.
     if (len == 0) return @ptrFromInt(alignment.toByteUnits());
-    return allocator(scope).rawAlloc(len, alignment, ret_addr) orelse @panic("scope_arena: OOM");
+    return allocator(scope).rawAlloc(len, alignment, ret_addr) orelse fault.outOfMemory();
 }
 
 pub fn create(scope: *Scope, comptime T: type) *T {
@@ -165,6 +268,21 @@ pub fn create(scope: *Scope, comptime T: type) *T {
 pub fn allocSlice(scope: *Scope, comptime T: type, n: usize) []T {
     const raw = alloc(scope, @sizeOf(T) * n, .fromByteUnits(@alignOf(T)), @returnAddress());
     return @as([*]T, @ptrCast(@alignCast(raw)))[0..n];
+}
+
+test "memcheck: a buried arena's memory is poisoned, kept and recognised" {
+    const scope = enter(root());
+    defer exit(scope);
+    const before = allocSlice(scope, u8, 64);
+    @memset(before, 7);
+    try std.testing.expect(!isReclaimed(before.ptr));
+
+    bury(nodeOf(scope));
+    try std.testing.expect(isReclaimed(before.ptr));
+    try std.testing.expectEqual(poison, before[0]);
+    // The arena carries on with fresh memory, which is live.
+    const after = allocSlice(scope, u8, 64);
+    try std.testing.expect(!isReclaimed(after.ptr));
 }
 
 test "reset keeps the scope open for reuse" {

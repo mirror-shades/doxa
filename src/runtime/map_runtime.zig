@@ -1,5 +1,6 @@
 const std = @import("std");
 const scope_arena = @import("scope_arena.zig");
+const fault = @import("fault.zig");
 
 /// Simple runtime map representation used by the native (LLVM) backend.
 /// Keys and values are stored as raw i64 payloads. The compiler is
@@ -47,11 +48,11 @@ pub fn mapNew(owner_scope: *scope_arena.Scope, capacity_raw: i64, key_tag: i64, 
     else
         @intCast(capacity_raw);
 
-    const header = alloc.create(MapHeader) catch @panic("doxa_map_new: OOM creating map header");
+    const header = alloc.create(MapHeader) catch fault.outOfMemory();
     const slice = if (cap == 0)
-        alloc.alloc(MapEntry, 1) catch @panic("doxa_map_new: OOM allocating entries")
+        alloc.alloc(MapEntry, 1) catch fault.outOfMemory()
     else
-        alloc.alloc(MapEntry, cap) catch @panic("doxa_map_new: OOM allocating entries");
+        alloc.alloc(MapEntry, cap) catch fault.outOfMemory();
 
     header.entries = slice.ptr;
     header.len = 0;
@@ -102,7 +103,7 @@ pub fn mapSetI64(map: *MapHeader, key: i64, value: i64) void {
     // 2) Append new entry, growing if needed
     if (map.len == map.capacity) {
         const new_cap: usize = if (map.capacity == 0) 4 else map.capacity * 2;
-        const new_slice = alloc.alloc(MapEntry, new_cap) catch @panic("doxa_map_set_i64: OOM growing map");
+        const new_slice = alloc.alloc(MapEntry, new_cap) catch fault.outOfMemory();
 
         if (map.capacity > 0) {
             const old_slice = map.entries[0..map.capacity];
@@ -127,7 +128,7 @@ pub fn mapSetStr(map: *MapHeader, key: []const u8, value: i64) void {
             return;
         }
     }
-    const owned = mapAllocator(map.scope).allocSentinel(u8, key.len, 0) catch @panic("doxa_map_set_str: OOM copying key");
+    const owned = mapAllocator(map.scope).allocSentinel(u8, key.len, 0) catch fault.outOfMemory();
     @memcpy(owned[0..key.len], key);
     mapSetI64(map, @intCast(@intFromPtr(owned.ptr)), value);
 }

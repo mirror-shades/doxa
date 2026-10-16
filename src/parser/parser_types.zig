@@ -43,6 +43,7 @@ fn parserErrorHint(err: anyerror) []const u8 {
         error.ExpectedIdentifier => "expected an identifier",
         error.ExpectedType => "expected a type",
         error.ExpectedThen => "expected 'then' after the condition",
+        error.ExpectedMapThen => "expected 'then' between a map key and its value",
         error.ExpectedElse => "expected 'else'",
         error.ExpectedColon => "expected ':'",
         error.ExpectedAssignmentOperator => "expected an assignment operator",
@@ -56,7 +57,7 @@ fn parserErrorHint(err: anyerror) []const u8 {
         error.ExpectedMapKey => "expected a map key",
         error.ExpectedInKeyword => "expected 'in'",
         error.ExpectedWhereKeyword => "expected 'where'",
-        error.ExpectedMapKeyword => "expected 'map'",
+        error.MapDeclaredWithVarOrConst => "a map is declared with a bare 'map', never 'var map' or 'const map'",
         error.ExpectedPattern => "expected a pattern",
         error.ExpectedEnumVariant => "expected an enum variant",
         error.ExpectedModuleName => "expected a module name",
@@ -74,6 +75,10 @@ fn isPrintableAscii(text: []const u8) bool {
     }
     return true;
 }
+
+/// The deepest nesting of expressions, blocks and type expressions a file may
+/// have: Clang's default bracket depth, far past hand-written code.
+pub const max_nesting = 256;
 
 pub const Parser = struct {
     tokens: []const token.Token,
@@ -94,6 +99,11 @@ pub const Parser = struct {
     current_path_pattern_is_wildcard: bool = false,
     current_path_pattern_field_names: ?[]const token.Token = null,
 
+    /// How many expressions, blocks and type expressions enclose the one
+    /// being parsed. Every later pass recurses over the tree the parser
+    /// builds, so bounding it here bounds their stack too.
+    nesting: u16 = 0,
+
     /// A parser is pure syntax: it turns one file's tokens into statements and
     /// knows nothing of other files. `module` and `import` statements stay in
     /// the statement list; the module loader binds them when it collects the
@@ -108,6 +118,32 @@ pub const Parser = struct {
             .current_file = current_file,
             .current_file_uri = current_file_uri,
         };
+    }
+
+    /// Enter one level of nesting, rejecting a tree deeper than
+    /// `max_nesting` (E2031) before its recursion can exhaust the stack.
+    /// Pair every successful call with `leaveNesting`.
+    pub fn enterNesting(self: *Parser) ErrorList!void {
+        if (self.nesting == max_nesting) {
+            const at = self.peek();
+            const location = Location{
+                .file = self.current_file,
+                .file_uri = self.current_file_uri,
+                .range = .{
+                    .start_line = @intCast(at.line),
+                    .start_col = at.column,
+                    .end_line = @intCast(at.line),
+                    .end_col = at.column + at.lexeme.len,
+                },
+            };
+            self.reporter.reportCompileError(location, ErrorCode.NESTING_TOO_DEEP, "Nesting depth exceeds {d}", .{max_nesting});
+            return error.NestingTooDeep;
+        }
+        self.nesting += 1;
+    }
+
+    pub fn leaveNesting(self: *Parser) void {
+        self.nesting -= 1;
     }
 
     pub fn peek(self: *Parser) token.Token {
@@ -206,7 +242,7 @@ pub const Parser = struct {
                         .id = ast.generateNodeId(),
                         .span = ast.SourceSpan.fromToken(self.previous()),
                     },
-                    .data = .{ .Block = .{ .statements = statements, .value = null } },
+                    .data = .{ .Block = .{ .statements = statements, .value = null, .braced = false } },
                 };
 
                 form.* = .diverging;
@@ -230,6 +266,7 @@ pub const Parser = struct {
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
+        const open = self.peek();
         self.advance();
 
         var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
@@ -282,7 +319,7 @@ pub const Parser = struct {
         block_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.peek()),
+                .span = self.spanFrom(open),
             },
             .data = .{
                 .Block = .{
@@ -991,7 +1028,7 @@ pub const Parser = struct {
             if (self.peek().type != .THEN) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
-                return error.ExpectedThen;
+                return error.ExpectedMapThen;
             }
             self.advance();
 

@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const ir = @import("../hir/register/ir.zig");
+const loops = @import("../hir/register/loops.zig");
 const rt = @import("../../runtime/doxa_rt.zig");
 const layout = @import("layout.zig");
 const int_range = @import("int_range.zig");
@@ -84,7 +85,19 @@ const FunctionEmitter = struct {
             try self.entry.writer.print("  store {s} zeroinitializer, ptr {s}\n", .{ layout.doxaType(slot.ty), s.* });
         }
         self.slot_storage = storage;
+        // `__doxa_init` is entered once, by the runtime: no call of the program's.
+        if (self.e.instrument.calls and self.id != self.e.module.init) try self.countSite(&self.entry.writer, try self.e.site("call", f, f.span));
         if (self.e.debug) |*d| self.scope = try d.subprogram(f, self.e.module.program.function_names[@intFromEnum(self.id)]);
+        // A named slot is declared on its alloca: reads and writes through the
+        // slot are then visible without a `#dbg_value`.
+        if (self.e.debug) |*d| {
+            for (f.locals, 0..) |local, i| {
+                const slot = local.slot orelse continue;
+                const var_node = try d.localVariable(f, self.id, @enumFromInt(i), .{ .doxa = f.slots[@intFromEnum(slot)].ty }, self.scope.?, local.arg);
+                const loc = try d.location(self.scope.?, f, f.span, false);
+                try self.entry.writer.print("  call void @llvm.dbg.declare(metadata ptr {s}, metadata !{d}, metadata !DIExpression()), !dbg !{d}\n", .{ storage[@intFromEnum(slot)], var_node, loc });
+            }
+        }
         // Constants are operands, not instructions.
         for (f.blocks) |block| {
             for (block.insts) |inst| {
@@ -103,9 +116,13 @@ const FunctionEmitter = struct {
             self.w = &self.bodies[b].writer;
             for (block.insts) |*inst| {
                 self.setSpan(inst.span);
+                try self.countLine(inst.span);
+                try self.traceSite(inst);
+                try self.checkReads(inst);
                 try self.instruction(inst);
             }
             self.setSpan(block.term_span);
+            try self.countLine(block.term_span);
             try self.terminator(&block.term);
             self.exit_labels[b] = self.label;
         }
@@ -144,6 +161,70 @@ const FunctionEmitter = struct {
 
     // ── Helpers ──
 
+    /// Under `--instrument=lines`, a statement's head counts the statement,
+    /// at its own start. A statement whose head the HIR does not mark (one
+    /// lowering folded into its neighbour) has no counter of its own.
+    fn countLine(self: *FunctionEmitter, span: ir.SrcSpan) Error!void {
+        if (!self.e.instrument.lines or !span.is_stmt) return;
+        try self.countSite(self.w, try self.e.site("line", self.f, self.f.statements[span.stmt]));
+    }
+
+    /// Under `--instrument=memtrace`, name the site whose runtime work this
+    /// instruction is: what it allocates, stores into a container, opens or
+    /// re-homes counts to it, nested allocations included.
+    fn traceSite(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
+        if (!self.e.instrument.memtrace) return;
+        const kind: []const u8 = switch (inst.op) {
+            .scope_enter => "arena",
+            .rehome => "rehome",
+            .clone => "clone",
+            .call_zig => |c| if (self.e.module.zig_takes_arena[@intFromEnum(c.callee)]) "zig" else return,
+            else => if (loops.allocArena(inst.op) != null) "alloc" else if (loops.storeInto(inst.op) != null) "store" else return,
+        };
+        const id = try self.e.site(kind, self.f, inst.span);
+        try self.w.print("  store i32 {d}, ptr @doxa_memtrace_site\n", .{id});
+    }
+
+    /// Under `--instrument=memcheck`, check each heap value `inst` reads
+    /// through (a string's bytes, an array, a struct, a map) before it does:
+    /// a value in memory its arena reclaimed faults here. Passing, storing or
+    /// boxing a pointer reads nothing through it, so those are not checked;
+    /// the read that follows is.
+    fn checkReads(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
+        if (!self.e.instrument.memcheck) return;
+        switch (inst.op) {
+            .debug_value, .store, .global_store, .call, .call_zig, .box, .repack, .unbox, .member_test, .member_index, .constant => return,
+            else => {},
+        }
+        const Visit = struct {
+            fx: *FunctionEmitter,
+            fn operand(ctx: @This(), v: ValueId) Error!void {
+                const t = switch (ctx.fx.typeOf(v)) {
+                    .doxa => |t| t,
+                    else => return,
+                };
+                const ptr = switch (t) {
+                    .String => (try ctx.fx.stringParts(ctx.fx.name(v))).ptr,
+                    .Array, .Struct, .Map => ctx.fx.name(v),
+                    else => return,
+                };
+                const site = try ctx.fx.e.faultSite(.use_after_reclaim, ctx.fx.span);
+                try ctx.fx.line("call void @doxa_memcheck(ptr {s}, ptr {s})", .{ ptr, site });
+            }
+        };
+        try ir.forEachOperand(&inst.op, Visit{ .fx = self }, Visit.operand);
+    }
+
+    /// Increment site `id`'s counter, written to `w`. The increment carries
+    /// no location: the statement's key instruction is still the next one
+    /// with a line.
+    fn countSite(self: *FunctionEmitter, w: *Writer, id: u32) Error!void {
+        const counter = try std.fmt.allocPrint(self.e.alloc, "getelementptr inbounds (i64, ptr @.doxa.counts, i64 {d})", .{id});
+        const old = try self.temp();
+        const new = try self.temp();
+        try w.print("  {s} = load i64, ptr {s}, align 8\n  {s} = add i64 {s}, 1\n  store i64 {s}, ptr {s}, align 8\n", .{ old, counter, new, old, new, counter });
+    }
+
     fn name(self: *const FunctionEmitter, v: ValueId) []const u8 {
         return self.names[@intFromEnum(v)];
     }
@@ -172,7 +253,9 @@ const FunctionEmitter = struct {
     fn eol(self: *FunctionEmitter) Error!void {
         const scope = self.scope orelse return self.w.writeAll("\n");
         var key: Location = .{ .line = self.span.line, .column = self.span.column, .key_stmt = null };
-        if (self.head == self.span.stmt) {
+        if (self.span.artificial) {
+            key = .{ .line = 0, .column = 0, .key_stmt = null };
+        } else if (self.head == self.span.stmt) {
             key.key_stmt = self.span.stmt;
             self.head = null;
         }
@@ -301,8 +384,8 @@ const FunctionEmitter = struct {
             .arith => |a| try self.arith(inst, a.op, a.lhs, a.rhs),
             .neg => |u| switch (self.doxaOf(u.operand)) {
                 .Float => try self.def(inst, "fneg double {s}", .{self.name(u.operand)}),
-                .Int => self.names[@intFromEnum(inst.result.?)] = try self.intArith(.Sub, "0", self.name(u.operand), .exact(0), self.ranges[@intFromEnum(u.operand)]),
-                .Byte => try self.def(inst, "sub i8 0, {s}", .{self.name(u.operand)}),
+                .Int => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(.Sub, .Int, "0", self.name(u.operand), .exact(0), self.ranges[@intFromEnum(u.operand)]),
+                .Byte => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(.Sub, .Byte, "0", self.name(u.operand), .exact(0), self.ranges[@intFromEnum(u.operand)]),
                 else => return self.e.faultf("negates a {s}", .{@tagName(self.doxaOf(u.operand))}),
             },
             .convert => |u| try self.convert(inst, u.operand),
@@ -486,7 +569,41 @@ const FunctionEmitter = struct {
                 try self.line("call void @doxa_write_cstr(ptr {s}, i64 {s})", .{ s.ptr, s.len });
             },
             .peek => |p| try self.peek(p.operand, p.display, inst.span),
+            .debug_value => |v| try self.debugValue(v.local, v.value),
         }
+    }
+
+    /// `#dbg_value`: the value a named binding holds here. Nothing without
+    /// `-g`.
+    fn debugValue(self: *FunctionEmitter, local: ir.LocalId, value: ValueId) Error!void {
+        const d = if (self.e.debug) |*d| d else return;
+        const var_node = try d.localVariable(self.f, self.id, local, self.f.typeOf(value), self.scope.?, self.f.locals[@intFromEnum(local)].arg);
+        try self.w.print("  call void @llvm.dbg.value(metadata {s}, metadata !{d}, metadata !DIExpression()), !dbg !{d}\n", .{ try self.valueMetadata(value), var_node, try self.debugLocation() });
+    }
+
+    /// The current span's `!DILocation`, interned as `eol` does. A debug
+    /// record needs a location, but it is never a step's key instruction.
+    fn debugLocation(self: *FunctionEmitter) Error!u32 {
+        const d = if (self.e.debug) |*d| d else unreachable;
+        const key = Location{ .line = self.span.line, .column = self.span.column, .key_stmt = null };
+        const entry = try self.locations.getOrPut(self.e.alloc, key);
+        if (!entry.found_existing) entry.value_ptr.* = try d.location(self.scope.?, self.f, self.span, false);
+        return entry.value_ptr.*;
+    }
+
+    /// The metadata operand a `#dbg_value` names. LLVM's assembler wants the
+    /// type spelled with the value; a constant has no SSA name, so its text
+    /// stands in for one.
+    fn valueMetadata(self: *FunctionEmitter, value: ValueId) Error![]const u8 {
+        const ty = self.f.typeOf(value);
+        const definition = self.f.values[@intFromEnum(value)].def;
+        const d = switch (definition) {
+            .param => return std.fmt.allocPrint(self.e.alloc, "{s} {s}", .{ layout.llvmType(ty), self.name(value) }),
+            .inst => |d| d,
+        };
+        const inst = self.f.blocks[@intFromEnum(d.block)].insts[d.index];
+        if (std.meta.activeTag(inst.op) != .constant) return std.fmt.allocPrint(self.e.alloc, "{s} {s}", .{ layout.llvmType(ty), self.name(value) });
+        return std.fmt.allocPrint(self.e.alloc, "{s} {s}", .{ layout.llvmType(ty), try self.constantText(inst.op.constant, ty) });
     }
 
     fn defString(self: *FunctionEmitter, inst: *const ir.Inst, s: []const u8) Error!void {
@@ -503,7 +620,8 @@ const FunctionEmitter = struct {
                 const lr = self.ranges[@intFromEnum(lhs)];
                 const rr = self.ranges[@intFromEnum(rhs)];
                 const result = switch (op) {
-                    .Add, .Sub, .Mul => try self.intArith(op, l, r, lr, rr),
+                    .Add, .Sub, .Mul => try self.checkedArith(op, .Int, l, r, lr, rr),
+                    .WrapAdd, .WrapSub, .WrapMul => try self.tmp("{s} i64 {s}, {s}", .{ wrapping(op), l, r }),
                     .IntDiv => try self.flooredDiv(l, r, int_range.signFacts(lr, rr)),
                     .Mod => try self.flooredMod(l, r, int_range.signFacts(lr, rr)),
                     .Div => blk: {
@@ -511,10 +629,8 @@ const FunctionEmitter = struct {
                         break :blk try self.tmp("sdiv i64 {s}, {s}", .{ l, r });
                     },
                     .Pow => blk: {
-                        const a = try self.tmp("sitofp i64 {s} to double", .{l});
-                        const b = try self.tmp("sitofp i64 {s} to double", .{r});
-                        const p = try self.tmp("call double @llvm.pow.f64(double {s}, double {s})", .{ a, b });
-                        break :blk try self.tmp("fptosi double {s} to i64", .{p});
+                        self.e.uses_int_pow = true;
+                        break :blk try self.overflowChecked("i64", try self.tmp("call {{ i64, i1 }} @doxa.int.pow(i64 {s}, i64 {s})", .{ l, r }));
                     },
                 };
                 self.names[@intFromEnum(inst.result.?)] = result;
@@ -527,35 +643,62 @@ const FunctionEmitter = struct {
                 .Mod => try self.def(inst, "frem double {s}, {s}", .{ l, r }),
                 .Pow => try self.def(inst, "call double @llvm.pow.f64(double {s}, double {s})", .{ l, r }),
                 .IntDiv => return self.e.faultf("floor-divides floats", .{}),
+                .WrapAdd, .WrapSub, .WrapMul => return self.e.faultf("wraps float arithmetic", .{}),
             },
-            // A byte is unsigned and its arithmetic wraps mod 256.
+            // A byte is unsigned: leaving `[0, 255]` faults like `int` overflow.
             .Byte => switch (op) {
-                .Add => try self.def(inst, "add i8 {s}, {s}", .{ l, r }),
-                .Sub => try self.def(inst, "sub i8 {s}, {s}", .{ l, r }),
-                .Mul => try self.def(inst, "mul i8 {s}, {s}", .{ l, r }),
+                .Add, .Sub, .Mul => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(op, .Byte, l, r, self.ranges[@intFromEnum(lhs)], self.ranges[@intFromEnum(rhs)]),
+                .WrapAdd, .WrapSub, .WrapMul => try self.def(inst, "{s} i8 {s}, {s}", .{ wrapping(op), l, r }),
                 .Div, .IntDiv => try self.def(inst, "udiv i8 {s}, {s}", .{ l, r }),
                 .Mod => try self.def(inst, "urem i8 {s}, {s}", .{ l, r }),
-                .Pow => try self.def(inst, "call i8 @doxa.byte.pow(i8 {s}, i8 {s})", .{ l, r }),
+                .Pow => {
+                    self.e.uses_byte_pow = true;
+                    const pair = try self.tmp("call {{ i8, i1 }} @doxa.byte.pow(i8 {s}, i8 {s})", .{ l, r });
+                    self.names[@intFromEnum(inst.result.?)] = try self.overflowChecked("i8", pair);
+                },
             },
             else => return self.e.faultf("arithmetic on a {s}", .{@tagName(self.doxaOf(lhs))}),
         }
     }
 
-    /// Signed `add`, `sub` or `mul`: bare under `wrap` or when the ranges
-    /// prove it fits, else checked with a real trap on overflow.
-    fn intArith(self: *FunctionEmitter, op: ir.ArithOp, l: []const u8, r: []const u8, lr: IntRange, rr: IntRange) Error![]const u8 {
+    /// The bare instruction a wrapping op lowers to: modular by definition.
+    fn wrapping(op: ir.ArithOp) []const u8 {
+        return switch (op) {
+            .WrapAdd => "add",
+            .WrapSub => "sub",
+            .WrapMul => "mul",
+            else => unreachable,
+        };
+    }
+
+    /// `add`, `sub` or `mul` on an `int` (signed `i64`) or a `byte` (unsigned
+    /// `i8`): bare when the ranges prove the result fits the type, else checked
+    /// with a fault on overflow or underflow. Wrapping is only ever explicit,
+    /// through `+%`, `-%` and `*%`.
+    fn checkedArith(self: *FunctionEmitter, op: ir.ArithOp, operand_type: HIRType, l: []const u8, r: []const u8, lr: IntRange, rr: IntRange) Error![]const u8 {
         const bare = switch (op) {
             .Add => "add",
             .Sub => "sub",
             .Mul => "mul",
             else => unreachable,
         };
-        if (self.e.overflow == .wrap or int_range.intArithCannotOverflow(op, lr, rr)) {
-            return self.tmp("{s} i64 {s}, {s}", .{ bare, l, r });
+        const sign, const width = switch (operand_type) {
+            .Int => .{ "s", "i64" },
+            .Byte => .{ "u", "i8" },
+            else => unreachable,
+        };
+        if (int_range.arithCannotOverflow(op, operand_type, lr, rr)) {
+            return self.tmp("{s} {s} {s}, {s}", .{ bare, width, l, r });
         }
-        const pair = try self.tmp("call {{ i64, i1 }} @llvm.s{s}.with.overflow.i64(i64 {s}, i64 {s})", .{ if (op == .Mul) "mul" else bare, l, r });
-        const result = try self.tmp("extractvalue {{ i64, i1 }} {s}, 0", .{pair});
-        const overflowed = try self.tmp("extractvalue {{ i64, i1 }} {s}, 1", .{pair});
+        const pair = try self.tmp("call {{ {s}, i1 }} @llvm.{s}{s}.with.overflow.{s}({s} {s}, {s} {s})", .{ width, sign, bare, width, width, l, width, r });
+        return self.overflowChecked(width, pair);
+    }
+
+    /// The value of a `{ width, i1 }` result-and-overflow `pair`, faulting
+    /// with `Integer overflow` when the flag is set.
+    fn overflowChecked(self: *FunctionEmitter, width: []const u8, pair: []const u8) Error![]const u8 {
+        const result = try self.tmp("extractvalue {{ {s}, i1 }} {s}, 0", .{ width, pair });
+        const overflowed = try self.tmp("extractvalue {{ {s}, i1 }} {s}, 1", .{ width, pair });
         const trap = try self.split("ovf.trap");
         const cont = try self.split("ovf.cont");
         try self.line("br i1 {s}, label %{s}, label %{s}", .{ overflowed, trap, cont });
@@ -830,10 +973,7 @@ const FunctionEmitter = struct {
             .Byte => self.stringCall("doxa_byte_to_string", "ptr {s}, i64 {s}", .{ arena, try self.tmp("zext i8 {s} to i64", .{v}) }),
             .Tetra => self.stringCall("doxa_tetra_to_string", "ptr {s}, i64 {s}", .{ arena, try self.tmp("zext i2 {s} to i64", .{v}) }),
             .Nothing => self.stringCall("doxa_nothing_to_string", "ptr {s}", .{arena}),
-            .Enum => |id| blk: {
-                const key = self.e.module.program.enum_keys[id];
-                break :blk self.stringCall("doxa_enum_to_string", "ptr {s}, ptr {s}, i64 {d}, i64 {s}", .{ arena, try self.e.string(key), key.len, v });
-            },
+            .Enum => |id| self.stringCall("doxa_enum_to_string", "ptr {s}, ptr {s}, i64 {s}", .{ arena, try self.e.enumDesc(id), v }),
             .Struct => self.stringCall("doxa_struct_to_string", "ptr {s}, ptr {s}", .{ arena, v }),
             .Array => |a| if (a.size != null)
                 self.e.faultf("renders a fixed array; the generator converts it first", .{})
@@ -889,9 +1029,7 @@ const FunctionEmitter = struct {
     /// member a declaration without an initializer holds.
     fn defaultStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId) Error![]const u8 {
         const field_types = self.e.layout.struct_fields[id];
-        const words = @max(1, layout.structWords(field_types));
-        const object = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ arena, words * 8 });
-        try self.line("call void @llvm.memset.p0.i64(ptr align 8 {s}, i8 0, i64 {d}, i1 false)", .{ object, words * 8 });
+        const object = try self.zeroedStruct(arena, id);
         for (field_types, 0..) |t, i| {
             if (!t.isBoxed()) continue;
             const header = try self.e.boxHeader(t);
@@ -901,9 +1039,19 @@ const FunctionEmitter = struct {
             const bits = try self.tmp("ptrtoint ptr {s} to i64", .{cell});
             try self.line("store i64 {s}, ptr {s}", .{ bits, try self.fieldPtr(object, id, layout.fieldOffset(field_types, @intCast(i))) });
         }
+        return object;
+    }
+
+    /// A zeroed struct in `arena`. A described struct comes from the runtime
+    /// behind its header (its descriptor and owning arena); a
+    /// descriptor-skipped one is its bare words.
+    fn zeroedStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId) Error![]const u8 {
         if (!self.e.layout.skip_descriptor[id]) {
-            try self.line("call void @doxa_struct_register(ptr {s}, ptr {s}, ptr {s})", .{ arena, object, try self.e.structDesc(id) });
+            return self.tmp("call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ arena, try self.e.structDesc(id) });
         }
+        const bytes = @as(u64, @max(1, layout.structWords(self.e.layout.struct_fields[id]))) * 8;
+        const object = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ arena, bytes });
+        try self.line("call void @llvm.memset.p0.i64(ptr align 8 {s}, i8 0, i64 {d}, i1 false)", .{ object, bytes });
         return object;
     }
 
@@ -918,7 +1066,7 @@ const FunctionEmitter = struct {
         const element = cursor;
         if (element == .Struct and self.e.layout.isFlat(element.Struct)) {
             if (sizes.items.len != 1) return self.e.faultf("converts a nested fixed array of flat structs", .{});
-            try self.def(inst, "call ptr @doxa_array_from_fixed_structs(ptr {s}, ptr {s}, i64 {d}, i64 {d}, ptr null)", .{
+            try self.def(inst, "call ptr @doxa_array_from_fixed_structs(ptr {s}, ptr {s}, i64 {d}, i64 {d})", .{
                 self.name(arena), self.name(operand), sizes.items[0], self.e.layout.structWordsOf(element.Struct),
             });
             return;
@@ -1222,14 +1370,15 @@ const FunctionEmitter = struct {
     fn structNew(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, fields: []const ValueId) Error!void {
         const id = self.f.typeOf(inst.result.?).doxa.Struct;
         const field_types = self.e.layout.struct_fields[id];
-        const words = @max(1, layout.structWords(field_types));
-        try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ self.name(arena), words * 8 });
+        if (self.e.layout.skip_descriptor[id]) {
+            const words = @max(1, layout.structWords(field_types));
+            try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ self.name(arena), words * 8 });
+        } else {
+            try self.def(inst, "call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ self.name(arena), try self.e.structDesc(id) });
+        }
         const object = self.name(inst.result.?);
         for (fields, field_types, 0..) |v, t, i| {
             try self.storeField(object, self.name(arena), id, @intCast(i), t, self.name(v));
-        }
-        if (!self.e.layout.skip_descriptor[id]) {
-            try self.line("call void @doxa_struct_register(ptr {s}, ptr {s}, ptr {s})", .{ self.name(arena), object, try self.e.structDesc(id) });
         }
     }
 
@@ -1280,14 +1429,17 @@ const FunctionEmitter = struct {
     }
 
     /// A field store after construction: a heap value is placed in the
-    /// struct's own arena, which the runtime's registry records for every
-    /// struct with a heap field (`doxa_struct_scope`).
+    /// struct's own arena, which a struct with a heap field keeps in its
+    /// header (`StructHeader.scope`, the word just before the fields).
     fn fieldSet(self: *FunctionEmitter, object: ValueId, index: u32, value: ValueId) Error!void {
         const id = self.doxaOf(object).Struct;
         const t = self.e.layout.struct_fields[id][index];
         const o = self.name(object);
         const scope = switch (t) {
-            .String, .Union, .Group => try self.tmp("call ptr @doxa_struct_scope(ptr {s})", .{o}),
+            .String, .Union, .Group => blk: {
+                const at = try self.tmp("getelementptr inbounds i8, ptr {s}, i64 -8", .{o});
+                break :blk try self.tmp("load ptr, ptr {s}, align 8", .{at});
+            },
             else => "null",
         };
         try self.storeField(o, scope, id, index, t, self.name(value));
@@ -1335,7 +1487,8 @@ const FunctionEmitter = struct {
                 try self.line("call void @doxa_clone_doxa_value(ptr {s}, ptr {s})", .{ a, slot });
                 try self.def(inst, "load %DoxaValue, ptr {s}", .{slot});
             },
-            .Map => self.names[@intFromEnum(inst.result.?)] = v,
+            // A map lives in the root arena (the verifier's rule 4), so the
+            // arena pass keeps every copy of one as the map itself.
             else => return self.e.faultf("copies a {s}", .{@tagName(t)}),
         }
     }

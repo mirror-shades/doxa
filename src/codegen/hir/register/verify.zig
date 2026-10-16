@@ -11,7 +11,10 @@
 //!    no value is used once its arena is closed or reset; a heap value stored
 //!    into a slot, a global or a `^` target, or returned, lives in an arena
 //!    that outlives the destination — or reaches it through `clone`/`rehome`.
-//!    Container stores re-home at runtime and are exempt.
+//!    Container stores re-home at runtime and are exempt. A map is made only
+//!    in the root arena (it is a program-level declaration), so every map
+//!    value lives there wherever it is read from, and a copy of one is the
+//!    map itself.
 //! 5. Aliases: a `ref` is the address of a slot or a `^` parameter, is never
 //!    a block parameter, and no call takes two `^` arguments naming one slot;
 //!    a `^` argument travels with the arena that owns its slot.
@@ -65,6 +68,12 @@ pub const Facts = struct {
     pub fn parentOf(self: *const Facts, arena: ValueId) ?ValueId {
         return self.v.parentOf(arena);
     }
+
+    /// What `arena` is: the root, `@caller`, a `^` argument's, or one this
+    /// function opened.
+    pub fn kind(self: *const Facts, arena: ValueId) ArenaKind {
+        return self.v.arena_kind[@intFromEnum(arena)].?;
+    }
 };
 
 /// The facts of a function that passes verification; null when it does not.
@@ -114,7 +123,7 @@ pub const Region = union(enum) {
 };
 
 /// What an arena value is.
-const ArenaKind = union(enum) {
+pub const ArenaKind = union(enum) {
     root,
     caller,
     alias,
@@ -827,6 +836,11 @@ const Verifier = struct {
                 _ = try self.doxa(p.operand);
                 try self.noResult(inst);
             },
+            .debug_value => |d| {
+                if (@intFromEnum(d.local) >= self.f.locals.len) return self.fail("names local {d}, which does not exist", .{@intFromEnum(d.local)});
+                if (self.f.locals[@intFromEnum(d.local)].slot != null) return self.fail("names local {s}, which holds a slot; a slot is declared, not valued", .{self.f.locals[@intFromEnum(d.local)].name});
+                try self.noResult(inst);
+            },
         }
     }
 
@@ -1042,6 +1056,9 @@ const Verifier = struct {
     /// The region of the heap value `inst` defines; null while an operand's
     /// region is still unknown in the fixpoint.
     fn regionOf(self: *Verifier, inst: ir.Inst) Error!?Region {
+        // A map lives in the root arena however it is reached: an element or
+        // a field holds the declaration's map, never a copy (rule 4).
+        if (self.typeOf(inst.result.?).doxa == .Map) return .root;
         return switch (inst.op) {
             .constant => .static,
             .str_concat => |s| .{ .arena = s.arena },
@@ -1208,6 +1225,9 @@ const Verifier = struct {
                 open.items[open.items.len - 1] = inst.result.?;
             },
             .store => |s| try self.checkStore(s.value, self.refArena(s.ref)),
+            .map_new => |m| if (self.arena_kind[@intFromEnum(m.arena)].? != .root) {
+                return self.fail("makes a map in %{d}, not the root arena; a map is a program-level declaration", .{@intFromEnum(m.arena)});
+            },
             .global_store => |g| if (self.typeOf(g.value).isHeap()) {
                 const region = self.region[@intFromEnum(g.value)].?;
                 if (!self.regionOutlives(region, .root)) return self.fail("stores %{d} into a global without re-homing it to the root arena", .{@intFromEnum(g.value)});

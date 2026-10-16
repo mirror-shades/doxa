@@ -581,6 +581,10 @@ pub const Expr = struct {
         Block: struct {
             statements: []Stmt,
             value: ?*Expr,
+            /// Written with braces: a lifetime, which opens an arena
+            /// (`docs/memory.md`). False for the block the parser makes
+            /// around a bare `then return x`.
+            braced: bool = true,
         },
         Array: []const *Expr,
         Struct: []*StructLiteralField,

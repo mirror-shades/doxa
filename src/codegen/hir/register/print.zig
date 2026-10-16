@@ -40,7 +40,12 @@ pub fn writeFunction(w: *Writer, program: *const ir.Program, f: *const ir.Functi
     for (f.slots, 0..) |slot, i| {
         try w.print("  s{d}: ", .{i});
         try writeHIRType(w, program, slot.ty);
-        try w.print(" in %{d}  # {s}\n", .{ @intFromEnum(slot.arena), slot.name });
+        try w.print(" in %{d}\n", .{@intFromEnum(slot.arena)});
+    }
+    // A slot a program names is declared on it; an SSA name is a
+    // `debug_value` where it is defined.
+    for (f.locals) |local| {
+        if (local.slot) |slot| try w.print("  local {s}: s{d}\n", .{ local.name, @intFromEnum(slot) });
     }
     for (f.blocks, 0..) |*block, i| try writeBlock(w, program, f, @enumFromInt(i), block, options);
 }
@@ -117,6 +122,7 @@ pub fn writeInst(w: *Writer, program: *const ir.Program, f: *const ir.Function, 
         .call => |c| try w.print(" {s}", .{program.function_names[@intFromEnum(c.callee)]}),
         .call_zig => |c| try w.print(" {s}", .{program.zig_function_names[@intFromEnum(c.callee)]}),
         .peek => |p| if (p.display.path) |path| try w.print(" \"{s}\"", .{path}),
+        .debug_value => |d| try w.print(" {s}", .{f.locals[@intFromEnum(d.local)].name}),
         else => {},
     }
     var first = true;
@@ -211,6 +217,7 @@ fn opName(op: ir.Op) []const u8 {
         .call_zig => "call.zig",
         .print => "print",
         .peek => "peek",
+        .debug_value => "debug_value",
     };
 }
 

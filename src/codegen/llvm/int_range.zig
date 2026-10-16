@@ -173,6 +173,23 @@ pub const IntRange = struct {
         return .below(c);
     }
 
+    /// `a` narrowed to the closed bounds of `b`: what a value holds when it
+    /// is known to lie in both. An end `a` leaves open takes `b`'s, and a
+    /// disjoint pair (which only an unreachable path can produce) keeps `b`.
+    pub fn clip(a: IntRange, b: IntRange) IntRange {
+        if (a.konst) |c| {
+            if ((!b.lo_known or c >= b.lo) and (!b.hi_known or c <= b.hi)) return a;
+            return b;
+        }
+        var out = b;
+        if (a.lo_known and (!b.lo_known or a.lo > b.lo)) out.lo = a.lo;
+        if (a.hi_known and (!b.hi_known or a.hi < b.hi)) out.hi = a.hi;
+        out.lo_known = a.lo_known or b.lo_known;
+        out.hi_known = a.hi_known or b.hi_known;
+        if (out.lo_known and out.hi_known and out.lo > out.hi) return b;
+        return out;
+    }
+
     /// The join for a merge: what holds on *every* incoming value.
     ///
     /// A phi selects one of its incoming values, and a variable after a branch
@@ -252,26 +269,48 @@ pub fn arithRange(op: ArithOp, operand_type: HIRType, lhs: IntRange, rhs: IntRan
             .Add => return IntRange.add(lhs, rhs),
             .Sub => return IntRange.sub(lhs, rhs),
             .Mul => return IntRange.mul(lhs, rhs),
-            .Div, .IntDiv => {
-                if (rhs.konst) |c| {
-                    if (c > 0) return IntRange.flooredDivByConst(lhs, c);
-                }
-                return .unknown();
-            },
-            .Mod => {
-                if (rhs.konst) |c| {
-                    if (c > 0) return IntRange.flooredModByConst(lhs, c);
-                }
-                return .unknown();
-            },
+            .Div, .IntDiv => return if (positiveConst(rhs)) |c| IntRange.flooredDivByConst(lhs, c) else .unknown(),
+            .Mod => return if (positiveConst(rhs)) |c| IntRange.flooredModByConst(lhs, c) else .unknown(),
             .Pow => return .unknown(),
+            .WrapAdd, .WrapSub, .WrapMul => return wrappedRange(op, .Int, lhs, rhs),
         },
-        .Byte => switch (op) {
-            .Add, .Sub, .Mul => return IntRange.below(256),
-            else => return .unknown(),
+        // A checked byte result that would leave `[0, 255]` faults, so the
+        // value that flows on is the exact interval clipped to the type.
+        .Byte => {
+            // Byte division is unsigned, so it floors like `int`'s.
+            const exact: IntRange = switch (op) {
+                .Add => IntRange.add(lhs, rhs),
+                .Sub => IntRange.sub(lhs, rhs),
+                .Mul => IntRange.mul(lhs, rhs),
+                .Div, .IntDiv => if (positiveConst(rhs)) |c| IntRange.flooredDivByConst(lhs, c) else .unknown(),
+                .Mod => if (positiveConst(rhs)) |c| IntRange.flooredModByConst(lhs, c) else .unknown(),
+                .Pow => .unknown(),
+                .WrapAdd, .WrapSub, .WrapMul => return wrappedRange(op, .Byte, lhs, rhs),
+            };
+            return exact.clip(.below(256));
         },
         else => return .unknown(),
     }
+}
+
+/// A wrapping op's range: the exact one when it provably cannot wrap, else
+/// the whole type.
+fn wrappedRange(op: ArithOp, operand_type: HIRType, lhs: IntRange, rhs: IntRange) IntRange {
+    const exact: ArithOp = switch (op) {
+        .WrapAdd => .Add,
+        .WrapSub => .Sub,
+        .WrapMul => .Mul,
+        else => unreachable,
+    };
+    const whole: IntRange = if (operand_type == .Byte) .below(256) else .unknown();
+    if (!arithCannotOverflow(exact, operand_type, lhs, rhs)) return whole;
+    return arithRange(exact, operand_type, lhs, rhs);
+}
+
+/// The divisor `r` when it is an exact positive constant.
+fn positiveConst(r: IntRange) ?i64 {
+    const c = r.konst orelse return null;
+    return if (c > 0) c else null;
 }
 
 /// How floored `%` is lowered. Every shape is exact; they differ in cost.
@@ -399,9 +438,9 @@ pub fn planDiv(f: SignFacts) DivShape {
 // Overflow (Phase D-1)
 // ---------------------------------------------------------------------------
 //
-// Integer overflow is defined behaviour (`docs/performance.md` §1): checked
-// modes trap, unchecked modes wrap. The check on a signed `add`, `sub` or
-// `mul` is skipped when the operand ranges prove the result fits.
+// Overflow and underflow fault in every build mode (`docs/performance.md`,
+// "Safety is defined"). The check on an `int` or `byte` `add`, `sub` or `mul`
+// is dropped only when the operand ranges prove the result fits its type.
 
 const Bounds = struct { lo: i64, hi: i64 };
 
@@ -413,34 +452,31 @@ fn boundsOf(r: IntRange) ?Bounds {
     return null;
 }
 
-/// True when `op` provably cannot overflow for any pair of values drawn from
-/// the two ranges. Endpoints decide `add` and `sub` because both are monotone
-/// in each operand; a product's extrema lie on the corners of the operand
-/// rectangle, so the four corner products (computed in `i128`, which cannot
-/// overflow for `i64` inputs) decide `mul`.
-pub fn intArithCannotOverflow(op: ArithOp, a: IntRange, b: IntRange) bool {
+/// True when `op` on `operand_type` (`int` or `byte`) provably cannot leave
+/// the type's range for any pair of values drawn from the two ranges. Every
+/// candidate extremum is computed in `i128`, which cannot overflow for `i64`
+/// inputs: endpoints decide `add` and `sub` because both are monotone in each
+/// operand, and a product's extrema lie on the corners of the operand
+/// rectangle.
+pub fn arithCannotOverflow(op: ArithOp, operand_type: HIRType, a: IntRange, b: IntRange) bool {
     const ab = boundsOf(a) orelse return false;
     const bb = boundsOf(b) orelse return false;
-    switch (op) {
-        .Add => {
-            _ = std.math.add(i64, ab.lo, bb.lo) catch return false;
-            _ = std.math.add(i64, ab.hi, bb.hi) catch return false;
-            return true;
-        },
-        .Sub => {
-            _ = std.math.sub(i64, ab.lo, bb.hi) catch return false;
-            _ = std.math.sub(i64, ab.hi, bb.lo) catch return false;
-            return true;
-        },
-        .Mul => {
-            const p0 = @as(i128, ab.lo) * @as(i128, bb.lo);
-            const p1 = @as(i128, ab.lo) * @as(i128, bb.hi);
-            const p2 = @as(i128, ab.hi) * @as(i128, bb.lo);
-            const p3 = @as(i128, ab.hi) * @as(i128, bb.hi);
-            const lo = @min(@min(p0, p1), @min(p2, p3));
-            const hi = @max(@max(p0, p1), @max(p2, p3));
-            return lo >= std.math.minInt(i64) and hi <= std.math.maxInt(i64);
+    const fits: Bounds = switch (operand_type) {
+        .Int => .{ .lo = std.math.minInt(i64), .hi = std.math.maxInt(i64) },
+        .Byte => .{ .lo = 0, .hi = std.math.maxInt(u8) },
+        else => return false,
+    };
+    const lo: i128, const hi: i128 = switch (op) {
+        .Add => .{ @as(i128, ab.lo) + bb.lo, @as(i128, ab.hi) + bb.hi },
+        .Sub => .{ @as(i128, ab.lo) - bb.hi, @as(i128, ab.hi) - bb.lo },
+        .Mul => corners: {
+            const p0 = @as(i128, ab.lo) * bb.lo;
+            const p1 = @as(i128, ab.lo) * bb.hi;
+            const p2 = @as(i128, ab.hi) * bb.lo;
+            const p3 = @as(i128, ab.hi) * bb.hi;
+            break :corners .{ @min(@min(p0, p1), @min(p2, p3)), @max(@max(p0, p1), @max(p2, p3)) };
         },
         else => return false,
-    }
+    };
+    return lo >= fits.lo and hi <= fits.hi;
 }

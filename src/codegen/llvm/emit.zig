@@ -11,6 +11,7 @@
 const std = @import("std");
 const ir = @import("../hir/register/ir.zig");
 const rt = @import("../../runtime/doxa_rt.zig");
+const instrument = @import("../../runtime/instrument.zig");
 const layout_mod = @import("layout.zig");
 const Ranges = @import("ranges.zig").Ranges;
 const function = @import("function.zig");
@@ -21,9 +22,6 @@ const module_graph = @import("../../module/graph.zig");
 const HIRType = ir.HIRType;
 const Layout = layout_mod.Layout;
 
-/// What signed integer overflow does (`docs/performance.md` §1).
-pub const OverflowPolicy = enum { trap, wrap };
-
 pub const Error = std.mem.Allocator.Error || std.Io.Writer.Error || error{EmitFault};
 
 pub const Emitter = struct {
@@ -31,7 +29,6 @@ pub const Emitter = struct {
     module: *const ir.Module,
     layout: Layout,
     ranges: Ranges,
-    overflow: OverflowPolicy,
 
     /// Module-level definitions made while functions are lowered: strings,
     /// descriptors, peek member lists. Written after the functions.
@@ -42,6 +39,10 @@ pub const Emitter = struct {
     /// The box id of each union and group type the program boxes, in the
     /// order they were first boxed (`DoxaBoxMeta`).
     box_ids: std.AutoHashMapUnmanaged(BoxKey, u32) = .empty,
+    /// The `**` helpers a function called, so a program without them carries
+    /// neither.
+    uses_int_pow: bool = false,
+    uses_byte_pow: bool = false,
     boxed: std.ArrayListUnmanaged(HIRType) = .empty,
     /// One `%DoxaFaultSite` constant per kind of fault at each place.
     fault_sites: std.AutoHashMapUnmanaged(FaultSiteKey, []const u8) = .empty,
@@ -50,28 +51,39 @@ pub const Emitter = struct {
     fault: ?[]const u8 = null,
     /// Debug metadata, under `-g`.
     debug: ?debug.Debug = null,
+    /// What `--instrument=` asks the program to count.
+    instrument: instrument.Members = .{},
+    /// The instrumented sites, one `.profmap` line each, numbered by their
+    /// order: the counter a site increments is `@.doxa.counts[id]`.
+    sites: std.Io.Writer.Allocating,
+    site_count: u32 = 0,
 
     const BoxKey = struct { group: bool, id: u32 };
     const FaultSiteKey = struct { kind: rt.FaultKind, module: ir.ModuleId, line: u32, column: u32 };
 
     /// `debug_options` asks for debug metadata (`-g`); without it the IR
-    /// carries none.
-    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, overflow: OverflowPolicy, debug_options: ?debug.Options) !Emitter {
+    /// carries none. Without an `instrument` member it carries no counter.
+    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, debug_options: ?debug.Options, members: instrument.Members) !Emitter {
         const entry = module.functions[@intFromEnum(module.init)].span.module;
+        const layout = try Layout.init(alloc, module);
         return .{
             .alloc = alloc,
             .module = module,
-            .layout = try Layout.init(alloc, module),
+            .layout = layout,
             .ranges = Ranges.init(alloc, module),
-            .overflow = overflow,
             .globals = std.Io.Writer.Allocating.init(alloc),
-            .debug = if (debug_options) |options| try debug.Debug.init(alloc, &module.program, entry, options) else null,
+            .instrument = members,
+            .sites = std.Io.Writer.Allocating.init(alloc),
+            .debug = if (debug_options) |options| try debug.Debug.init(alloc, &module.program, layout, entry, options) else null,
         };
     }
 
     pub fn emit(self: *Emitter, w: *std.Io.Writer) Error!void {
         try w.writeAll(prelude);
-        if (self.overflow == .trap) try w.writeAll(overflow_prelude);
+        if (self.debug != null) try w.writeAll(debug_prelude);
+        if (self.instrument.any()) try w.writeAll(instrument_prelude);
+        if (self.instrument.memtrace) try w.writeAll("@doxa_memtrace_site = external global i32\n");
+        if (self.instrument.memcheck) try w.writeAll("declare void @doxa_memcheck(ptr, ptr)\n");
         try self.declareZigFunctions(w);
 
         for (self.module.functions, 0..) |*f, i| {
@@ -81,7 +93,8 @@ pub const Emitter = struct {
         try self.emitGlobals(w);
         try self.emitBoxRegistry();
         try w.writeAll(self.globals.written());
-        try w.writeAll(byte_pow);
+        if (self.uses_int_pow) try w.writeAll(int_pow);
+        if (self.uses_byte_pow) try w.writeAll(byte_pow);
         try w.writeAll("\nattributes #0 = { \"tune-cpu\"=\"generic\" }\n");
         if (self.debug) |*d| try d.write(w);
     }
@@ -113,20 +126,50 @@ pub const Emitter = struct {
         }
     }
 
-    /// `doxa_program_main`: register the runtime's type registries, take the
-    /// root arena, and run `__doxa_init`.
+    /// `doxa_program_main`: register the runtime's box registry, take the
+    /// root arena, and run `__doxa_init`. Under `-g` a fault also prints the
+    /// program's frames, which only then carry their lines.
     fn emitMain(self: *Emitter, w: *std.Io.Writer) Error!void {
         try w.writeAll("\ndefine void @doxa_program_main() #0 {\nentry:\n");
-        for (self.module.program.enum_keys, 0..) |_, id| {
-            try w.print("  call void @doxa_enum_register(ptr {s})\n", .{try self.enumDesc(@intCast(id))});
+        if (self.debug != null) try w.writeAll("  call void @doxa_enable_backtrace()\n");
+        if (self.instrument.any()) {
+            try w.print("  call void @doxa_instrument_register(ptr @.doxa.counts, i64 {d}, i64 {d})\n", .{ self.site_count, @as(i64, @bitCast(self.buildHash())) });
         }
         try w.writeAll("  call void @doxa_box_registry_init(ptr @.doxa.boxes, ptr @.doxa.box.count)\n");
         try w.print("  call void {s}()\n  ret void\n}}\n", .{try self.functionSymbol(self.module.init)});
     }
 
+    // ── Instrumentation ──
+
+    /// A counted site of `kind` in `f` at `span`: its counter's index. The
+    /// `.profmap` line written here is all a report knows of the site.
+    pub fn site(self: *Emitter, kind: []const u8, f: *const ir.Function, span: ir.SrcSpan) Error!u32 {
+        const id = self.site_count;
+        self.site_count += 1;
+        try self.sites.writer.print("{s}\t{s}\t{s}\t{d}\t{d}\n", .{ kind, f.display_name, self.module.program.files[span.module], span.line, span.column });
+        return id;
+    }
+
+    /// The `.profmap` site lines, once every function is emitted.
+    pub fn siteTable(self: *Emitter) []const u8 {
+        return self.sites.written();
+    }
+
+    pub fn buildHash(self: *Emitter) u64 {
+        return instrument.buildHash(self.siteTable());
+    }
+
     fn emitGlobals(self: *Emitter, w: *std.Io.Writer) Error!void {
+        if (self.instrument.any()) {
+            // TODO: a counter is a plain increment because a program has one
+            // thread; with threads they become per-thread, merged at flush.
+            try w.print("@.doxa.counts = internal global [{d} x i64] zeroinitializer\n", .{self.site_count});
+        }
         for (self.module.program.globals) |g| {
-            try w.print("@{s} = internal global {s} zeroinitializer\n", .{ g.name, layout_mod.doxaType(g.ty) });
+            try w.print("@{s} = internal global {s} zeroinitializer", .{ g.name, layout_mod.doxaType(g.ty) });
+            // Under `-g`, the global is described where it is defined.
+            if (self.debug) |*d| try w.print(", !dbg !{d}", .{try d.global(g)});
+            try w.writeAll("\n");
         }
     }
 
@@ -204,7 +247,7 @@ pub const Emitter = struct {
         // writes a global of its own.
         const name_refs = try self.internAll(names);
         const enum_refs = try self.alloc.alloc([]const u8, fields.len);
-        for (fields, enum_refs) |t, *r| r.* = if (t == .Enum) try self.string(p.enum_keys[t.Enum]) else "null";
+        for (fields, enum_refs) |t, *r| r.* = if (t == .Enum) try self.enumDesc(t.Enum) else "null";
         const type_name = try self.string(p.struct_names[id]);
 
         const name_list = try self.nextGlobal("struct.names");
@@ -249,14 +292,13 @@ pub const Emitter = struct {
         return desc;
     }
 
-    /// The runtime descriptor of enum `id`, found by its canonical key.
+    /// The runtime descriptor of enum `id`: its variant names, in order.
     pub fn enumDesc(self: *Emitter, id: ir.EnumId) Error![]const u8 {
         if (self.enum_descs.get(id)) |name| return name;
         const p = &self.module.program;
         const variants = p.enum_variants[id];
         const g = &self.globals.writer;
         const refs = try self.internAll(variants);
-        const key = try self.string(p.enum_keys[id]);
         const names = try self.nextGlobal("enum.names");
         try g.print("{s} = private constant [{d} x ptr] [", .{ names, variants.len });
         for (refs, 0..) |r, i| {
@@ -265,7 +307,7 @@ pub const Emitter = struct {
         }
         try g.writeAll("]\n");
         const desc = try self.nextGlobal("enum.desc");
-        try g.print("{s} = private constant {{ ptr, i64, ptr }} {{ ptr {s}, i64 {d}, ptr {s} }}\n", .{ desc, key, variants.len, names });
+        try g.print("{s} = private constant {{ i64, ptr }} {{ i64 {d}, ptr {s} }}\n", .{ desc, variants.len, names });
         try self.enum_descs.put(self.alloc, id, desc);
         return desc;
     }
@@ -400,6 +442,12 @@ const prelude =
     \\declare void @doxa_write_cstr(ptr, i64)
     \\declare void @doxa_exit(i64) noreturn
     \\declare void @doxa_fault(ptr, ptr, i64, i64, i64) noreturn
+    \\declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
+    \\declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
+    \\declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
+    \\declare { i8, i1 } @llvm.uadd.with.overflow.i8(i8, i8)
+    \\declare { i8, i1 } @llvm.usub.with.overflow.i8(i8, i8)
+    \\declare { i8, i1 } @llvm.umul.with.overflow.i8(i8, i8)
     \\declare void @doxa_print_i64(i64)
     \\declare void @doxa_print_f64(double)
     \\declare void @doxa_print_byte(i64)
@@ -431,7 +479,7 @@ const prelude =
     \\declare void @doxa_byte_to_string(ptr, i64, ptr, ptr)
     \\declare void @doxa_tetra_to_string(ptr, i64, ptr, ptr)
     \\declare void @doxa_nothing_to_string(ptr, ptr, ptr)
-    \\declare void @doxa_enum_to_string(ptr, ptr, i64, i64, ptr, ptr)
+    \\declare void @doxa_enum_to_string(ptr, ptr, i64, ptr, ptr)
     \\declare void @doxa_struct_to_string(ptr, ptr, ptr, ptr)
     \\declare void @doxa_array_to_string(ptr, ptr, ptr, ptr)
     \\declare void @doxa_value_to_string(ptr, ptr, ptr, ptr)
@@ -441,7 +489,7 @@ const prelude =
     \\declare void @doxa_array_set_elem_words(ptr, i64)
     \\declare ptr @doxa_array_range(ptr, i64, i64)
     \\declare ptr @doxa_array_from_fixed(ptr, ptr, ptr, i64, i64, i64)
-    \\declare ptr @doxa_array_from_fixed_structs(ptr, ptr, i64, i64, ptr)
+    \\declare ptr @doxa_array_from_fixed_structs(ptr, ptr, i64, i64)
     \\declare ptr @doxa_array_clone(ptr, ptr)
     \\declare ptr @doxa_array_rehome(ptr, ptr)
     \\declare void @doxa_array_set_i64(ptr, i64, i64)
@@ -468,14 +516,12 @@ const prelude =
     \\declare void @doxa_map_set_else_i64(ptr, i64)
     \\declare i8 @doxa_map_try_get_i64(ptr, i64, ptr)
     \\declare i8 @doxa_map_try_get_str(ptr, ptr, i64, ptr)
-    \\declare void @doxa_struct_register(ptr, ptr, ptr)
-    \\declare ptr @doxa_struct_scope(ptr)
+    \\declare ptr @doxa_struct_new(ptr, ptr)
     \\declare ptr @doxa_struct_clone(ptr, ptr)
     \\declare ptr @doxa_struct_clone_scalar(ptr, i64, ptr)
     \\declare ptr @doxa_struct_rehome(ptr, ptr)
     \\declare ptr @doxa_struct_rehome_scalar(ptr, i64, ptr)
     \\declare void @doxa_clone_doxa_value(ptr, ptr)
-    \\declare void @doxa_enum_register(ptr)
     \\declare void @doxa_box_registry_init(ptr, ptr)
     \\declare double @llvm.pow.f64(double, double)
     \\declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
@@ -500,36 +546,113 @@ fn tetraTables() []const u8 {
     }
 }
 
-const overflow_prelude =
-    \\declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
-    \\declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
-    \\declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
+/// Under `--instrument=` only.
+const instrument_prelude =
+    \\declare void @doxa_instrument_register(ptr, i64, i64)
     \\
 ;
 
-/// `byte ** byte`, wrapping mod 256 like every byte operation: square and
-/// multiply over the exponent's bits.
+/// Under `-g` only, so an uninstrumented build's IR is unchanged.
+const debug_prelude =
+    \\declare void @llvm.dbg.declare(metadata, metadata)
+    \\declare void @llvm.dbg.value(metadata, metadata)
+    \\declare void @doxa_enable_backtrace()
+    \\
+;
+
+/// `int ** int`, exact, paired with the overflow flag of the whole power. A
+/// non-negative exponent squares and multiplies like `byte_pow`; a squaring
+/// that overflows counts only when a later exponent bit uses it, since that
+/// factor alone then passes `maxInt`. A negative exponent truncates the
+/// fraction toward zero: `1` and `-1` keep a unit, any other base gives `0`,
+/// and `0` (an infinite power) overflows.
+const int_pow =
+    \\
+    \\define internal { i64, i1 } @doxa.int.pow(i64 %base, i64 %exp) #0 {
+    \\entry:
+    \\  %negative = icmp slt i64 %exp, 0
+    \\  br i1 %negative, label %fraction, label %loop
+    \\fraction:
+    \\  %is_zero = icmp eq i64 %base, 0
+    \\  %is_one = icmp eq i64 %base, 1
+    \\  %is_minus_one = icmp eq i64 %base, -1
+    \\  %parity = and i64 %exp, 1
+    \\  %odd = icmp ne i64 %parity, 0
+    \\  %unit = select i1 %odd, i64 -1, i64 1
+    \\  %signed_one = select i1 %is_minus_one, i64 %unit, i64 0
+    \\  %frac = select i1 %is_one, i64 1, i64 %signed_one
+    \\  %f0 = insertvalue { i64, i1 } undef, i64 %frac, 0
+    \\  %f1 = insertvalue { i64, i1 } %f0, i1 %is_zero, 1
+    \\  ret { i64, i1 } %f1
+    \\loop:
+    \\  %b = phi i64 [ %base, %entry ], [ %b2, %next ]
+    \\  %e = phi i64 [ %exp, %entry ], [ %e2, %next ]
+    \\  %acc = phi i64 [ 1, %entry ], [ %acc2, %next ]
+    \\  %ovf = phi i1 [ false, %entry ], [ %ovf2, %next ]
+    \\  %done = icmp eq i64 %e, 0
+    \\  br i1 %done, label %exit, label %next
+    \\next:
+    \\  %bit = and i64 %e, 1
+    \\  %is_odd = icmp ne i64 %bit, 0
+    \\  %m = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %acc, i64 %b)
+    \\  %mul = extractvalue { i64, i1 } %m, 0
+    \\  %m_ovf = extractvalue { i64, i1 } %m, 1
+    \\  %acc2 = select i1 %is_odd, i64 %mul, i64 %acc
+    \\  %used_ovf = and i1 %is_odd, %m_ovf
+    \\  %sq = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 %b, i64 %b)
+    \\  %b2 = extractvalue { i64, i1 } %sq, 0
+    \\  %sq_ovf = extractvalue { i64, i1 } %sq, 1
+    \\  %e2 = lshr i64 %e, 1
+    \\  %more = icmp ne i64 %e2, 0
+    \\  %live_sq_ovf = and i1 %sq_ovf, %more
+    \\  %ovf1 = or i1 %ovf, %used_ovf
+    \\  %ovf2 = or i1 %ovf1, %live_sq_ovf
+    \\  br label %loop
+    \\exit:
+    \\  %r0 = insertvalue { i64, i1 } undef, i64 %acc, 0
+    \\  %r = insertvalue { i64, i1 } %r0, i1 %ovf, 1
+    \\  ret { i64, i1 } %r
+    \\}
+    \\
+;
+
+/// `byte ** byte` by square and multiply over the exponent's bits, paired
+/// with the overflow flag of the whole power. A squaring that overflows
+/// counts only when a later bit uses it: the base is then at least 16, so any
+/// later factor alone exceeds 255 and the flag is exact.
 const byte_pow =
     \\
-    \\define internal i8 @doxa.byte.pow(i8 %base, i8 %exp) #0 {
+    \\define internal { i8, i1 } @doxa.byte.pow(i8 %base, i8 %exp) #0 {
     \\entry:
     \\  br label %loop
     \\loop:
     \\  %b = phi i8 [ %base, %entry ], [ %b2, %next ]
     \\  %e = phi i8 [ %exp, %entry ], [ %e2, %next ]
     \\  %acc = phi i8 [ 1, %entry ], [ %acc2, %next ]
+    \\  %ovf = phi i1 [ false, %entry ], [ %ovf2, %next ]
     \\  %done = icmp eq i8 %e, 0
     \\  br i1 %done, label %exit, label %next
     \\next:
     \\  %odd = and i8 %e, 1
     \\  %is_odd = icmp ne i8 %odd, 0
-    \\  %mul = mul i8 %acc, %b
+    \\  %m = call { i8, i1 } @llvm.umul.with.overflow.i8(i8 %acc, i8 %b)
+    \\  %mul = extractvalue { i8, i1 } %m, 0
+    \\  %m_ovf = extractvalue { i8, i1 } %m, 1
     \\  %acc2 = select i1 %is_odd, i8 %mul, i8 %acc
-    \\  %b2 = mul i8 %b, %b
+    \\  %used_ovf = and i1 %is_odd, %m_ovf
+    \\  %sq = call { i8, i1 } @llvm.umul.with.overflow.i8(i8 %b, i8 %b)
+    \\  %b2 = extractvalue { i8, i1 } %sq, 0
+    \\  %sq_ovf = extractvalue { i8, i1 } %sq, 1
     \\  %e2 = lshr i8 %e, 1
+    \\  %more = icmp ne i8 %e2, 0
+    \\  %live_sq_ovf = and i1 %sq_ovf, %more
+    \\  %ovf1 = or i1 %ovf, %used_ovf
+    \\  %ovf2 = or i1 %ovf1, %live_sq_ovf
     \\  br label %loop
     \\exit:
-    \\  ret i8 %acc
+    \\  %r0 = insertvalue { i8, i1 } undef, i8 %acc, 0
+    \\  %r = insertvalue { i8, i1 } %r0, i1 %ovf, 1
+    \\  ret { i8, i1 } %r
     \\}
     \\
 ;
