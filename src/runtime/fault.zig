@@ -103,18 +103,29 @@ pub var backtrace_enabled = false;
 /// `first`: `  in <name> at <file>:<line>:<column>`. A frame whose source is
 /// not a `.doxa` file is the runtime's or the entry glue's, and is skipped.
 /// The names are the display names the `!DISubprogram`s carry.
+///
+/// When no frame can be shown, one line says why: a backtrace that silently
+/// vanishes is a bug no one sees.
 fn writeBacktrace(first: usize) void {
-    if (!std.options.allow_stack_tracing) return;
-    const info = std.debug.getSelfDebugInfo() catch return;
+    if (!std.options.allow_stack_tracing) return noBacktrace("stack tracing is disabled in this runtime", null);
+    const info = std.debug.getSelfDebugInfo() catch |err| return noBacktrace("cannot read the program's debug information", err);
     var addresses: [64]usize = undefined;
-    const trace = std.debug.captureCurrentStackTrace(.{ .first_address = first }, &addresses);
+    // A fault is a crash, so the unwinder may fall back to frame pointers
+    // where unwind information fails, as Zig's own panic handler does.
+    const trace = std.debug.captureCurrentStackTrace(.{ .first_address = first, .allow_unsafe_unwind = true }, &addresses);
+    if (trace.return_addresses.len == 0) return noBacktrace("the stack could not be unwound to the faulting frame", null);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const io = std.Options.debug_io;
+    var shown: usize = 0;
+    var failure: ?anyerror = null;
     for (trace.return_addresses) |return_address| {
         var symbols: std.ArrayList(std.debug.Symbol) = .empty;
         // A return address follows its call; one before it is in the call.
-        info.getSymbols(io, arena.allocator(), arena.allocator(), return_address -| 1, true, &symbols) catch continue;
+        info.getSymbols(io, arena.allocator(), arena.allocator(), return_address -| 1, true, &symbols) catch |err| {
+            if (failure == null) failure = err;
+            continue;
+        };
         for (symbols.items) |symbol| {
             const location = symbol.source_location orelse continue;
             // Line 0 is code the compiler made: the call into the entry.
@@ -130,8 +141,23 @@ fn writeBacktrace(first: usize) void {
             writeStderr(framePath(location.file_name));
             var buffer: [48]u8 = undefined;
             writeStderr(std.fmt.bufPrint(&buffer, ":{d}:{d}\n", .{ location.line, location.column }) catch unreachable);
+            shown += 1;
         }
     }
+    if (shown != 0) return;
+    if (failure) |err| return noBacktrace("cannot resolve a frame's source", err);
+    noBacktrace("no frame has a .doxa source line", null);
+}
+
+/// `  (no backtrace: <why>[: error.X])`.
+fn noBacktrace(why: []const u8, err: ?anyerror) void {
+    writeStderr("  (no backtrace: ");
+    writeStderr(why);
+    if (err) |e| {
+        writeStderr(": error.");
+        writeStderr(@errorName(e));
+    }
+    writeStderr(")\n");
 }
 
 /// A frame's file as the program names it. The emitted path is relative
