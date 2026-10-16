@@ -104,11 +104,21 @@ pub const Debug = struct {
     }
 
     /// A module record's file, named by its display path: never a path on
-    /// this machine.
+    /// this machine. Under DWARF its directory is `.`, the project directory
+    /// a debugger is pointed at: relative, yet present. An empty one makes
+    /// LLVM omit the compile unit's `DW_AT_comp_dir`, and DWARF readers that
+    /// require it (Zig's, which the runtime's backtrace uses) then find no
+    /// line table. CodeView has no such attribute, and lld-link would root a
+    /// `.` at the link's working directory, a path on this machine: there it
+    /// stays empty.
     fn file(self: *Debug, module: ir.ModuleId) Error!u32 {
         const entry = try self.files.getOrPut(self.alloc, module);
         if (!entry.found_existing) {
-            entry.value_ptr.* = try self.node("!DIFile(filename: \"{f}\", directory: \"\")", .{escaped(self.program.files[module])});
+            const directory = switch (self.options.format) {
+                .dwarf => ".",
+                .codeview => "",
+            };
+            entry.value_ptr.* = try self.node("!DIFile(filename: \"{f}\", directory: \"{s}\")", .{ escaped(self.program.files[module]), directory });
         }
         return entry.value_ptr.*;
     }

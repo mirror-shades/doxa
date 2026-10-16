@@ -172,11 +172,13 @@ fn noBacktrace(why: []const u8, err: ?anyerror) void {
     writeStderr(")\n");
 }
 
-/// A frame's file as the program names it. The emitted path is relative
-/// (`directory: ""`), but lld-link roots a relative CodeView path at a drive
-/// (`C:/t.doxa`); that root is the linker's, not the program's.
+/// A frame's file as the program names it. The emitted path is relative,
+/// but each format adds a root of its own: lld-link roots a CodeView path
+/// at a drive (`C:/t.doxa`), and a DWARF reader joins the compile unit's
+/// `.` directory on (`./t.doxa`). Neither root is the program's.
 fn framePath(path: []const u8) []const u8 {
     if (builtin.os.tag == .windows and path.len > 3 and path[1] == ':' and (path[2] == '/' or path[2] == '\\')) return path[3..];
+    if (path.len > 2 and path[0] == '.' and (path[1] == '/' or path[1] == '\\')) return path[2..];
     return path;
 }
 

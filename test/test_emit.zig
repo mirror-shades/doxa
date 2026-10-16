@@ -772,11 +772,21 @@ test "debug info: subprograms, files and statement-start key locations" {
     try expectContains(ll, "!DISubprogram(name: \"scale\", linkageName: \"__doxa_m1_");
     try expectContains(ll, "!DISubprogram(name: \"main\", linkageName: \"__doxa_m1_");
     try expectContains(ll, "keyInstructions: true");
-    // Files by display path, never a path on this machine.
-    try expectContains(ll, "!DIFile(filename: \"probe.doxa\", directory: \"\")");
+    // Files by display path, never a path on this machine. Under DWARF the
+    // directory is `.`: an empty one drops the compile unit's
+    // `DW_AT_comp_dir`, and the runtime's DWARF reader then finds no line
+    // table. CodeView keeps it empty, as lld-link would root a `.` here.
     var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const cwd = cwd_buffer[0..try tmp.dir.realPath(testing.io, &cwd_buffer)];
+    try expectContains(ll, if (builtin.os.tag == .windows)
+        "!DIFile(filename: \"probe.doxa\", directory: \"\")"
+    else
+        "!DIFile(filename: \"probe.doxa\", directory: \".\")");
     try testing.expect(std.mem.indexOf(u8, ll, cwd) == null);
+    const elf_ll = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = spanSource }}, &.{ "--arch=x86_64", "--os=linux" }, "ll");
+    defer allocator.free(elf_ll);
+    try expectContains(elf_ll, "!DIFile(filename: \"probe.doxa\", directory: \".\")");
+    try testing.expect(std.mem.indexOf(u8, elf_ll, cwd) == null);
     // `if x > k` begins at its `if` (4:9), though its first instruction is
     // the comparison at 4:12: the key location is the statement's own start.
     try expectContains(ll, "!DILocation(line: 4, column: 9, scope: ");
