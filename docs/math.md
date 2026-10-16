@@ -7,7 +7,7 @@
 | `+` | Addition | Adds two numbers |
 | `-` | Subtraction | Subtracts right from left |
 | `*` | Multiplication | Multiplies two numbers |
-| `**` | Exponentiation | Raises left to the power of right |
+| `**` | Exponentiation | Raises left to the power of right. On `int` and `byte` it is exact; a negative `int` exponent truncates the fraction toward zero (`2 ** -1` is `0`, `(-1) ** -3` is `-1`), and `0 ** -1` overflows |
 | `/` | Float division | Always returns `float` |
 | `//` | Integer division | Floored division, returns `int` |
 | `%` | Modulo | Floored remainder, same sign as divisor |
@@ -105,13 +105,31 @@ The compiler computes a constant expression with exactly the program's arithmeti
 
 | In a constant expression | Error |
 |---|---|
-| `int` overflow (`9223372036854775807 + 1`) | `E1024` |
+| `int` or `byte` overflow or underflow (`9223372036854775807 + 1`, `0xFF + 0x01`, `0x00 - 0x01`) | `E1024` |
 | `//` or `%` by an integer zero | `E1036` |
 | `@int` of a float with no `int` value (`@int(1e300)`) | `E1032` |
 | `@byte` of a number outside 0–255 | `E1031` |
 | `@int`, `@float` or `@byte` of text that names no such number (`@int("abc")`) | `E1037` |
 
 Anything else is not a constant, and the compiler never guesses its value. That includes a `var`, a field, an array element, and a call. Such an expression runs as written.
+
+## Overflow and wrapping
+
+`+`, `-`, `*` and `**` on `int` and `byte`, and unary `-`, fault when the result leaves the type: an `int` is a signed 64-bit integer, a `byte` an unsigned 8-bit one, so `0xFF + 0x01` and `0x00 - 0x01` are faults just as `maxInt() + 1` is (`Integer overflow at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)). This holds in every `--opt-mode`. The compiler drops a check only where it proves the result fits.
+
+Modular arithmetic is explicit, through the wrapping operators. `+%`, `-%` and `*%` (and unary `-%x`) wrap modulo 2^64 on `int` and modulo 256 on `byte`, and never fault. They take `int` and `byte` operands only and type like `+`, `-` and `*`; each has a compound form (`+%=`, `-%=`, `*%=`). A wrapping operator costs exactly the bare instruction. Hashes, random number generators, checksums and byte codecs use them:
+
+```doxa
+function mix(h :: int, x :: int) returns int {
+    return (h +% x) *% 1099511628211
+}
+
+const b is 0xFF +% 0x01    # 0x00
+```
+
+In a constant expression they wrap too: `0xFF +% 0x01` is `0x00`, not `E1024`.
+
+`std.math` also holds the limits: `maxInt()` / `minInt()`, `maxByte()` / `minByte()`, and `maxFloat()` (the largest finite `float`), `minFloat()` (its negation) and `minNormalFloat()` (the smallest positive normal). See [Standard Library](stdlib.md#math).
 
 ## Division by zero
 

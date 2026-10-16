@@ -18,6 +18,10 @@ tetra (2 bit integer)
 enum
 nothing (void)
 
+`int` and `byte` arithmetic never wraps silently. A `byte` is unsigned, so
+`0xFF + 0x01` and `0x00 - 0x01` fault, like `int` overflow, in every build mode;
+`+%`, `-%` and `*%` wrap modulo 256 on request ([Overflow and wrapping](math.md#overflow-and-wrapping)).
+
 
 ### Composite
 
@@ -46,6 +50,7 @@ overloading:
   and no method or function sharing a field's name (E1002).
 - Functions and types are declared at file scope only (E2029), so a function
   never hides another inside a body.
+- Expressions, blocks and type expressions nest at most 256 deep (E2031).
 
 A binding that is not visible does not conflict, so sibling blocks may each
 declare the same name:

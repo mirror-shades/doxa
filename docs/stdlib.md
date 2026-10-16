@@ -311,6 +311,25 @@ match result {
   and any other control byte below `0x20` as a lowercase `\u00xx` sequence. It
   validates UTF-8 before quoting and refuses NaN or infinity.
 
+## Math
+
+`std.math` holds the numeric limits. Each is a constant expression, so a call
+folds to its value. Wrapping arithmetic is the `+%`, `-%` and `*%` operators,
+not a library call ([Overflow and wrapping](math.md#overflow-and-wrapping)).
+
+```doxa
+module std from @std()
+
+function inRange(x :: int, delta :: int) returns tetra {
+    return delta <= 0 or x <= std.math.maxInt() - delta
+}
+```
+
+- Limits: `maxInt()` and `minInt()` (`i64`), `maxByte()` and `minByte()`
+  (`0xFF`, `0x00`), `maxFloat()` (the largest finite `float`), `minFloat()`
+  (`-maxFloat()`, the lowest finite `float`), and `minNormalFloat()` (the
+  smallest positive normal `float`).
+
 ## Methods
 
 

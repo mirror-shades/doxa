@@ -2277,6 +2277,27 @@ public function abi() returns string {
 
 </details>
 
+### `cpu`
+
+```doxa
+public function cpu() returns string | error.StdError
+```
+
+The model of the CPU running the program (e.g. `"znver4"`), detected when
+called rather than fixed when compiled; `error.Common.NotSupported` when the
+host cannot be probed.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function cpu() returns string | error.StdError {
+    return Host.cpuName()
+}
+```
+
+</details>
+
 ### `isWindows`
 
 ```doxa
@@ -4401,6 +4422,141 @@ public function finish() returns string | error.StdError {
     const code is JSON.takeLastErrorCode()
     if code == 0 then return value
     return mapJSONError(code)
+}
+```
+
+</details>
+
+## `std.math`
+
+### `maxInt`
+
+```doxa
+public function maxInt() returns int
+```
+
+The largest `int`, 9223372036854775807.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function maxInt() returns int {
+    return 9223372036854775807
+}
+```
+
+</details>
+
+### `minInt`
+
+```doxa
+public function minInt() returns int
+```
+
+The smallest `int`, -9223372036854775808.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function minInt() returns int {
+    return -9223372036854775807 - 1
+}
+```
+
+</details>
+
+### `maxFloat`
+
+```doxa
+public function maxFloat() returns float
+```
+
+The largest finite `float`, about 1.7976931348623157e308.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function maxFloat() returns float {
+    return 1.7976931348623157e308
+}
+```
+
+</details>
+
+### `minFloat`
+
+```doxa
+public function minFloat() returns float
+```
+
+The smallest finite `float`: the negation of `maxFloat()`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function minFloat() returns float {
+    return -1.7976931348623157e308
+}
+```
+
+</details>
+
+### `minNormalFloat`
+
+```doxa
+public function minNormalFloat() returns float
+```
+
+The smallest positive normal `float`, about 2.2250738585072014e-308.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function minNormalFloat() returns float {
+    return 2.2250738585072014e-308
+}
+```
+
+</details>
+
+### `maxByte`
+
+```doxa
+public function maxByte() returns byte
+```
+
+The largest `byte`, 0xFF.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function maxByte() returns byte {
+    return 0xFF
+}
+```
+
+</details>
+
+### `minByte`
+
+```doxa
+public function minByte() returns byte
+```
+
+The smallest `byte`, 0x00.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function minByte() returns byte {
+    return 0x00
 }
 ```
 

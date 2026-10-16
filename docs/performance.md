@@ -46,12 +46,12 @@ representation are *user-observable*. Doxa makes all three *compiler-owned*. Con
 
 - **Safety is defined, not undefined.** Out-of-bounds access and integer overflow are *defined*
   behavior, never UB. An out-of-bounds index, read or written, is a fault in every mode
-  ([Runtime faults](methods.md#runtime-faults)). Signed `int` `add` / `sub` / `mul` fault on
-  overflow in the checked modes (`debug`, `safe`) and wrap in the unchecked ones (`fast`, `small`) —
-  the same `--opt-mode` axis that governs the runtime's own checks, so `--opt=2` produces exactly
-  the wrapping arithmetic its C twin does. Either way the checks are ordinary code the compiler can
-  reason about and remove — a check is dropped wherever the value-range analysis proves it cannot
-  fail — not a wall of UB that forbids every transformation.
+  ([Runtime faults](methods.md#runtime-faults)). `add` / `sub` / `mul` on an `int` (signed) or a
+  `byte` (unsigned) fault on overflow and underflow in every `--opt-mode` too; no flag, mode or
+  build setting turns them off. Wrapping is explicit: the operators `+%`, `-%` and `*%` are the only way
+  to get a wrapped result, and they lower to the bare instruction. The checks are ordinary
+  code the compiler can reason about and remove — a check is dropped wherever the value-range
+  analysis proves it cannot fail — not a wall of UB that forbids every transformation.
 
 ### What C cannot do with any of this
 
@@ -132,13 +132,13 @@ runtime-generic representation even though the static type is sitting right ther
 
 - **Structs are word boxes.** A struct instance is a heap block of one `i64` word per non-string
   field (two for a string — the `(ptr, len)` pair), addressed only through an anonymous `{ i64, i64,
-  … }` index type and registered into a runtime descriptor registry so the *generic* runtime clone
-  and print functions can walk its fields. A struct value is never loaded as an aggregate, so it
-  cannot be promoted into registers. Consequences: a `byte` field burns a full word, and every struct
-  construction pays a registry write. B2/B3-lite has landed a first cut for scalar-only structs: a
-  struct whose fields are all scalar and that the whole-program predicate proves never needs the
-  descriptor (not reflected, not in a container/union/signature) skips the registry write and is
-  cloned with a typed word copy. Reflected and heap-field structs still box and register.
+  … }` index type, behind a two-word header (its descriptor and owning arena) so the *generic*
+  runtime clone and print functions can walk its fields. A struct value is never loaded as an
+  aggregate, so it cannot be promoted into registers. Consequences: a `byte` field burns a full word,
+  and a described struct's construction writes its header. B2/B3-lite has landed a first cut for
+  scalar-only structs: a struct whose fields are all scalar and that the whole-program predicate
+  proves never needs the descriptor (not reflected, not in a container/union/signature) has no
+  header and is cloned with a typed word copy. Reflected and heap-field structs keep the header.
 
 - **Arrays of structs are arrays of box pointers.** Each element slot is an 8-byte reference to a
   separately arena-allocated, registered box, and each element *store* deep-clones the struct into
@@ -304,10 +304,10 @@ Spend the static element and field types that the HIR already carries:
   heap-field structs are still boxed;
 - structs whose type is never reflected (never `@string`ed, peeked, or generically cloned) get real
   typed layouts — packed bytes, true aggregates — instead of `[N x i64]` word boxes. Partially landed
-  (B2/B3-lite): a scalar-only struct proven never to need the descriptor skips its registry write and
-  clones with a typed word copy (the word-box layout itself is unchanged);
+  (B2/B3-lite): a scalar-only struct proven never to need the descriptor has no header and clones
+  with a typed word copy (the word-box layout itself is unchanged);
 - emit *specialized per-type* deep copies (compile-time recursive: string fields clone, nested
-  structs clone, raw fields memcpy) so cloning never needs the runtime descriptor registry.
+  structs clone, raw fields memcpy) so cloning never walks a runtime descriptor.
   Partially landed (B3-lite) for scalar-only structs.
 
 Partitioning reflection out per type, rather than globally, is what makes the boxed word-array layout
@@ -323,15 +323,39 @@ in IR is an optimization opportunity.
 
 ### D. Wire the dormant static switches
 
-Several static decisions already exist in the HIR; some are honored, some not. Integer-overflow
-behavior is now selected from the safety axis — D-1 landed: the checked modes fault with
-`llvm.s*add.with.overflow` plus a `doxa_fault` call, the unchecked modes wrap, and a check is skipped
-whenever the value-range lattice proves the result fits. Bounds are checked in every mode, in the
+Several static decisions already exist in the HIR; some are honored, some not. D-1 landed, and
+overflow is no longer a policy: every `int` and `byte` `add` / `sub` / `mul` is checked in every
+mode (`llvm.s*.with.overflow.i64` / `llvm.u*.with.overflow.i8` plus a `doxa_fault` call), and a
+check is skipped whenever the value-range lattice proves the result fits its type. The cost of
+always-on checks against the C twins is recorded below (*Always-on overflow checks*). Bounds are checked in every mode, in the
 IR, and a fixed array's check is skipped where the lattice proves the index in range. Still
 dormant: `Call.tail` is set but no `tail`/`musttail` is ever emitted; `@push` resize is
 hardcoded to `Double`. Wiring the rest turns the model's "defined, cheap safety" into reality: real
 tail calls (which, combined with copy-free returns from step A, need no post-call clone) and bounds
 removal where the index is statically safe.
+
+**Always-on overflow checks** (2026-10-13, `plan/assertions.md`). before = HEAD `56ec7f3` (`fast` wrapped); after = always-on checks. Each column is
+the mean of two `--runs 10` suites, run alternately on the same machine, with
+Doxa compute time in seconds. The spread is the gap between the two runs of
+one build. The checked IR is identical to the old `safe` IR, so this is the
+cost of always-on checks alone.
+
+| workload | before | after | delta | before spread | after spread |
+| --- | --- | --- | --- | --- | --- |
+| fib | 1.434 | 2.427 | +69.2% | 4.0% | 0.5% |
+| sieve | 0.829 | 1.028 | +24.0% | 3.1% | 10.8% |
+| matrix | 1.048 | 1.047 | -0.1% | 5.1% | 1.2% |
+| mb | 0.888 | 0.902 | +1.6% | 1.7% | 1.3% |
+| arr | 1.001 | 2.370 | +136.7% | 1.3% | 2.8% |
+| call | 0.822 | 0.973 | +18.4% | 1.8% | 1.2% |
+| struct | 0.813 | 1.611 | +98.1% | 1.0% | 1.4% |
+| vec | 0.706 | 0.757 | +7.3% | 2.4% | 5.0% |
+
+`fib`, `arr`, `struct`, `sieve` and `call` regress well beyond both the
+same-build spread and `scripts/noise.doxa`'s envelope for the window
+(`--since 1790000000`; the worst spread is 35 points on `call`, 18 on `arr`,
+12 on `struct`). `matrix` and `mb` are within noise, and `vec` is at its
+edge. Not written to `stats.csv`. Winning this back is Phase 2.
 
 **Landed: the arithmetic lowerings these switches ride on.** Doxa's `//` and `%` are floored, so they
 cannot lower to LLVM's truncating `sdiv`/`srem` without a sign correction, and that correction was
@@ -383,7 +407,12 @@ doxa run test/benchmark/suite.doxa -- --runs 10 --write
 ```
 
 `--write` appends the run to `test/benchmark/stats.csv`, the log every table here is drawn from;
-without it the suite only prints.
+without it the suite only prints. A failed compile or run aborts the suite before anything is
+written. Each row names the build it measured: `commit` (the checkout's `HEAD`, suffixed `-dirty`
+when tracked files differ from it), `host` (`<os>-<arch>-<cpu model>`, the model from `std.host.cpu()`), `opt` (the clang level both sides
+compile at), and `match` (whether every run's output equalled C's). Rows written before these
+columns existed carry `unknown` in all four. The suite refuses to append to a log whose header is
+not the current one.
 
 Before trusting a delta, size the noise: filter the log to one same-build campaign (a `--since`
 unix epoch) and print each workload's distribution — mean, range, and largest step between
@@ -392,6 +421,9 @@ consecutive runs.
 ```
 doxa run scripts/noise.doxa -- --since <epoch>
 ```
+
+The analyzer skips rows whose `match` is `false`, lists every build (`commit host opt`) in the
+window, and warns when there is more than one: a spread taken across builds is not a noise floor.
 
 Section 5's table is the campaign at `--since 1790530050`. A delta below a workload's range is
 noise; when a gate decision is close, take a fresh pair across sessions as well — this floor is
