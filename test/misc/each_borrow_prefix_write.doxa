@@ -1,0 +1,11 @@
+# Rejected: a write to a prefix of the path an each borrows (plan/plain-store-copies.md step 3).
+struct G {
+    public items :: int[],
+}
+
+entry function main() {
+    var g is $G { items is [1] }
+    each n in ^g.items {
+        g is $G { items is [] }
+    }
+}

@@ -1,0 +1,10 @@
+# Rejected: an each borrowing a call (plan/plain-store-copies.md step 3).
+function make() returns int[] {
+    return [1]
+}
+
+entry function main() {
+    each n in ^make() {
+        n is 2
+    }
+}

@@ -1,0 +1,9 @@
+# Rejected: a nested each borrowing an overlapping path (plan/plain-store-copies.md step 3).
+entry function main() {
+    var xs is [1, 2]
+    each n in ^xs {
+        each m in ^xs {
+            m is n
+        }
+    }
+}

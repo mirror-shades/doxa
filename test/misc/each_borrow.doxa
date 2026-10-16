@@ -1,0 +1,77 @@
+# `each n in ^path` (plan/plain-store-copies.md step 3): the body changes the
+# elements through `n`. A plain `each n in arr` binds a copy of each element.
+struct P {
+    public x :: int,
+}
+
+struct Game {
+    public players :: P[],
+
+    public method bump() {
+        each p in ^this.players {
+            p.x is p.x + 100
+        }
+    }
+}
+
+var gs is [$P { x is 1 }, $P { x is 2 }]
+
+function tweak(^v :: int) {
+    v is v * 10
+}
+
+entry function main() {
+    # A plain element store writes through.
+    var xs is [1, 2, 3]
+    each n in ^xs {
+        n is n + 1
+    }
+    @print("{xs}\n")
+
+    # Without `^`, `n` is a copy.
+    each n in xs {
+        n is 0
+    }
+    @print("{xs}\n")
+
+    # A field path, with an index binding.
+    var g is $Game { players is [$P { x is 1 }, $P { x is 2 }] }
+    each p at i in ^g.players {
+        p.x is p.x * 10 + i
+    }
+    @print("{g.players[0].x} {g.players[1].x}\n")
+
+    # Through `this`.
+    g.bump()
+    @print("{g.players[0].x} {g.players[1].x}\n")
+
+    # A global.
+    each p in ^gs {
+        p.x is 7
+    }
+    @print("{gs[0].x} {gs[1].x}\n")
+
+    # The element lent on as `^`.
+    each n in ^xs {
+        tweak(^n)
+    }
+    @print("{xs}\n")
+
+    # A nested borrow of the element, which may resize it.
+    var grid is [[1, 2], [3]]
+    each row in ^grid {
+        @push(row, 0)
+        each c in ^row {
+            c is c + 1
+        }
+    }
+    @print("{grid}\n")
+
+    # Storing `n` elsewhere copies it.
+    var kept is [0]
+    each n in ^xs {
+        kept[0] is n
+        n is 1
+    }
+    @print("{kept[0]} {xs}\n")
+}

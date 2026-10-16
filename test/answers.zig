@@ -237,8 +237,10 @@ pub const expected_global_array_push_results = [_]print_result{
 pub const expected_expression_branch_merge_results = [_]print_result{
     .{ .value = "111 222" },
     .{ .value = "10 20 30" },
-    .{ .value = "1 2 3 4" },
-    .{ .value = "1 2 3 4" },
+    .{ .value = "4 4" },
+    .{ .value = "3 1 2 3" },
+    .{ .value = "[7, 7, 5]" },
+    .{ .value = "3" },
 };
 
 pub const expected_copy_free_return_results = [_]print_result{
@@ -253,6 +255,23 @@ pub const expected_fixed_struct_array_results = [_]print_result{
     .{ .value = "1 2 30 4 5 6" },
     .{ .value = "2 31 6" },
     .{ .value = "7.25 1.5 2.5" },
+};
+
+pub const expected_fixed_array_heap_elements_results = [_]print_result{
+    .{ .value = "[1] [1, 99]" },
+    .{ .value = "n-1 [7, 8] [5] via-dyn 231" },
+    .{ .value = "r changed" },
+};
+
+pub const expected_each_borrow_results = [_]print_result{
+    .{ .value = "[2, 3, 4]" },
+    .{ .value = "[2, 3, 4]" },
+    .{ .value = "10 21" },
+    .{ .value = "110 121" },
+    .{ .value = "7 7" },
+    .{ .value = "[20, 30, 40]" },
+    .{ .value = "[[2, 3, 1], [4, 1]]" },
+    .{ .value = "40 [1, 1, 1]" },
 };
 
 pub const expected_fixed_struct_field_array_results = [_]print_result{

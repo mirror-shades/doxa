@@ -1,0 +1,7 @@
+# Rejected: an each borrowing an indexed element (plan/plain-store-copies.md step 3).
+entry function main() {
+    var grid is [[1], [2]]
+    each n in ^grid[0] {
+        n is 2
+    }
+}

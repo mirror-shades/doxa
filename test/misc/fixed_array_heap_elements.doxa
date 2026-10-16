@@ -1,0 +1,42 @@
+# A fixed array of heap elements (plan/plain-store-copies.md, container
+# placement): a copy copies the elements too, and what a callee stores into a
+# lent fixed array, directly or through a dynamic ^ parameter, lives where
+# the fixed array does.
+struct N {
+    public name :: string,
+    public xs :: int[],
+}
+
+function fill(^a :: N[2]) {
+    const fresh is [7, 8]
+    a[0] is $N { name is "n-{1}", xs is fresh }
+    a[1].xs is fresh
+}
+
+function grow(^d :: N[]) {
+    d[1] is $N { name is "via-dyn", xs is [5] }
+}
+
+function scribble() returns int {
+    var t is 0
+    for i while i < 3 do i += 1 {
+        const noise is [77, 77, 77, 77, 77, 77]
+        t += noise[0]
+    }
+    return t
+}
+
+entry function main() {
+    var a :: N[2] is [$N { name is "a", xs is [1] }, $N { name is "b", xs is [2] }]
+    var b is a
+    @push(b[0].xs, 99)
+    @print("{a[0].xs} {b[0].xs}\n")
+    fill(^a)
+    grow(^a)
+    const s is scribble()
+    @print("{a[0].name} {a[0].xs} {a[1].xs} {a[1].name} {s}\n")
+    var grid :: string[2][2] is [["p", "q"], ["r", "s"]]
+    var g2 is grid
+    g2[1][0] is "changed"
+    @print("{grid[1][0]} {g2[1][0]}\n")
+}

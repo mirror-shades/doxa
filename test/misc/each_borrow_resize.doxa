@@ -1,0 +1,7 @@
+# Rejected: resizing the path an each borrows (plan/plain-store-copies.md step 3).
+entry function main() {
+    var xs is [1, 2]
+    each n in ^xs {
+        @push(xs, n)
+    }
+}

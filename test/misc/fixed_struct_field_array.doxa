@@ -38,7 +38,7 @@ public entry function main() {
     h.pts[1].x is 30
     @print("{h.pts[1].x}\n")
 
-    each n in h.pts { n.y += 100 }
+    each n in ^h.pts { n.y += 100 }
     @print("{h.pts[0].y} {h.pts[1].y} {h.pts[2].y}\n")
 
     @print(@string(h.pts) + "\n")

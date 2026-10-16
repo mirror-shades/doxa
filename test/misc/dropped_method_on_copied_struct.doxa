@@ -35,7 +35,8 @@ entry function main() {
     alsoCopied.bump(5)
     @print("after bump {alsoCopied.get()}\n")
 
-    # And through a nested field, which resolves no name either.
+    # And through a nested field, which resolves no name either. The field
+    # holds a copy of `original` (plain stores copy), so it reads 7.
     const holder is $Holder { inner is original }
     @print("field {holder.inner.get()}\n")
 }

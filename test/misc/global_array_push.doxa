@@ -2,7 +2,7 @@
 # - @push / assignment into a global must not clone into a callee arena
 #   (that dangles after doxa_scope_exit).
 # - In-place mutations (@push, field writes) must not snapshot the global
-#   or its struct elements. `each n in neutrons { n.x_pos += 1 }` writes
+#   or its struct elements. `each n in ^neutrons { n.x_pos += 1 }` writes
 #   through to the global element, including structs from Type.new() and
 #   float fields.
 
@@ -61,13 +61,13 @@ function replace_ints() {
 }
 
 function tick() {
-    each n in particles {
+    each n in ^particles {
         n.x is n.x + 1
     }
 }
 
 function tick_neutrons() {
-    each n in neutrons {
+    each n in ^neutrons {
         n.x_pos is n.x_pos + 1.0
         n.y_pos += n.skew
     }

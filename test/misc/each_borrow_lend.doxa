@@ -1,0 +1,11 @@
+# Rejected: lending the path an each borrows (plan/plain-store-copies.md step 3).
+function grow(^a :: int[]) {
+    @push(a, 1)
+}
+
+entry function main() {
+    var xs is [1, 2]
+    each n in ^xs {
+        grow(^xs)
+    }
+}

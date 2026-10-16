@@ -9,9 +9,9 @@
 # `string` by the type system's default, so `@push` concatenated instead of
 # appending. The result must be an array.
 #
-# Mixed phi: a phi merging a Root (global) and a Deep (loop-arena) array must
-# keep the runtime rehome decision, so the global-path value preserves identity
-# while the loop-fresh path is cloned.
+# A merge of a global and a loop-fresh array: whichever arm is taken, binding
+# it copies (plain stores copy; only `^` shares), so `g` is never changed
+# through `chosen`.
 
 var g is [1, 2, 3]
 
@@ -29,21 +29,23 @@ public entry function main() {
     @push(m, 30)
     @print("{m[0]} {m[1]} {m[2]}\n")
 
-    # Mixed phi, then arm is a global (Root): identity is preserved, so @push
-    # writes through to `g`.
+    # The then arm is the global: `chosen` is a copy of it, so `g` keeps its
+    # three elements while `chosen` gains a fourth.
     for i while i < 1 do i += 1 {
         const fresh is [7, 7]
         var chosen is if flag == 1 then g else fresh
         @push(chosen, 4)
+        @print("{@length(chosen)} {chosen[3]}\n")
     }
-    @print("{g[0]} {g[1]} {g[2]} {g[3]}\n")
+    @print("{@length(g)} {g[0]} {g[1]} {g[2]}\n")
 
-    # Mixed phi, else arm is loop-fresh (Deep): it is cloned, so `g` is intact.
+    # The else arm is loop-fresh: `g` is untouched either way.
     var flag2 is 0
     for i while i < 1 do i += 1 {
         const fresh2 is [7, 7]
         var chosen2 is if flag2 == 1 then g else fresh2
         @push(chosen2, 5)
+        @print("{chosen2}\n")
     }
-    @print("{g[0]} {g[1]} {g[2]} {g[3]}\n")
+    @print("{@length(g)}\n")
 }

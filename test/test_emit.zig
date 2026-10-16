@@ -838,6 +838,47 @@ test "debug info: the line table names the .doxa file and its statement lines" {
     try expectContains(pdb, "scale");
 }
 
+// ── Container stores: placed in the container's arena ──
+
+const placementSource =
+    \\struct Box {
+    \\    public items :: int[],
+    \\}
+    \\
+    \\function fill(^b :: Box, n :: int) {
+    \\    const fresh is [n, n]
+    \\    b.items is fresh
+    \\}
+    \\
+    \\entry function main() {
+    \\    var b is $Box { items is [0] }
+    \\    fill(^b, 5)
+    \\    var local is [[1]]
+    \\    @push(local, [2])
+    \\    @print("{b.items} {local}\n")
+    \\}
+;
+
+test "placement: a value stored into a container is placed in the container's arena" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const hir = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = placementSource }}, &.{"--emit-hir"}, "hir");
+    defer allocator.free(hir);
+
+    // A caller's struct names its arena at runtime: the held copy goes there,
+    // not into `fill`'s own arena, which closes before the caller reads it.
+    try expectContains(hir, "= arena_of ");
+    const fill_at = std.mem.indexOf(u8, hir, "fn __doxa_m1_").?;
+    const main_at = std.mem.indexOfPos(u8, hir, fill_at + 1, "fn __doxa_m1_").?;
+    try testing.expect(std.mem.indexOf(u8, hir[0..main_at], "= arena_of ") != null);
+    // An array allocated here names its arena statically: no `arena_of`
+    // survives in `main`, and the fresh literal pushed needs no copy.
+    try testing.expect(std.mem.indexOf(u8, hir[main_at..], "arena_of") == null);
+    try testing.expect(std.mem.indexOf(u8, hir[main_at..], "rehome") == null);
+}
+
 // ── Debug info: locals ──
 
 const localsSource =
@@ -867,7 +908,11 @@ const localsSource =
     \\entry function main() {
     \\    var n is 2
     \\    var p is $Point { x is 3, y is 4 }
-    \\    counter is n
+    \\    var bumps is [1, 2]
+    \\    each b in ^bumps {
+    \\        b is b + n
+    \\    }
+    \\    counter is n + bumps[0]
     \\    @print("{scale([1, 2, 3], 2, ^n) + p.norm() + counter}")
     \\}
 ;
@@ -885,6 +930,8 @@ test "debug info: every named binding is a local with a type" {
     try expectContains(ll, "!DILocalVariable(name: \"out\", ");
     try expectContains(ll, "!DILocalVariable(name: \"total\", ");
     try expectContains(ll, "!DILocalVariable(name: \"x\", ");
+    // The element of `each b in ^bumps`, a place with no storage of its own.
+    try expectContains(ll, "!DILocalVariable(name: \"b\", ");
     // Every local names a type; the struct is described by its fields.
     try expectContains(ll, "!DICompositeType(tag: DW_TAG_structure_type, name: \"Point\", size: 128, elements: ");
     try expectContains(ll, "!DIDerivedType(tag: DW_TAG_member, name: \"x\", baseType: ");
@@ -1605,94 +1652,13 @@ test "retention: what a loop makes that no iteration reclaims, and what it grew 
     const joined_text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "ret" });
     defer allocator.free(joined_text);
     try expectContains(joined_text, "escapes into global `log`, kept until the program ends (this run: 21 B in 3 allocations, 21 B into the root arena)\n");
-    try expectContains(joined_text, "  21 B\tret.doxa:5:9\trecord\tstore\n");
+    // The copy into the global's array is the compiler's placement there.
+    try expectContains(joined_text, "  21 B\tret.doxa:5:9\trecord\trehome\n");
 
     // A side file only: the IR is the same without the flag.
     const with = try emitIrFor(allocator, &tmp, retentionSource, "--emit-memory");
     defer allocator.free(with);
     const without = try emitIrFor(allocator, &tmp, retentionSource, "-O0");
-    defer allocator.free(without);
-    try testing.expectEqualStrings(without, with);
-}
-
-// ── Measure B: the copies plain-store-copies would add ──
-
-const plainSource =
-    \\struct P {
-    \\    public x :: int,
-    \\}
-    \\
-    \\function fresh() returns int {
-    \\    var a :: int[] is [1, 2]
-    \\    var s :: string is "hi"
-    \\    var t :: string is s
-    \\    return @length(a) + @length(t)
-    \\}
-    \\
-    \\function shared() returns int {
-    \\    var a :: int[] is [1, 2]
-    \\    var b :: int[] is a
-    \\    return @length(b)
-    \\}
-    \\
-    \\function mutatedShare() returns int {
-    \\    var a :: int[] is [1, 2]
-    \\    var b :: int[] is a
-    \\    @push(b, 3)
-    \\    return @length(a)
-    \\}
-    \\
-    \\function fromParam(p :: P) returns int {
-    \\    var q :: P is p
-    \\    q.x is 5
-    \\    return q.x
-    \\}
-    \\
-    \\function intoContainer() returns int {
-    \\    var rows :: int[][] is []
-    \\    var row :: int[] is [1]
-    \\    for i while i < 3 do i += 1 {
-    \\        @push(rows, row)
-    \\    }
-    \\    return @length(rows)
-    \\}
-    \\
-    \\entry function main() {
-    \\    @print("{fresh()} {shared()} {mutatedShare()} {fromParam($P { x is 1 })} {intoContainer()}\n")
-    \\}
-;
-
-test "measure B: stores of a value another binding holds, the mutated ones, and how often they ran" {
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const allocator = testing.allocator;
-    const io = testing.io;
-    try tmp.dir.writeFile(io, .{ .sub_path = "b.doxa", .data = plainSource });
-    const slot: harness.Slot = try .claim(allocator, io, "probe");
-    defer slot.release(allocator, io);
-
-    const out = try doxaStdout(allocator, &tmp, slot, &.{ "run", "b.doxa", "--emit-memory", "--instrument=lines" });
-    defer allocator.free(out);
-    try testing.expectEqualStrings("4 2 3 5 3\n", out);
-    const text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "b" });
-    defer allocator.free(text);
-
-    // A fresh value, and a string (immutable), would not be copied.
-    try testing.expect(std.mem.indexOf(u8, text, "\tfresh\tint[]\tbound to a variable") == null);
-    try testing.expect(std.mem.indexOf(u8, text, "\tfresh\tstring\tbound to a variable") == null);
-    // A value another binding holds would be; one mutated after would keep
-    // its copy whatever an elision did.
-    try expectContains(text, "    b.doxa:14:5\tshared\tint[]\tbound to a variable\tran 1 time\n");
-    try expectContains(text, "  ! b.doxa:20:5\tmutatedShare\tint[]\tbound to a variable\tran 1 time\n");
-    try expectContains(text, "  ! b.doxa:26:5\tfromParam\tP\tbound to a variable\tran 1 time\n");
-    // Pushed every iteration: one site, three copies made.
-    try expectContains(text, "    b.doxa:35:9\tintoContainer\tint[]\tstored into a container\tran 3 times\n");
-    try expectContains(text, "B adds between 2 and 4 copies at 4 sites; in this run, between 2 and 6 copies made.\n");
-
-    // A side file only: the IR is the same without the flag.
-    const with = try emitIrFor(allocator, &tmp, plainSource, "--emit-memory");
-    defer allocator.free(with);
-    const without = try emitIrFor(allocator, &tmp, plainSource, "-O0");
     defer allocator.free(without);
     try testing.expectEqualStrings(without, with);
 }
@@ -1735,11 +1701,13 @@ test "memtrace: runtime-checked copies, arenas opened and reset, bytes by site" 
     const text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "trace" });
     defer allocator.free(text);
 
-    // A store through `^` is decided at run time: `fresh`'s new array lives
-    // in its own arena, so each of the three calls copies it out; `keep`'s
-    // already lives in the caller's, so it is kept.
+    // A store through `^` of a fresh value is decided at run time: `fresh`'s
+    // new array lives in its own arena, so each of the three calls copies it
+    // out. `keep` stores a parameter, a value its caller still holds, which
+    // plain stores always copy: a static clone, no runtime check.
     try expectContains(text, "  3 copied, 0 kept\ttrace.doxa:2:5\tfresh\n");
-    try expectContains(text, "  0 copied, 1 kept\ttrace.doxa:6:5\tkeep\n");
+    try expectContains(text, "\ttrace.doxa:6:5\tkeep\tclone\n");
+    try testing.expect(std.mem.indexOf(u8, text, "kept\ttrace.doxa:6:5\tkeep") == null);
     // `fresh` opens its arena once a call; the loop resets its body's twice
     // an iteration (at the top and before the step).
     try expectContains(text, "\t3 opened, 0 resets\ttrace.doxa:1:10\tfresh\n");
