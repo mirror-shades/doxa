@@ -137,6 +137,7 @@ const Writer = struct {
             .function => try self.w.print("{s}'s arena, reclaimed when it returns", .{self.f.display_name}),
             .caller => try self.w.print("its caller's arena, reclaimed when the caller of {s} returns", .{self.f.display_name}),
             .alias => try self.w.writeAll("a ^ argument's arena, owned by a caller"),
+            .held => try self.w.writeAll("its container's arena, reclaimed with the container"),
             .root => try self.w.writeAll("the root arena, never reclaimed"),
             .outer => try self.w.writeAll("a parameter's storage, owned by a caller"),
             .static => unreachable,

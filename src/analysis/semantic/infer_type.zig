@@ -5,11 +5,13 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
 const ErrorList = Errors.ErrorList;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
+const TokenType = @import("../../types/token.zig").TokenType;
 const helpers = @import("./helpers.zig");
 const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const names = @import("names.zig");
+const borrows = @import("borrows.zig");
 const ParamRef = @import("semantic.zig").ParamRef;
 const TypeRef = ast.TypeRef;
 const Scope = @import("../../utils/memory.zig").Scope;
@@ -1347,6 +1349,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 defer self.block_value_expected = prev_bve;
                 // The target is resolved first: its storage's type is the
                 // context the value is typed in.
+                try borrows.checkPath(self, &.{assign.name.lexeme}, expr, .write);
                 const assigned = try names.resolveAssignmentTarget(self, expr, &assign.name);
                 const target_storage = if (assigned) |variable| self.memory.scope_manager.value_storage.get(variable.storage_id) else null;
                 const value_type = if (target_storage) |storage|
@@ -1406,6 +1409,7 @@ const op: []const u8 = switch (bin.operator.type) {
         },
         .InternalCall => |method_call| {
             const method_name = method_call.method.lexeme;
+            if (resizes(method_call.method.type)) try borrows.check(self, method_call.receiver, expr, .resize);
             // `@std` takes no arguments; its parser-supplied receiver is a
             // placeholder, not an argument.
             if (method_call.method.type == .STD) {
@@ -1449,6 +1453,7 @@ const op: []const u8 = switch (bin.operator.type) {
             type_info.* = .{ .base = .Nothing };
         },
         .IndexAssign => |index_assign| {
+            try borrows.check(self, index_assign.array, expr, .write);
             const array_type = try inferTypeFromExpr(self, index_assign.array);
             const index_type = try inferTypeFromExpr(self, index_assign.index);
             const value_type = if (array_type.base == .Array and array_type.array_type != null)
@@ -1487,6 +1492,7 @@ const op: []const u8 = switch (bin.operator.type) {
             type_info.* = .{ .base = .Nothing };
         },
         .FieldAssignment => |field_assign| {
+            try borrows.check(self, field_assign.object, expr, .write);
             const object_type = try inferTypeFromExpr(self, field_assign.object);
             const value_type = try inferTypeFromExpr(self, field_assign.value);
 
@@ -1970,6 +1976,13 @@ const op: []const u8 = switch (bin.operator.type) {
             }
         },
         .Loop => |loop| {
+            // `each n in ^path`: the body borrows the path. Its source is
+            // checked first, before the loop's own reads of it.
+            const borrowed = if (loop.borrow) |source| try borrowSource(self, source) else false;
+            defer if (borrowed) {
+                const live = self.borrows.pop().?;
+                self.allocator.free(live.path);
+            };
             const outer_loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
             const prev_scope = self.current_scope;
             self.current_scope = outer_loop_scope;
@@ -2157,8 +2170,35 @@ fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, argum
 /// member, which may be lent storage of any one member type; that is settled
 /// once every body is analyzed (`settleMemberLoans`). An unannotated parameter
 /// accepts any storage.
+/// Whether the intrinsic changes its subject's length.
+fn resizes(method: TokenType) bool {
+    return switch (method) {
+        .PUSH, .POP, .INSERT, .REMOVE, .CLEAR => true,
+        else => false,
+    };
+}
+
+/// Begin the borrow `each n in ^source` takes, once `source` is known to be
+/// a path (rule 1) overlapping no live borrow. False when it is not taken.
+fn borrowSource(self: *SemanticAnalyzer, source: *ast.Expr) !bool {
+    const path = try borrows.sourcePath(self.allocator, source) orelse {
+        self.reporter.reportCompileError(
+            getLocationFromBase(source.base),
+            ErrorCode.INVALID_BORROW_SOURCE,
+            "'each ... in ^' borrows a variable or a field of one, such as '^items' or '^game.players': bind this value to a variable first",
+            .{},
+        );
+        self.fatal_error = true;
+        return false;
+    };
+    try borrows.checkPath(self, path, source, .borrow);
+    try self.borrows.append(self.allocator, .{ .path = path, .source = source });
+    return true;
+}
+
 fn checkAliasArgument(self: *SemanticAnalyzer, arg: *ast.Expr, signature: *const ast.FunctionType, index: usize) !bool {
     const param = &signature.params[index];
+    try borrows.check(self, arg, arg, .lend);
     if (param.base == .Nothing) return true;
     // The parser admits only a name after `^`; an unresolved one is already
     // `Undefined variable`.

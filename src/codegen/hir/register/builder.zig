@@ -99,7 +99,6 @@ pub const FunctionBuilder = struct {
     slots: std.ArrayListUnmanaged(ir.SlotInfo) = .empty,
     locals: std.ArrayListUnmanaged(ir.LocalInfo) = .empty,
     loops: std.ArrayListUnmanaged(ir.LoopInfo) = .empty,
-    plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty,
     /// The name each variable is shown under, for a debugger. A variable
     /// without one is a compiler temporary.
     named: std.AutoHashMapUnmanaged(Var, ir.LocalId) = .empty,
@@ -330,11 +329,6 @@ pub const FunctionBuilder = struct {
 
     pub fn leaveLoop(self: *FunctionBuilder, outer: ir.LoopId) void {
         self.span.loop = outer;
-    }
-
-    /// `value` is bound to a local, or assigned to one, here.
-    pub fn plainStore(self: *FunctionBuilder, value: ValueId) Error!void {
-        try self.plain_stores.append(self.alloc, .{ .span = self.span, .value = value });
     }
 
     /// A statement begins at the current span: the next instruction or
@@ -592,12 +586,6 @@ pub const FunctionBuilder = struct {
             out.* = info;
             out.arena = if (info.arena) |a| map.value(a) catch null else null;
         }
-        // A store only a dead block made is not one.
-        var plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty;
-        for (self.plain_stores.items) |st| {
-            const value = map.value(st.value) catch continue;
-            try plain_stores.append(self.alloc, .{ .span = st.span, .value = value });
-        }
 
         return .{
             .name = self.name,
@@ -611,7 +599,6 @@ pub const FunctionBuilder = struct {
             .slots = slots,
             .locals = self.locals.items,
             .loops = loops,
-            .plain_stores = plain_stores.items,
         };
     }
 

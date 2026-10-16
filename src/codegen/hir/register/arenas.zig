@@ -4,6 +4,9 @@
 //! this pass decides what a static region already settles, and drops the
 //! arenas nothing allocates in:
 //!
+//! - **Containers.** `arena_of` a container this function allocated is the
+//!   arena it allocated it in, so the copies placed there are decided
+//!   statically.
 //! - **Copies.** A `rehome` of a value whose region outlives the destination
 //!   is the value itself; one whose region is an arena the destination
 //!   outlives is a `clone`. Any other stays a `rehome`, the one copy decided
@@ -145,6 +148,31 @@ fn refineCopies(alloc: Alloc, program: *const ir.Program, f: *const ir.Function,
     var any = false;
     for (f.blocks, 0..) |block, b| {
         for (block.insts, 0..) |inst, i| {
+            if (inst.op == .arena_of) {
+                const container = inst.op.arena_of.operand;
+                const t = f.typeOf(container).doxa;
+                const home: verify.Home = if (t == .Array and t.Array.size != null)
+                    // A fixed array has no header: where it lives is known
+                    // statically (the verifier admits no other).
+                    (try facts.fixedHome(container)).?
+                else if (facts.exactArena(container)) |a|
+                    // A container allocated here lives in the arena it was
+                    // allocated in.
+                    .{ .arena = a }
+                else
+                    continue;
+                switch (home) {
+                    .arena => |a| {
+                        edit.alias[@intFromEnum(inst.result.?)] = a;
+                        edit.drop_inst[b][i] = true;
+                    },
+                    .root => edit.replace[b][i] = .root_arena,
+                    // An element or field: the arena of what holds it.
+                    .held => |parent| edit.replace[b][i] = .{ .arena_of = .{ .operand = parent } },
+                }
+                any = true;
+                continue;
+            }
             const c = switch (inst.op) {
                 .rehome => |c| c,
                 else => continue,
@@ -179,7 +207,7 @@ fn isRemovable(op: ir.Op) bool {
         .str_concat, .str_len, .str_substring, .str_last, .str_drop_last, .str_find, .str_insert, .str_remove,
         .str_char, .str_to_int, .str_to_float, .str_to_byte, .str_pack, .str_unpack, .to_string,
         .array_new, .array_from_fixed, .array_range, .array_get, .array_len, .array_slice, .array_concat, .array_find,
-        .struct_new, .field_get, .load, .global_load, .clone, .rehome,
+        .struct_new, .field_get, .load, .global_load, .clone, .rehome, .arena_of,
         => true,
         else => false,
     };
@@ -562,13 +590,7 @@ const Edit = struct {
             out.* = info;
             out.arena = if (info.arena) |a| if (renumber[@intFromEnum(self.resolve(a))] == none) null else try map.value(a) else null;
         }
-        // A store of a value the pass removed stores nothing.
-        var plain_stores: std.ArrayListUnmanaged(ir.PlainStore) = .empty;
-        for (f.plain_stores) |st| {
-            if (renumber[@intFromEnum(self.resolve(st.value))] == none) continue;
-            try plain_stores.append(alloc, .{ .span = st.span, .value = try map.value(st.value) });
-        }
-        return .{ .name = f.name, .display_name = f.display_name, .span = f.span, .statements = f.statements, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots, .locals = f.locals, .loops = loops, .plain_stores = plain_stores.items };
+        return .{ .name = f.name, .display_name = f.display_name, .span = f.span, .statements = f.statements, .roles = roles.items, .ret = f.ret, .values = values.items, .blocks = blocks, .slots = slots, .locals = f.locals, .loops = loops };
     }
 
     fn terminator(self: *const Edit, alloc: Alloc, f: *const ir.Function, term: ir.Terminator, map: anytype) Alloc.Error!ir.Terminator {

@@ -66,17 +66,6 @@ pub const LoopInfo = struct {
     arena: ?ValueId,
 };
 
-/// A plain store: a heap value bound to a local or assigned to one, as
-/// lowering wrote it (`plan/diagnostics-and-observability.md` step 14). The
-/// value is the one stored, before any copy into the local's arena. Today
-/// the local shares it; under B (plain stores copy) a value another binding
-/// still holds would be copied here. `--emit-memory` reads it; nothing in
-/// code generation does.
-pub const PlainStore = struct {
-    span: SrcSpan,
-    value: ValueId,
-};
-
 pub const ValueId = enum(u32) { _ };
 pub const BlockId = enum(u32) {
     entry = 0,
@@ -226,9 +215,9 @@ pub const Op = union(enum) {
     to_string: ArenaOperand,
 
     // ── Arrays ──
-    // An element store places the element in the array's own arena (the
-    // runtime re-homes it), so it needs no arena operand: the array may have
-    // come from a caller whose arena this function cannot name.
+    // An element or field store keeps the value as given: lowering places a
+    // heap value in the container's arena first (`arena_of`), a `clone` or
+    // a `rehome` there.
     array_new: struct { arena: ValueId, length: ?ValueId },
     array_from_fixed: ArenaOperand,
     array_range: struct { arena: ValueId, start: ValueId, end: ValueId },
@@ -245,11 +234,17 @@ pub const Op = union(enum) {
     array_concat: struct { arena: ValueId, lhs: ValueId, rhs: ValueId },
     array_find: struct { array: ValueId, value: ValueId },
     /// Copy a dynamic array's elements back into a fixed one, as many as both
-    /// hold: a fixed array lent to a dynamic `^` parameter took a copy.
-    array_copy_to_fixed: struct { fixed: ValueId, array: ValueId },
+    /// hold: a fixed array lent to a dynamic `^` parameter took a copy. A
+    /// heap element is copied into `arena`, the one the fixed array lives in.
+    array_copy_to_fixed: struct { fixed: ValueId, array: ValueId, arena: ValueId },
 
-    // ── Structs ── (field stores re-home into the struct's arena)
+    // ── Structs ──
     struct_new: struct { arena: ValueId, fields: []const ValueId },
+    /// The arena a dynamic array or a described struct lives in, read from
+    /// its header: where a value stored into it must live. The container
+    /// may have come from a caller whose arena this function cannot name;
+    /// the arena pass names it when the container was allocated here.
+    arena_of: Unary,
     field_get: struct { object: ValueId, index: u32 },
     field_set: struct { object: ValueId, index: u32, value: ValueId },
 
@@ -428,8 +423,6 @@ pub const Function = struct {
     locals: []const LocalInfo,
     /// Every loop, by `SrcSpan.loop`: `loops[id - 1]`.
     loops: []const LoopInfo = &.{},
-    /// Every plain store, in lowering order.
-    plain_stores: []const PlainStore = &.{},
 
     pub fn params(self: *const Function) []const ValueId {
         return self.blocks[0].params;

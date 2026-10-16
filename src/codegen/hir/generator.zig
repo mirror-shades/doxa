@@ -666,6 +666,22 @@ pub const Generator = struct {
         return false;
     }
 
+    /// Whether a value of `t` can be changed in place: an array, a struct, or
+    /// a union or group that can hold one. A string is immutable, so a copy
+    /// of one is never observable.
+    pub fn isMutable(self: *const Generator, t: HIRType) bool {
+        return switch (t) {
+            .Array, .Struct => true,
+            .Union => |u| for (u.members) |m| {
+                if (self.isMutable(m.*)) break true;
+            } else false,
+            .Group => |gid| for (self.semantic.group_table.members(gid) orelse &.{}) |m| {
+                if (self.isMutable(groupMemberType(m))) break true;
+            } else false,
+            else => false,
+        };
+    }
+
     /// The indexes of every member of `boxed` that is a `named`.
     pub fn membersNamed(self: *const Generator, boxed: HIRType, named: HIRType) Error![]const u32 {
         var out: std.ArrayListUnmanaged(u32) = .empty;
@@ -700,6 +716,26 @@ pub const Generator = struct {
     }
 };
 
+/// Whether `e`'s value can be one a binding already holds: a read of a
+/// variable, a field or an element, `this`, an `as` view of one, or an `if`,
+/// `match` or block that can yield one. Anything else is a fresh value.
+pub fn readsStorage(e: *const ast.Expr) bool {
+    return switch (e.data) {
+        .Variable, .FieldAccess, .Index, .This => true,
+        .Grouping => |inner| if (inner) |x| readsStorage(x) else false,
+        .Cast => |c| readsStorage(c.value) or
+            (if (c.then_branch) |b| readsStorage(b) else false) or
+            (if (c.else_branch) |b| readsStorage(b) else false),
+        .If => |i| (if (i.then_branch) |b| readsStorage(b) else false) or
+            (if (i.else_branch) |b| readsStorage(b) else false),
+        .Match => |m| for (m.cases) |case| {
+            if (readsStorage(case.body)) break true;
+        } else false,
+        .Block => |b| if (b.value) |v| readsStorage(v) else false,
+        else => false,
+    };
+}
+
 /// The type a group's flattened member names.
 pub fn groupMemberType(member: anytype) HIRType {
     return switch (member.kind) {
@@ -724,6 +760,12 @@ pub const Local = union(enum) {
     slot: ir.SlotId,
     /// A `^` parameter: its address and the arena that owns it.
     alias: struct { ref: ValueId, arena: ValueId },
+    /// The element of `each n in ^path`: a place, the `Index` expression
+    /// naming it, read and written afresh on every use. Never a cached
+    /// address, so a body that changes the array's length (through a callee
+    /// the borrow check cannot see) meets a bounds check, not a stale buffer.
+    /// `debug` is the name a debugger shows for it, re-pointed at each write.
+    element: struct { at: *ast.Expr, debug: ?ir.LocalId },
 };
 
 /// An open arena of the function being lowered, innermost last.
@@ -899,10 +941,10 @@ pub const Lowering = struct {
     }
 
     /// A module-level `var`: `value` initializes the global `target` names, and
-    /// this is its declaration.
-    pub fn declareGlobalStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId) Error!void {
+    /// this is its declaration. `copy` as `writeStorage`'s.
+    pub fn declareGlobalStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId, copy: bool) Error!void {
         const ty = try self.g.lowerType(target.slot);
-        try self.storeGlobal(try self.g.declareGlobal(name, ty, self.b.span), ty, value);
+        try self.storeGlobal(try self.g.declareGlobal(name, ty, self.b.span), ty, value, copy);
     }
 
     /// Read the storage `target` names, of its slot type.
@@ -915,32 +957,99 @@ pub const Lowering = struct {
             .ssa => |s| self.b.useVar(s.v),
             .slot => |slot| self.b.define(.{ .load = .{ .operand = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty }) } }, .of(ty)),
             .alias => |a| self.b.define(.{ .load = .{ .operand = a.ref } }, .of(ty)),
+            // A path indexed by a variable cannot diverge.
+            .element => |el| (try self.expr(el.at)).?,
         };
     }
 
     /// Write `value`, already of the storage's slot type, into the storage
-    /// `target` names. A heap value is re-homed into the arena that owns the
-    /// storage.
-    pub fn writeStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId) Error!void {
+    /// `target` names. A heap value is placed in the arena that owns the
+    /// storage: copied there when `copy` (`mustCopy`), else re-homed.
+    pub fn writeStorage(self: *Lowering, target: StoreTarget, name: []const u8, value: ValueId, copy: bool) Error!void {
         const ty = try self.g.lowerType(target.slot);
         if (target.global) {
-            try self.storeGlobal(try self.g.globalId(name, ty, self.b.span), ty, value);
+            try self.storeGlobal(try self.g.globalId(name, ty, self.b.span), ty, value, copy);
             return;
         }
         switch (self.local(target.storage)) {
-            .ssa => |s| try self.b.defineVar(s.v, try self.rehome(try self.b.useVar(s.home), value, ty)),
+            .ssa => |s| try self.b.defineVar(s.v, try self.place(try self.b.useVar(s.home), value, ty, copy)),
             .slot => |slot| {
                 const ref = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty });
                 const home = self.b.slots.items[@intFromEnum(slot)].arena;
-                try self.b.effect(.{ .store = .{ .ref = ref, .value = try self.rehome(home, value, ty) } });
+                try self.b.effect(.{ .store = .{ .ref = ref, .value = try self.place(home, value, ty, copy) } });
             },
-            .alias => |a| try self.b.effect(.{ .store = .{ .ref = a.ref, .value = try self.rehome(a.arena, value, ty) } }),
+            .alias => |a| try self.b.effect(.{ .store = .{ .ref = a.ref, .value = try self.place(a.arena, value, ty, copy) } }),
+            // An element store, as `a[i] is v`: the runtime re-homes the
+            // value into the array's arena.
+            .element => |el| {
+                const array = (try self.expr(el.at.data.Index.array)).?;
+                const i = (try self.exprAs(el.at.data.Index.index, .Int)).?;
+                const kept = try self.placeIn(array, value, ty, copy);
+                try self.b.effect(.{ .array_set = .{ .array = array, .index = i, .value = kept } });
+                if (el.debug) |id| try self.b.effect(.{ .debug_value = .{ .local = id, .value = kept } });
+            },
         }
     }
 
+    /// Bind `storage` to the element `at` (an `Index`) names: the binding of
+    /// `each n in ^path` (`Local.element`). A debugger shows `name` as the
+    /// element read where the binding begins, each iteration, and as what
+    /// each write through it stores; a field write changes the element the
+    /// name already shows.
+    pub fn declareElement(self: *Lowering, storage: u32, name: []const u8, at: *ast.Expr) Error!void {
+        const id = try self.b.addLocal(name, self.b.span, null, 0);
+        try self.locals.put(self.g.alloc, storage, .{ .element = .{ .at = at, .debug = id } });
+        try self.b.effect(.{ .debug_value = .{ .local = id, .value = (try self.expr(at)).? } });
+    }
+
     /// Store `value` into the global `id`, in the root arena.
-    fn storeGlobal(self: *Lowering, id: ir.GlobalId, ty: HIRType, value: ValueId) Error!void {
-        try self.b.effect(.{ .global_store = .{ .global = id, .value = try self.rehome(self.root, value, ty) } });
+    fn storeGlobal(self: *Lowering, id: ir.GlobalId, ty: HIRType, value: ValueId, copy: bool) Error!void {
+        try self.b.effect(.{ .global_store = .{ .global = id, .value = try self.place(self.root, value, ty, copy) } });
+    }
+
+    /// `value` placed in `into` for a store: a copy there when `copy`, else
+    /// re-homed (`rehome`).
+    pub fn place(self: *Lowering, into: ValueId, value: ValueId, ty: HIRType, copy: bool) Error!ValueId {
+        if (copy) return self.b.define(.{ .clone = .{ .arena = into, .operand = value } }, .of(ty));
+        return self.rehome(into, value, ty);
+    }
+
+    /// Whether storing `source`'s value, of `ty`, must copy it (B: plain
+    /// stores copy; only `^` shares, `plan/plain-store-copies.md`): the value
+    /// can be changed in place, and it is one a binding already holds. A
+    /// fresh value (a literal, a call's result) is moved, with no copy.
+    pub fn mustCopy(self: *Lowering, source: *ast.Expr, ty: HIRType) bool {
+        return self.g.isMutable(ty) and readsStorage(source);
+    }
+
+    /// `source` lowered as `ty` for a store into `container`: living in the
+    /// container's arena (`placedAs`).
+    pub fn stored(self: *Lowering, container: ValueId, source: *ast.Expr, ty: HIRType) Error!?ValueId {
+        if (!ir.isHeapType(ty)) return self.exprAs(source, ty);
+        const into = self.b.values.items[@intFromEnum(container)].ty.doxa;
+        if (into == .Array and into.Array.size != null) {
+            // A fixed array may store the element inline, as its bytes (a
+            // flat struct, a nested fixed array): a literal is then a
+            // temporary, built here, and its placement is the store's copy
+            // (the emitter drops it). Only the emitter's layout knows which.
+            const v = try self.exprAs(source, ty) orelse return null;
+            return try self.placeIn(container, v, ty, self.mustCopy(source, ty));
+        }
+        return self.placedAs(source, ty, try self.arenaOf(container));
+    }
+
+    /// The arena `container` lives in: read from its header, or, for a fixed
+    /// array, which has none, named by the arena pass from where it was made.
+    pub fn arenaOf(self: *Lowering, container: ValueId) Error!ValueId {
+        return self.b.define(.{ .arena_of = .{ .operand = container } }, .arena);
+    }
+
+    /// `value`, of `ty`, placed for a store into `container`: in the arena
+    /// the container lives in (`arenaOf`), copied there when `copy`, else
+    /// re-homed. The store then keeps it as given.
+    pub fn placeIn(self: *Lowering, container: ValueId, value: ValueId, ty: HIRType, copy: bool) Error!ValueId {
+        if (!ir.isHeapType(ty)) return value;
+        return self.place(try self.arenaOf(container), value, ty, copy);
     }
 
     /// The local `storage` names. Analysis bound every name lowering reads.
@@ -1014,14 +1123,48 @@ pub const Lowering = struct {
     /// Lower `e` and bring it to `to`; null when control leaves it. An array
     /// literal is built as the array its context expects.
     pub fn exprAs(self: *Lowering, e: *ast.Expr, to: HIRType) Error!?ValueId {
-        if (e.data == .Array and to == .Array) {
-            const literal = try self.g.typeOf(e);
-            if (literal == .Array and literal.Array.size == null and to.Array.size != null and to.Array.size.? == e.data.Array.len) {
-                return lower_expr.arrayLiteralAs(self, e, to);
-            }
-        }
+        if (try self.literalAs(e, to)) |ty| return lower_expr.arrayLiteralIn(self, e, ty, try self.arena());
         const v = try self.expr(e) orelse return null;
         return try self.convert(v, try self.g.typeOf(e), to);
+    }
+
+    /// The type an array literal `e` is built as where `to` is expected:
+    /// `to` itself, or a fixed array of the literal's length. Null for any
+    /// other expression, or a literal that converts.
+    fn literalAs(self: *Lowering, e: *ast.Expr, to: HIRType) Error!?HIRType {
+        if (e.data != .Array or to != .Array) return null;
+        const literal = try self.g.typeOf(e);
+        if (literal.eql(to)) return to;
+        if (literal == .Array and literal.Array.size == null and to.Array.size != null and to.Array.size.? == e.data.Array.len) return to;
+        return null;
+    }
+
+    /// Whether `e` is a literal `placedAs` builds in place as `to`.
+    pub fn builtInPlace(self: *Lowering, e: *ast.Expr, to: HIRType) Error!bool {
+        return switch (e.data) {
+            .Grouping => |inner| if (inner) |x| self.builtInPlace(x, to) else false,
+            .StructLiteral => (try self.g.typeOf(e)).eql(to),
+            .Array => try self.literalAs(e, to) != null,
+            else => false,
+        };
+    }
+
+    /// Lower `e` as `to`, living in `into`. A struct or array literal is
+    /// built there, and so are the literals nested in it, so it needs no
+    /// copy; any other value is placed there (`place`), a copy when it is
+    /// one a binding holds.
+    pub fn placedAs(self: *Lowering, e: *ast.Expr, to: HIRType, into: ValueId) Error!?ValueId {
+        if (try self.builtInPlace(e, to)) {
+            var at = e;
+            while (at.data == .Grouping) at = at.data.Grouping.?;
+            return switch (at.data) {
+                .StructLiteral => lower_expr.structLiteralIn(self, at, into),
+                .Array => lower_expr.arrayLiteralIn(self, at, (try self.literalAs(at, to)).?, into),
+                else => unreachable,
+            };
+        }
+        const v = try self.exprAs(e, to) orelse return null;
+        return try self.place(into, v, to, self.mustCopy(e, to));
     }
 
     /// `t` with every fixed size dropped: the dynamic array a fixed one

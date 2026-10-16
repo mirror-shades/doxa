@@ -415,6 +415,8 @@ pub const ErrorCode = struct {
     pub const SCOPE_ERROR = "E3002";
     pub const REFERENCE_ERROR = "E3003";
     pub const VARIABLE_STORAGE_NOT_FOUND = "E3004";
+    pub const INVALID_BORROW_SOURCE = "E3005";
+    pub const BORROW_CONFLICT = "E3006";
 
     // 4xxx - Runtime
     pub const RUNTIME_ERROR = "E4001";

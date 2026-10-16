@@ -61,6 +61,17 @@ pub const Facts = struct {
         return self.v.outlives(r, dest);
     }
 
+    /// The arena the container `container` was allocated in, when this
+    /// function allocated it (`exactArena`).
+    pub fn exactArena(self: *const Facts, container: ValueId) ?ValueId {
+        return self.v.exactArena(container);
+    }
+
+    /// Where the fixed array `fixed` lives (`fixedHome`).
+    pub fn fixedHome(self: *const Facts, fixed: ValueId) std.mem.Allocator.Error!?Home {
+        return self.v.fixedHome(fixed);
+    }
+
     /// The arena `arena` was opened in, if this function opened it.
     pub fn parentOf(self: *const Facts, arena: ValueId) ?ValueId {
         return self.v.parentOf(arena);
@@ -119,11 +130,26 @@ pub const Region = union(enum) {
     }
 };
 
+/// Where a fixed array lives. A fixed array has no header to name its arena,
+/// so it is known statically or not at all.
+pub const Home = union(enum) {
+    /// This arena value.
+    arena: ValueId,
+    /// The root arena: a global's.
+    root,
+    /// The arena of this dynamic array or struct (`arena_of` it): the fixed
+    /// array is its element or field.
+    held: ValueId,
+};
+
 /// What an arena value is.
 pub const ArenaKind = union(enum) {
     root,
     caller,
     alias,
+    /// The arena a container lives in (`arena_of`): it outlives the
+    /// container, and nothing else is known of it.
+    held,
     /// Opened in this function, as a child of `parent`.
     opened: ValueId,
 };
@@ -745,6 +771,7 @@ const Verifier = struct {
                 try self.resultIs(inst, .{ .ref = self.program.globals[@intFromEnum(g.global)].ty });
             },
             .array_copy_to_fixed => |c| {
+                try self.expectArena(c.arena);
                 const fixed = try self.expectTag(c.fixed, .Array);
                 const array = try self.expectTag(c.array, .Array);
                 if (fixed.size == null or array.size != null or !fixedConverts(fixed.element.*, array.element.*)) {
@@ -777,6 +804,18 @@ const Verifier = struct {
                 try self.noResult(inst);
             },
             .root_arena => try self.resultIs(inst, .arena),
+            .arena_of => |u| {
+                switch (try self.doxa(u.operand)) {
+                    // A fixed array has no header: its arena is known only
+                    // statically, and the arena pass names it.
+                    .Array => |a| if (a.size != null and try self.fixedHome(u.operand) == null) {
+                        return self.fail("names the arena of fixed array %{d}, whose home is not known", .{@intFromEnum(u.operand)});
+                    },
+                    .Struct => {},
+                    else => |t| return self.fail("names the arena of a {s}", .{@tagName(t)}),
+                }
+                try self.resultIs(inst, .arena);
+            },
             .scope_enter => |s| {
                 try self.expectArena(s.parent);
                 try self.resultIs(inst, .arena);
@@ -869,6 +908,7 @@ const Verifier = struct {
         };
         for (f.blocks) |block| for (block.insts) |inst| switch (inst.op) {
             .root_arena => self.arena_kind[@intFromEnum(inst.result.?)] = .root,
+            .arena_of => self.arena_kind[@intFromEnum(inst.result.?)] = .held,
             .scope_enter => |s| self.arena_kind[@intFromEnum(inst.result.?)] = .{ .opened = s.parent },
             else => {},
         };
@@ -912,7 +952,7 @@ const Verifier = struct {
     }
 
     /// The argument the edge from `pred` passes to parameter `p` of `block`.
-    fn argInto(self: *Verifier, pred: BlockId, block: BlockId, p: usize) Error!?ValueId {
+    fn argInto(self: *const Verifier, pred: BlockId, block: BlockId, p: usize) Error!?ValueId {
         const Find = struct {
             block: BlockId,
             p: usize,
@@ -929,7 +969,7 @@ const Verifier = struct {
     fn parentOf(self: *const Verifier, arena: ValueId) ?ValueId {
         return switch (self.arena_kind[@intFromEnum(arena)].?) {
             .opened => |p| p,
-            .root, .caller, .alias => null,
+            .root, .caller, .alias, .held => null,
         };
     }
 
@@ -1195,6 +1235,11 @@ const Verifier = struct {
                 open.items[open.items.len - 1] = inst.result.?;
             },
             .store => |s| try self.checkStore(s.value, self.refArena(s.ref)),
+            .struct_new => |s| for (s.fields) |field| try self.checkStore(field, s.arena),
+            .array_set => |s| try self.checkElementStore(s.array, s.value),
+            .array_push => |s| try self.checkElementStore(s.array, s.value),
+            .array_insert => |s| try self.checkElementStore(s.array, s.value),
+            .field_set => |s| try self.checkElementStore(s.object, s.value),
             .global_store => |g| if (self.typeOf(g.value).isHeap()) {
                 const region = self.region[@intFromEnum(g.value)].?;
                 if (!self.regionOutlives(region, .root)) return self.fail("stores %{d} into a global without re-homing it to the root arena", .{@intFromEnum(g.value)});
@@ -1214,6 +1259,106 @@ const Verifier = struct {
         if (!self.outlives(region, dest)) {
             return self.fail("stores %{d} where it may outlive its arena; rehome or clone it into %{d}", .{ @intFromEnum(value), @intFromEnum(dest) });
         }
+    }
+
+    /// A heap value stored into a container lives where the container does:
+    /// placed in the container's arena (`arena_of` it), or in one sure to
+    /// outlive the arena this function allocated the container in. Only the
+    /// allocation names a container's arena exactly: a re-homed one may live
+    /// in any arena that outlives its region.
+    fn checkElementStore(self: *Verifier, container: ValueId, value: ValueId) Error!void {
+        const region = self.region[@intFromEnum(value)] orelse return;
+        if (self.regionOutlives(region, .root)) return;
+        if (region == .arena and self.heldBy(region.arena) == container) return;
+        const t = self.typeOf(container).doxa;
+        if (t == .Array and t.Array.size != null) {
+            if (try self.fixedHome(container)) |home| switch (home) {
+                .arena => |a| if (self.outlives(region, a)) return,
+                .root => {},
+                .held => |parent| if (region == .arena and self.heldBy(region.arena) == parent) return,
+            };
+        } else if (self.exactArena(container)) |home| if (self.outlives(region, home)) return;
+        return self.fail("stores %{d} into %{d} where it may not outlive the container; place it in arena_of %{d}", .{ @intFromEnum(value), @intFromEnum(container), @intFromEnum(container) });
+    }
+
+    /// The container whose arena `arena` is (`arena_of`), if it is one.
+    fn heldBy(self: *const Verifier, arena: ValueId) ?ValueId {
+        const at = switch (self.f.values[@intFromEnum(arena)].def) {
+            .inst => |at| at,
+            .param => return null,
+        };
+        return switch (self.f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
+            .arena_of => |u| u.operand,
+            else => null,
+        };
+    }
+
+    /// Where the fixed array `fixed` lives, followed back to where it was
+    /// made or read from; null when no path settles it. Plain stores copy, so
+    /// the storage a fixed array was read from is its only owner: what is
+    /// stored into it belongs where that storage lives.
+    fn fixedHome(self: *const Verifier, fixed: ValueId) std.mem.Allocator.Error!?Home {
+        var seen: std.ArrayListUnmanaged(ValueId) = .empty;
+        defer seen.deinit(self.alloc);
+        return self.homeOf(fixed, &seen);
+    }
+
+    fn homeOf(self: *const Verifier, v: ValueId, seen: *std.ArrayListUnmanaged(ValueId)) std.mem.Allocator.Error!?Home {
+        if (self.exactArena(v)) |a| return .{ .arena = a };
+        const at = switch (self.f.values[@intFromEnum(v)].def) {
+            .inst => |at| at,
+            .param => |p| {
+                // A block parameter is where every edge into it agrees.
+                if (p.block == .entry) return null;
+                if (std.mem.indexOfScalar(ValueId, seen.items, v) != null) return null;
+                try seen.append(self.alloc, v);
+                var agreed: ?Home = null;
+                for (self.preds[@intFromEnum(p.block)]) |pred| {
+                    const arg = (self.argInto(pred, p.block, p.index) catch return null) orelse continue;
+                    // A value carried around a loop unchanged adds nothing.
+                    if (arg == v) continue;
+                    const home = try self.homeOf(arg, seen) orelse return null;
+                    if (agreed) |a| {
+                        if (!std.meta.eql(a, home)) return null;
+                    } else agreed = home;
+                }
+                return agreed;
+            },
+        };
+        return switch (self.f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
+            .rehome => |c| .{ .arena = c.arena },
+            .load => |u| .{ .arena = self.refArena(u.operand) },
+            .global_load => .root,
+            .call => |c| if (self.program.functions[@intFromEnum(c.callee)].callerArena()) |i| .{ .arena = c.args[i] } else null,
+            // A nested fixed array is stored inline in its parent.
+            .array_get => |g| if (self.isFixed(g.array)) try self.homeOf(g.array, seen) else .{ .held = g.array },
+            .field_get => |g| .{ .held = g.object },
+            else => null,
+        };
+    }
+
+    fn isFixed(self: *const Verifier, v: ValueId) bool {
+        const t = self.typeOf(v);
+        return t == .doxa and t.doxa == .Array and t.doxa.Array.size != null;
+    }
+
+    /// The arena a container was allocated in, when this function allocated
+    /// it: a fresh array or struct, or a copy.
+    fn exactArena(self: *const Verifier, container: ValueId) ?ValueId {
+        const at = switch (self.f.values[@intFromEnum(container)].def) {
+            .inst => |at| at,
+            .param => return null,
+        };
+        return switch (self.f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
+            .array_new => |a| a.arena,
+            .array_from_fixed => |a| a.arena,
+            .array_range => |a| a.arena,
+            .array_slice => |a| a.arena,
+            .array_concat => |a| a.arena,
+            .struct_new => |s| s.arena,
+            .clone => |c| c.arena,
+            else => null,
+        };
     }
 
     /// A callee's `@caller` is this function's innermost open arena.

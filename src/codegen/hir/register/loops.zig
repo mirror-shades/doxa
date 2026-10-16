@@ -26,6 +26,8 @@ pub const Landing = union(enum) {
     caller,
     /// A `^` argument's arena.
     alias,
+    /// The arena of the container it is stored into (`arena_of`).
+    held,
     /// The root arena: never reclaimed.
     root,
     /// A parameter's storage, owned outside the function.
@@ -50,6 +52,7 @@ pub fn landingOf(f: *const ir.Function, facts: *const verify.Facts, loop: ir.Loo
         .opened => .function,
         .caller => .caller,
         .alias => .alias,
+        .held => .held,
         .root => .root,
     };
 }

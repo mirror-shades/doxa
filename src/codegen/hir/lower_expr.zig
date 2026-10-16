@@ -395,8 +395,7 @@ fn assignment(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const target = try l.g.storeTarget(&e.base);
     const slot_type = try l.g.lowerType(target.slot);
     const v = try l.exprAs(assign.value.?, slot_type) orelse return null;
-    if (ir.isHeapType(slot_type)) try l.b.plainStore(v);
-    try l.writeStorage(target, assign.name.lexeme, v);
+    try l.writeStorage(target, assign.name.lexeme, v, l.mustCopy(assign.value.?, slot_type));
     return try result(l, e, v, slot_type);
 }
 
@@ -406,12 +405,13 @@ fn storeBack(l: *Lowering, target: *ast.Expr, value: ValueId, ty: HIRType) Error
     switch (target.data) {
         .Variable => |token| {
             const store = try l.g.storeTarget(&target.base);
-            try l.writeStorage(store, token.lexeme, try l.convert(value, ty, try l.g.lowerType(store.slot)));
+            try l.writeStorage(store, token.lexeme, try l.convert(value, ty, try l.g.lowerType(store.slot)), false);
         },
         .FieldAccess => |fa| {
             const field = try fieldSlot(l, fa.object, fa.field);
             const object = try objectOf(l, fa.object, field.struct_id) orelse return;
-            try l.effect(.{ .field_set = .{ .object = object, .index = field.index, .value = try l.convert(value, ty, field.ty) } });
+            const placed = try l.placeIn(object, try l.convert(value, ty, field.ty), field.ty, false);
+            try l.effect(.{ .field_set = .{ .object = object, .index = field.index, .value = placed } });
         },
         // A subject that names no storage has nowhere to keep the result.
         else => {},
@@ -421,17 +421,21 @@ fn storeBack(l: *Lowering, target: *ast.Expr, value: ValueId, ty: HIRType) Error
 // ── Collections ──
 
 fn arrayLiteral(l: *Lowering, e: *ast.Expr) Error!?ValueId {
-    return arrayLiteralAs(l, e, try l.g.typeOf(e));
+    return arrayLiteralIn(l, e, try l.g.typeOf(e), try l.arena());
 }
 
-/// An array literal built as an array of type `ty`.
-pub fn arrayLiteralAs(l: *Lowering, e: *ast.Expr, ty: HIRType) Error!?ValueId {
+/// An array literal built as an array of type `ty` in `arena`, its elements
+/// living there too.
+pub fn arrayLiteralIn(l: *Lowering, e: *ast.Expr, ty: HIRType, arena: ValueId) Error!?ValueId {
+    // Reached from `placedAs` as well as `expr`: the literal is its own span.
+    const saved = try l.enter(e.base.location());
+    defer l.leave(saved);
     const elements = e.data.Array;
     const element = ty.Array.element.*;
     const length: ?ValueId = if (ty.Array.size == null) try l.constant(.{ .int = @intCast(elements.len) }, .Int) else null;
-    const array = try l.define(.{ .array_new = .{ .arena = try l.arena(), .length = length } }, ty);
+    const array = try l.define(.{ .array_new = .{ .arena = arena, .length = length } }, ty);
     for (elements, 0..) |element_expr, i| {
-        const v = try l.exprAs(element_expr, element) orelse return null;
+        const v = try l.placedAs(element_expr, element, arena) orelse return null;
         const at = try l.constant(.{ .int = @intCast(i) }, .Int);
         try l.effect(.{ .array_set = .{ .array = array, .index = at, .value = v } });
     }
@@ -467,7 +471,7 @@ fn indexAssign(l: *Lowering, array: *ast.Expr, at: *ast.Expr, value: *ast.Expr) 
             // TODO(flat literal store): a struct literal stored into a flat
             // element is built in this arena and copied; it should write the
             // element's fields in place (plan/register-hir.md, stage 2 notes).
-            const v = try l.exprAs(value, a.element.*) orelse return null;
+            const v = try l.stored(container, value, a.element.*) orelse return null;
             try l.effect(.{ .array_set = .{ .array = container, .index = i, .value = v } });
         },
         else => return unexpected(l, array),
@@ -538,12 +542,19 @@ fn fieldAccess(l: *Lowering, e: *ast.Expr, fa: ast.FieldAccess) Error!?ValueId {
 fn fieldAssignment(l: *Lowering, object: *ast.Expr, field_token: ast.Token, value: *ast.Expr) Error!?ValueId {
     const field = try fieldSlot(l, object, field_token);
     const o = try objectOf(l, object, field.struct_id) orelse return null;
-    const v = try l.exprAs(value, field.ty) orelse return null;
+    const v = try l.stored(o, value, field.ty) orelse return null;
     try l.effect(.{ .field_set = .{ .object = o, .index = field.index, .value = v } });
     return try l.nothing();
 }
 
 fn structLiteral(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    return structLiteralIn(l, e, try l.arena());
+}
+
+/// A struct literal built in `arena`, its fields living there too.
+pub fn structLiteralIn(l: *Lowering, e: *ast.Expr, arena: ValueId) Error!?ValueId {
+    const saved = try l.enter(e.base.location());
+    defer l.leave(saved);
     const literal_data = e.data.StructLiteral;
     const ref = l.g.resolutionOf(e).?.type;
     const struct_id = l.g.semantic.struct_table.idOf(ref).?;
@@ -557,9 +568,9 @@ fn structLiteral(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         const written = for (literal_data.fields) |f| {
             if (std.mem.eql(u8, f.name.lexeme, field.name)) break f;
         } else unreachable; // `validateLiteralFields` matched every field
-        out.* = try l.exprAs(written.value, field.hir_type) orelse return null;
+        out.* = try l.placedAs(written.value, field.hir_type, arena) orelse return null;
     }
-    return try l.define(.{ .struct_new = .{ .arena = try l.arena(), .fields = values } }, .{ .Struct = struct_id });
+    return try l.define(.{ .struct_new = .{ .arena = arena, .fields = values } }, .{ .Struct = struct_id });
 }
 
 /// Report every undeclared, missing or duplicate field of a struct literal.
@@ -686,10 +697,11 @@ fn doxaCall(l: *Lowering, id: ir.FunctionId, receiver: ?*ast.Expr, arguments: []
         if (member == .Array and member.Array.size != null) {
             // A fixed array keeps its buffer: the elements are copied back.
             const fixed = try l.readStorage(target, loan.target.data.Variable.lexeme);
-            try l.effect(.{ .array_copy_to_fixed = .{ .fixed = fixed, .array = lent } });
+            // What the callee stored belongs where the fixed array lives.
+            try l.effect(.{ .array_copy_to_fixed = .{ .fixed = fixed, .array = lent, .arena = try l.arenaOf(fixed) } });
             continue;
         }
-        try l.writeStorage(target, loan.target.data.Variable.lexeme, try l.convert(lent, loan.box_type, member));
+        try l.writeStorage(target, loan.target.data.Variable.lexeme, try l.convert(lent, loan.box_type, member), false);
     }
     return v;
 }
@@ -703,9 +715,11 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
     }
     const target = try l.g.storeTarget(&e.base);
     const slot_type = try l.g.lowerType(target.slot);
-    if (!slot_type.eql(param_type)) {
+    const element = !target.global and l.local(target.storage) == .element;
+    if (!slot_type.eql(param_type) or element) {
         // A member lent to a union parameter, or a fixed array to a dynamic
-        // one, goes through a converted temporary that is read back after.
+        // one, goes through a converted temporary that is read back after;
+        // so does an `each` element, which has no address of its own.
         const arena_value = try l.arena();
         const slot = try l.b.addSlot(param_type, arena_value);
         const ref = try l.b.define(.{ .slot_addr = slot }, .{ .ref = param_type });
@@ -732,8 +746,9 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
             try args.append(l.g.alloc, a.ref);
             try args.append(l.g.alloc, a.arena);
         },
-        // `collectLent` made every lent local a slot.
-        .ssa => unreachable,
+        // `collectLent` made every lent local a slot; an element went
+        // through a temporary above.
+        .ssa, .element => unreachable,
     }
 }
 
@@ -816,7 +831,8 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
                 const joined = try l.define(.{ .str_concat = .{ .arena = try l.arena(), .lhs = target, .rhs = tail } }, .String);
                 try storeBack(l, subject, joined, .String);
             } else {
-                const v = try l.exprAs(args[0], subject_type.Array.element.*) orelse return null;
+                const element = subject_type.Array.element.*;
+                const v = try l.stored(target, args[0], element) orelse return null;
                 try l.effect(.{ .array_push = .{ .array = target, .value = v } });
             }
             return try l.nothing();
@@ -841,7 +857,8 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
                 const joined = try l.define(.{ .str_insert = .{ .arena = try l.arena(), .string = target, .index = at, .insert = piece } }, .String);
                 try storeBack(l, subject, joined, .String);
             } else {
-                const v = try l.exprAs(args[1], subject_type.Array.element.*) orelse return null;
+                const element = subject_type.Array.element.*;
+                const v = try l.stored(target, args[1], element) orelse return null;
                 try l.effect(.{ .array_insert = .{ .array = target, .index = at, .value = v } });
             }
             return try l.nothing();

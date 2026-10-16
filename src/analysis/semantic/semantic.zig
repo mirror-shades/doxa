@@ -49,6 +49,7 @@ const ModuleRecord = graph_mod.ModuleRecord;
 const ModuleId = graph_mod.ModuleId;
 const ModuleLoader = @import("../../module/loader.zig").ModuleLoader;
 const resolution = @import("resolution.zig");
+const borrows = @import("borrows.zig");
 const Resolution = resolution.Resolution;
 
 /// A struct method's analyzer-level description. A private method is
@@ -140,6 +141,9 @@ pub const SemanticAnalyzer = struct {
     member_mutators: std.AutoHashMap(ParamRef, void),
     member_relays: std.ArrayListUnmanaged(struct { from: ParamRef, to: ParamRef }) = .empty,
     member_loans: std.ArrayListUnmanaged(MemberLoan) = .empty,
+    /// The `each ... in ^path` borrows live where the analysis is, innermost
+    /// last (`borrows.zig`).
+    borrows: std.ArrayListUnmanaged(borrows.Borrow) = .empty,
     /// The signatures whose bodies were analyzed, so whose `member_mutators`
     /// verdicts are known. A loan through any other signature — a copy held
     /// by a function value — cannot be checked.
@@ -234,6 +238,7 @@ pub const SemanticAnalyzer = struct {
         self.member_mutators.deinit();
         self.member_relays.deinit(self.allocator);
         self.member_loans.deinit(self.allocator);
+        self.borrows.deinit(self.allocator);
         self.union_alias_params.deinit();
         self.checked_signatures.deinit();
         self.bare_variants.deinit(self.allocator);
@@ -1543,6 +1548,9 @@ pub const SemanticAnalyzer = struct {
     /// other by the loader. The declaration still binds, so its uses resolve.
     pub fn checkFreshName(self: *SemanticAnalyzer, scope: *Scope, name: Token) void {
         if (scope == self.moduleScope(self.current_module)) return;
+        // A desugaring's own name (a nested `each` index) is no name the
+        // program spells, so it means nothing to the reader.
+        if (name.synthetic) return;
         const visible = if (scope.parent) |parent| parent.lookupVariable(name.lexeme) != null else false;
         if (!visible and !self.graph.record(self.current_module).bindings.contains(name.lexeme)) return;
         self.reporter.reportCompileError(

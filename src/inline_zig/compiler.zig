@@ -228,7 +228,10 @@ fn appendArrayAdapters(buf: *std.array_list.Managed(u8)) !void {
         "    while (__i < __value.len) : (__i += 1) {\n" ++
         "        if (__depth == 1) {\n" ++
         "            if (__tag == 3) {\n" ++
-        "                doxa_array_set_str(__h, @intCast(__i), __value[__i].ptr, __value[__i].len);\n" ++
+        "                var __p: ?[*]u8 = null;\n" ++
+        "                var __l: u64 = 0;\n" ++
+        "                doxa_str_clone(__scope, __value[__i].ptr, __value[__i].len, &__p, &__l);\n" ++
+        "                doxa_array_set_str(__h, @intCast(__i), __p, __l);\n" ++
         "            } else {\n" ++
         "                doxa_array_set_i64(__h, @intCast(__i), __doxa_scalar_bits(__T, __value[__i]));\n" ++
         "            }\n" ++
@@ -251,8 +254,8 @@ fn arrayParamPrelude(allocator: std.mem.Allocator, i: usize, arg_name: []const u
 }
 
 /// Copy the user function's returned slice into a fresh `ArrayHeader` in the
-/// caller's arena; string elements are cloned into that arena by
-/// `doxa_array_set_str`.
+/// caller's arena; string elements are cloned into that arena
+/// (`doxa_str_clone`) before `doxa_array_set_str` stores them.
 fn arrayReturnPostlude(allocator: std.mem.Allocator, info: ArrayInfo) ![]u8 {
     return std.fmt.allocPrint(allocator, "    const __doxa_arr = __doxa_build(__doxa_scope, {s}, {d}, {d}, {d}, __doxa_out);\n" ++
         "    return __doxa_arr;\n", .{ info.zig_type, info.depth, info.elem_tag, info.elem_size });

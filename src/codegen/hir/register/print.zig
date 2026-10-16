@@ -198,6 +198,7 @@ fn opName(op: ir.Op) []const u8 {
         .struct_new => "struct.new",
         .field_get => "field.get",
         .field_set => "field.set",
+        .arena_of => "arena_of",
         .slot_addr => "slot.addr",
         .load => "load",
         .store => "store",

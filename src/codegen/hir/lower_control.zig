@@ -65,7 +65,13 @@ pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
 
     switch (stmt.data) {
         .Expression => |maybe| if (maybe) |e| return try effect(l, e) != null,
-        .VarDecl => |decl| return varDecl(l, stmt, decl.name, decl.initializer),
+        .VarDecl => |decl| {
+            if (decl.place) {
+                try l.declareElement((try l.g.storeTarget(&stmt.base)).storage, decl.name.lexeme, decl.initializer.?);
+                return true;
+            }
+            return varDecl(l, stmt, decl.name, decl.initializer);
+        },
         .Return => |r| {
             _ = try returnFrom(l, r.value);
             return false;
@@ -104,14 +110,16 @@ fn varDecl(l: *Lowering, stmt: ast.Stmt, name: ast.Token, initializer: ?*ast.Exp
         if (init.data == .Array and init.data.Array.len == 0 and ty == .Array) break :blk try emptyArray(l, ty);
         break :blk try l.exprAs(init, ty) orelse return false;
     } else try defaultValue(l, ty, target.slot);
-    if (ir.isHeapType(ty)) try l.b.plainStore(value);
+    // B: a value another binding holds is copied, never shared.
+    const copy = if (initializer) |init| l.mustCopy(init, ty) else false;
 
     if (target.global) {
-        try l.declareGlobalStorage(target, name.lexeme, value);
+        try l.declareGlobalStorage(target, name.lexeme, value, copy);
     } else {
         // A token the parser synthesized (an `each` index) is not a name the
         // program spells.
-        try l.declareLocal(target.storage, if (name.synthetic) null else name.lexeme, ty, value, 0);
+        const owned = if (copy) try l.place(try l.arena(), value, ty, true) else value;
+        try l.declareLocal(target.storage, if (name.synthetic) null else name.lexeme, ty, owned, 0);
     }
     return true;
 }
@@ -278,6 +286,9 @@ pub fn returnFrom(l: *Lowering, value: ?*ast.Expr) Error!?ValueId {
     if (value) |e| {
         if (l.ret == .Nothing) {
             if (try l.expr(e) == null) return null;
+        } else if (l.caller != null and try l.builtInPlace(e, l.ret)) {
+            // A literal is built where it is returned to: the caller's arena.
+            v = try l.placedAs(e, l.ret, l.caller.?) orelse return null;
         } else {
             v = try l.exprAs(e, l.ret) orelse return null;
         }
@@ -286,7 +297,10 @@ pub fn returnFrom(l: *Lowering, value: ?*ast.Expr) Error!?ValueId {
     }
     if (!try l.runDefersTo(0)) return null;
     if (v) |result| {
-        if (l.caller) |caller| v = try l.rehome(caller, result, l.ret);
+        // B: returning a value a binding holds (a parameter, a global) copies
+        // it, so the caller never receives another binding's storage.
+        const copy = if (value) |e| l.mustCopy(e, l.ret) else false;
+        if (l.caller) |caller| v = try l.place(caller, result, l.ret, copy);
     }
     try l.exitArenas(0);
     try l.b.ret(v);

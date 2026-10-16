@@ -421,6 +421,9 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedInKeyword;
     }
     self.advance();
+    // `^path`: the body changes the elements through the binding.
+    const lent = self.peek().type == .CARET;
+    if (lent) self.advance();
     // The loop's own machinery (an unnamed index, its test and step) is
     // placed at what it iterates.
     const iterated = self.peek();
@@ -451,7 +454,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     }
     const body = try parseBlockStmt(self);
 
-    if (array_expr.?.data == .Range) {
+    if (array_expr.?.data == .Range and !lent) {
         const range = array_expr.?.data.Range;
         const item_type = ast.TypeInfo{ .base = .Int };
         const init_stmt = try self.allocator.create(ast.Stmt);
@@ -514,7 +517,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
 
     const item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
 
-    item_assign.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .VarDecl = .{ .name = item_name, .type_info = item_type, .initializer = arr_index_left, .is_public = false } } };
+    item_assign.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .VarDecl = .{ .name = item_name, .type_info = item_type, .initializer = arr_index_left, .is_public = false, .place = lent } } };
 
     var new_body = try self.allocator.alloc(ast.Stmt, body.len + 1);
     new_body[0] = item_assign.*;
@@ -524,7 +527,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     block_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Block = .{ .statements = new_body, .value = null } } };
 
     const loop_expr = try self.allocator.create(ast.Expr);
-    loop_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .step = step_expr, .body = block_expr } } };
+    loop_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .step = step_expr, .body = block_expr, .borrow = if (lent) array_expr.? else null } } };
 
     return ast.Stmt{
         .base = .{

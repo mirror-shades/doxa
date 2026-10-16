@@ -18,8 +18,6 @@
 //!   iteration reclaims. `landing` is `root`, `function`, or `loop <site>`
 //!   (an enclosing loop's arena); `cause` is `global <name>` when it is kept
 //!   by a global, else the copy reason or `allocated`.
-//! - `plain  <function>  <site>  <type>  binding|element  <mutated>` — a
-//!   copy B would add (step 14, `plain.zig`).
 
 const std = @import("std");
 const ir = @import("../codegen/hir/register/ir.zig");
@@ -29,7 +27,6 @@ const loops = @import("../codegen/hir/register/loops.zig");
 const print = @import("../codegen/hir/register/print.zig");
 const complexity = @import("complexity.zig");
 const report = @import("report.zig");
-const plain = @import("plain.zig");
 
 pub const header = "doxa-memory 1";
 
@@ -39,7 +36,6 @@ pub fn write(alloc: std.mem.Allocator, w: *std.Io.Writer, module: *const ir.Modu
         var facts = try verify.facts(alloc, &module.program, f) orelse continue;
         const rows: Rows = .{ .alloc = alloc, .w = w, .module = module, .f = f, .facts = &facts, .families = try arenas.Families.init(alloc, f) };
         try rows.function();
-        try plain.write(alloc, w, module, f);
     }
     const d = module.arena_decisions;
     for (d.removed_copies) |c| {
@@ -93,6 +89,7 @@ const Rows = struct {
             .root => try self.w.writeAll("the root arena\tnever"),
             .caller => try self.w.writeAll("the caller's arena\twhen the caller returns"),
             .alias => try self.w.writeAll("a ^ argument's arena\twhen its owner closes it"),
+            .held => try self.w.writeAll("its container's arena\twith its container"),
             .opened => try self.opened(arena),
         }
         try self.w.writeAll("\n");
@@ -187,7 +184,7 @@ const Rows = struct {
         } else return;
         switch (landing) {
             .root, .function, .outer_loop => {},
-            .iteration, .caller, .alias, .outer, .static => return,
+            .iteration, .caller, .alias, .held, .outer, .static => return,
         }
         try self.w.print("retain\t{s}\t", .{self.f.display_name});
         try site(self.w, self.module, inst.span);
@@ -302,7 +299,6 @@ pub fn writeText(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]
         };
     }
 
-    if (has(rows, "plain")) try writePlain(w, rows, sites);
 
     var opened: u64 = 0;
     for (rows) |r| if (eql(r.kind, "opened") and r.fields.len == 1) {
@@ -317,36 +313,6 @@ pub fn writeText(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]
         count(rows, "alloc"), opened + dropped, dropped, count(rows, "caller"),
         count(rows, "copy"),  clones,          count(rows, "copy") - clones, count(rows, "removed"),
     });
-}
-
-/// The copies B would add (`plain.zig`): each store, then the range. With a
-/// `--instrument=lines` run, each is weighted by how often its line ran.
-fn writePlain(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]const report.Site) !void {
-    try banner(w, "Copies B would add");
-    try w.writeAll("Stores of a value another binding still holds: B (plain stores copy) copies each.\n");
-    try w.writeAll("A row marked ! is followed by a mutation, so no elision removes its copy.\n\n");
-    var weighted = false;
-    if (sites) |all| for (all) |s| {
-        if (eql(s.kind, "line")) weighted = true;
-    };
-    var total = [2]u64{ 0, 0 };
-    var mutated = [2]u64{ 0, 0 };
-    for (rows) |r| if (eql(r.kind, "plain") and r.fields.len == 4) {
-        const is_mutated = eql(r.fields[3], "1");
-        const runs: u64 = if (weighted) report.lineCount(sites.?, r.fields[0]) else 0;
-        try w.print("  {s} {s}\t{s}\t{s}\t{s}", .{ if (is_mutated) "!" else " ", r.fields[0], r.function, r.fields[1], if (eql(r.fields[2], "element")) "stored into a container" else "bound to a variable" });
-        if (weighted) try w.print("\tran {d} time{s}", .{ runs, if (runs == 1) "" else "s" });
-        try w.writeAll("\n");
-        total[0] += 1;
-        total[1] += runs;
-        if (is_mutated) {
-            mutated[0] += 1;
-            mutated[1] += runs;
-        }
-    };
-    try w.print("\nB adds between {d} and {d} copies at {d} sites", .{ mutated[0], total[0], total[0] });
-    if (weighted) try w.print("; in this run, between {d} and {d} copies made", .{ mutated[1], total[1] });
-    try w.writeAll(".\n");
 }
 
 /// Where a retained value lands, and the fix the compiler knows of.

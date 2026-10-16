@@ -277,6 +277,10 @@ pub const Stmt = struct {
             initializer: ?*Expr,
             type_expr: ?*TypeExpr = null,
             is_public: bool = false,
+            /// The binding is a place, not a value: each use reads and writes the
+            /// element its initializer (an `Index`) names. The element of
+            /// `each n in ^path`.
+            place: bool = false,
         },
         FunctionDecl: struct {
             name: Token,
@@ -431,6 +435,9 @@ pub const Loop = struct {
     condition: ?*Expr = null,
     step: ?*Expr = null,
     body: *Expr,
+    /// What `each n in ^path` lends the body: `path`. Nothing else in the
+    /// body may write or lend it (`analysis/semantic/borrows.zig`).
+    borrow: ?*Expr = null,
 };
 
 pub const PeekExpr = struct {

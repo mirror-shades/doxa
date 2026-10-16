@@ -1001,8 +1001,8 @@ pub const ArrayHeader = extern struct {
     cap: u64,
     elem_size: u64,
     elem_tag: u64,
-    /// The scope arena this array was allocated in. Heap elements pushed into
-    /// the array are re-homed here so they survive the pushing scope's teardown.
+    /// The scope arena this array was allocated in (`arena_of`): the compiler
+    /// places every heap element stored into the array here first.
     scope: *Scope,
     /// For struct elements (tag 7) of a descriptor-free scalar struct, the
     /// struct's size in i64 words, so an element store copies it word for
@@ -1190,9 +1190,8 @@ fn structCloneScalarInto(scope: *Scope, word_count: usize, ptr: ?*anyopaque) ?*a
 /// `rehome` of a described struct, the one runtime-checked copy
 /// (`plan/register-hir.md`, "What stays a runtime check").
 /// Like `structCloneInto`, but keep the original pointer when its owning
-/// arena already outlives `scope` (same arena or an ancestor). That preserves
-/// identity for `each n in arr { n.field is ... }`: a snapshot clone would
-/// disconnect `n` from the array element.
+/// arena already outlives `scope` (same arena or an ancestor): a fresh value
+/// that already lives long enough is not copied.
 fn structRehomeInto(scope: *Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
     if (scope_arena.isEqualOrDescendant(scope, headerOf(src).scope)) return kept(src);
@@ -1494,22 +1493,49 @@ pub export fn doxa_array_copy_to_fixed_structs(src: *ArrayHeader, dst: [*]i64, c
 }
 
 /// Copy element `src_idx` of `src` to `dst_idx` of `dst`, whatever the
-/// element representation, re-homing a heap element into `dst`'s arena.
+/// element representation: a deep copy of a heap element into `dst`'s arena.
 fn copyElement(dst: *ArrayHeader, dst_idx: u64, src: *ArrayHeader, src_idx: u64) void {
     switch (src.elem_tag) {
         3 => {
             var str_ptr: ?[*]u8 = undefined;
             var str_len: u64 = undefined;
             doxa_array_get_str(src, src_idx, &str_ptr, &str_len);
+            strCloneInto(dst.scope, str_ptr, str_len, &str_ptr, &str_len);
             doxa_array_set_str(dst, dst_idx, str_ptr, str_len);
         },
         VALUE_TAG => {
             var value: DoxaValue = undefined;
             doxa_array_get_value(src, src_idx, &value);
+            cloneDoxaValueInto(dst.scope, &value);
             doxa_array_set_value(dst, dst_idx, &value);
+        },
+        ARRAY_TAG => {
+            const bits = doxa_array_get_i64(src, src_idx);
+            const inner: ?*ArrayHeader = if (bits == 0) null else @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(bits)))));
+            const copied: u64 = if (inner) |h| @intFromPtr(arrayCloneIn(dst.scope, h)) else 0;
+            doxa_array_set_i64(dst, dst_idx, @bitCast(copied));
+        },
+        7 => {
+            const bits = doxa_array_get_i64(src, src_idx);
+            const element: ?*anyopaque = if (bits == 0) null else @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(bits)))));
+            const copied: ?*anyopaque = if (element == null)
+                null
+            else if (src.elem_words != 0)
+                structCloneScalarInto(dst.scope, @intCast(src.elem_words), element)
+            else
+                structCloneInto(dst.scope, element.?);
+            doxa_array_set_i64(dst, dst_idx, @bitCast(@as(u64, if (copied) |c| @intFromPtr(c) else 0)));
         },
         else => doxa_array_set_i64(dst, dst_idx, doxa_array_get_i64(src, src_idx)),
     }
+}
+
+/// Move element `from` of `h` to `to`: the element stays in `h`'s arena, so
+/// nothing is copied.
+fn moveElement(h: *ArrayHeader, to: u64, from: u64) void {
+    const base: [*]u8 = @ptrCast(h.data.?);
+    const size: usize = @intCast(h.elem_size);
+    @memcpy(base[@as(usize, @intCast(to)) * size ..][0..size], base[@as(usize, @intCast(from)) * size ..][0..size]);
 }
 
 fn arrayCloneIn(scope: *Scope, src: *ArrayHeader) *ArrayHeader {
@@ -1609,6 +1635,10 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     };
 }
 
+/// Store element `idx`, growing the array to reach it. Every element store
+/// keeps its value as given: the compiler placed a heap element in the
+/// array's arena first (`arena_of`), and the runtime's own copies
+/// (`copyElement`) clone before they store.
 pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callconv(.c) void {
     const needed_len = idx + 1;
     if (!ensureArrayCapacity(hdr, needed_len)) return;
@@ -1639,28 +1669,8 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             const tp: *u8 = @ptrCast(p);
             tp.* = @intCast(@as(u8, @intCast(value)) & 0x3);
         },
-        6 => { // array (*ArrayHeader pointer encoded as bits)
-            const ap: *?*ArrayHeader = @ptrCast(@alignCast(p));
-            const addr: u64 = @bitCast(value);
-            ap.* = if (addr == 0)
-                null
-            else
-                arrayCloneIn(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))));
-        },
-        7 => { // struct (pointer encoded as bits)
-            const sp: *?*anyopaque = @ptrCast(@alignCast(p));
-            const addr: u64 = @bitCast(value);
-            const src: ?*anyopaque = if (addr == 0) null else @ptrFromInt(@as(usize, @intCast(addr)));
-            if (src == null) {
-                sp.* = null;
-            } else if (hdr.elem_words != 0) {
-                sp.* = structCloneScalarInto(hdr.scope, @intCast(hdr.elem_words), src);
-            } else {
-                sp.* = structCloneInto(hdr.scope, src.?);
-            }
-        },
-        // A scalar word. Every element is typed, so a struct element takes
-        // the tag-7 branch and nothing here is a pointer to re-home.
+        // An array, a struct (pointers as bits), or a scalar word: stored as
+        // given. A heap element is already placed in the array's arena.
         else => {
             const ip: *i64 = @ptrCast(@alignCast(p));
             ip.* = value;
@@ -1697,17 +1707,14 @@ pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const
     if (hdr.data == null and hdr.elem_size != 0) return;
     if (idx >= hdr.len) hdr.len = idx + 1;
     if (hdr.elem_tag != 3) return;
-    var cloned_ptr: ?[*]u8 = null;
-    var cloned_len: u64 = 0;
-    strCloneInto(hdr.scope, str_ptr, str_len, &cloned_ptr, &cloned_len);
     const base: [*]u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
     const ptr_slot: *i64 = @ptrCast(@alignCast(p));
     const len_slot: *i64 = @ptrCast(@alignCast(p + 8));
-    const addr: u64 = if (cloned_ptr) |vp| @intFromPtr(vp) else 0;
+    const addr: u64 = if (str_ptr) |vp| @intFromPtr(vp) else 0;
     ptr_slot.* = @bitCast(addr);
-    len_slot.* = @bitCast(@as(u64, cloned_len));
+    len_slot.* = @bitCast(@as(u64, str_len));
 }
 
 /// Read a union or group element (tag 9) into `out`. Out of range, or any
@@ -1721,16 +1728,13 @@ pub export fn doxa_array_get_value(hdr: *ArrayHeader, idx: u64, out: *DoxaValue)
     out.* = slots[@intCast(idx)];
 }
 
-/// Store a union or group element (tag 9), re-homing its heap payload into
-/// the array's own arena so it outlives the storing scope.
+/// Store a union or group element (tag 9), as `doxa_array_set_i64` stores.
 pub export fn doxa_array_set_value(hdr: *ArrayHeader, idx: u64, value: *const DoxaValue) callconv(.c) void {
     if (!ensureArrayCapacity(hdr, idx + 1)) return;
     if (hdr.data == null or hdr.elem_tag != VALUE_TAG) return;
     if (idx >= hdr.len) hdr.len = idx + 1;
-    var stored = value.*;
-    cloneDoxaValueInto(hdr.scope, &stored);
     const slots: [*]DoxaValue = @ptrCast(@alignCast(hdr.data.?));
-    slots[@intCast(idx)] = stored;
+    slots[@intCast(idx)] = value.*;
 }
 
 pub export fn doxa_array_concat(scope: *Scope, a: *ArrayHeader, b: *ArrayHeader) callconv(.c) *ArrayHeader {
@@ -1747,13 +1751,13 @@ pub export fn doxa_array_concat(scope: *Scope, a: *ArrayHeader, b: *ArrayHeader)
 /// The caller has already grown `h.len` by one.
 fn shiftUp(h: *ArrayHeader, pos: u64, old_len: u64) void {
     var i: u64 = old_len;
-    while (i > pos) : (i -= 1) copyElement(h, i, h, i - 1);
+    while (i > pos) : (i -= 1) moveElement(h, i, i - 1);
 }
 
 /// Close the gap at `pos` by moving every later element one place down.
 fn shiftDown(h: *ArrayHeader, pos: u64) void {
     var i: u64 = pos;
-    while (i + 1 < h.len) : (i += 1) copyElement(h, i, h, i + 1);
+    while (i + 1 < h.len) : (i += 1) moveElement(h, i, i + 1);
 }
 
 /// The insertion point for `idx` in `h`, with room for one more element, or
