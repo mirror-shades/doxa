@@ -1,0 +1,173 @@
+module std from @std()
+
+# What B (plain stores copy; only `^` shares) would cost, measured over the
+# test programs and the benchmarks (plan/diagnostics-and-observability.md,
+# step 14). Each program is built with `--emit-memory --instrument=lines`
+# and run once; `doxa report` names every store B would copy (its "Copies B
+# would add" section) and closes with the range this prints:
+#
+#   lower  copies followed by a mutation: no elision removes them
+#   upper  every store of a value another binding still holds
+#
+# both counted by site and, from the run's line counts, by copies made.
+# Nothing is changed; B is not adopted.
+#
+#   doxa run scripts/measure_b.doxa
+
+const cache is ".doxa-cache/measure-b"
+
+struct Range {
+    public name :: string,
+    public sites :: int,
+    public lower :: int,
+    public upper :: int,
+    public run_lower :: int,
+    public run_upper :: int,
+}
+
+# Windows wants backslashes in a command's program path.
+function nativeCommand(command :: string) returns string {
+    if not std.host.isWindows() then return command
+    var converted is ""
+    each c in command {
+        if c == "/" then {
+            converted += "\\"
+        } else {
+            converted += c
+        }
+    }
+    return converted
+}
+
+function lines(text :: string) returns string[] {
+    var out :: string[] is []
+    var line is ""
+    each c in text {
+        if c == "\n" then {
+            @push(out, line)
+            line is ""
+        } else if c != "\u{d}" then {
+            line += c
+        }
+    }
+    if @length(line) > 0 then @push(out, line)
+    return out
+}
+
+function startsWith(text :: string, prefix :: string) returns tetra {
+    if @length(text) < @length(prefix) then return false
+    return @slice(text, 0, @length(prefix)) == prefix
+}
+
+function contains(text :: string, needle :: string) returns tetra {
+    return @find(text, needle) >= 0
+}
+
+# The integers in `text`, in order.
+function numbers(text :: string) returns int[] {
+    var out :: int[] is []
+    var digits is ""
+    each c in text {
+        if c >= "0" and c <= "9" then {
+            digits += c
+        } else if @length(digits) > 0 then {
+            @push(out, @int(digits))
+            digits is ""
+        }
+    }
+    if @length(digits) > 0 then @push(out, @int(digits))
+    return out
+}
+
+# The program paths of `test/cases.zig` that run without input, arguments
+# or flags of their own and are not compile errors.
+function casePaths() returns string[] {
+    var paths :: string[] is []
+    const text is std.file.read("test/cases.zig") as string else {
+        std.io.println("cannot read test/cases.zig")
+        return paths
+    }
+    var path is ""
+    var usable is false
+    each line in lines(text) {
+        # An entry opens on a line of its own: four spaces, a dot and a brace.
+        if @length(line) == 6 and startsWith(line, "    .") then {
+            path is ""
+            usable is true
+        } else if line == "    }," then {
+            if usable and @length(path) > 0 and @find(paths, path) < 0 then @push(paths, path)
+            usable is false
+        } else if contains(line, ".path = \"") then {
+            const start is @find(line, "\"") + 1
+            path is @slice(line, start, @length(line) - start - 2)
+        } else if contains(line, ".mode = .reject") or contains(line, ".input = ") or contains(line, ".extra_args = ") or contains(line, ".build_args = ") then {
+            usable is false
+        }
+    }
+    return paths
+}
+
+function stemOf(path :: string) returns string {
+    var start is 0
+    each c at i in path {
+        if c == "/" then start is i + 1
+    }
+    return @slice(path, start, @length(path) - start - 5)
+}
+
+# Build, run and report one program; false when it does not build.
+function measure(path :: string, ^range :: Range) returns tetra {
+    const build is nativeCommand("./doxa/bin/doxa run {path} --emit-memory --instrument=lines --cache-dir={cache}")
+    # A program may exit non-zero on purpose; its counts are written anyway.
+    std.process.execCapture(build) as string else ""
+    const report is std.process.execCapture(nativeCommand("./doxa/bin/doxa report {stemOf(path)} --cache-dir={cache}")) as string else {
+        return false
+    }
+    range.name is path
+    each line in lines(report) {
+        if startsWith(line, "B adds between ") then {
+            const n is numbers(line)
+            range.lower is n[0]
+            range.upper is n[1]
+            range.sites is n[2]
+            if @length(n) >= 5 then {
+                range.run_lower is n[3]
+                range.run_upper is n[4]
+            }
+        }
+    }
+    return true
+}
+
+function row(r :: Range) {
+    std.io.println("{r.sites}\t{r.lower}-{r.upper}\t{r.run_lower}-{r.run_upper}\t{r.name}")
+}
+
+function table(title :: string, paths :: string[]) {
+    std.io.println("")
+    std.io.println("{title}")
+    std.io.println("sites\tcopies (lower-upper)\tmade in the run (lower-upper)\tprogram")
+    var total is $Range { name is "total", sites is 0, lower is 0, upper is 0, run_lower is 0, run_upper is 0 }
+    var skipped is 0
+    each path in paths {
+        var r is $Range { name is path, sites is 0, lower is 0, upper is 0, run_lower is 0, run_upper is 0 }
+        if not measure(path, ^r) then {
+            skipped += 1
+            continue
+        }
+        if r.sites > 0 then row(r)
+        total.sites += r.sites
+        total.lower += r.lower
+        total.upper += r.upper
+        total.run_lower += r.run_lower
+        total.run_upper += r.run_upper
+    }
+    row(total)
+    std.io.println("{@length(paths) - skipped} programs measured, {skipped} that did not build skipped; programs with no such store are not listed")
+}
+
+entry function main() {
+    table("Test programs (test/cases.zig)", casePaths())
+    const benchmarks is ["test/benchmark/d-src/arr.doxa", "test/benchmark/d-src/call.doxa", "test/benchmark/d-src/fib.doxa", "test/benchmark/d-src/matrix.doxa", "test/benchmark/d-src/mb.doxa", "test/benchmark/d-src/sieve.doxa", "test/benchmark/d-src/struct.doxa", "test/benchmark/d-src/vec.doxa"]
+    table("Benchmarks (test/benchmark/d-src)", benchmarks)
+}

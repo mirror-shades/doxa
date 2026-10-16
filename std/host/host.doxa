@@ -1,4 +1,7 @@
+module error from "../error.doxa"
+
 zig Host {
+    const std = @import("std");
     const builtin = @import("builtin");
 
     pub fn osName() []const u8 {
@@ -11,6 +14,16 @@ zig Host {
 
     pub fn abiName() []const u8 {
         return @tagName(builtin.abi);
+    }
+
+    /// The model of the CPU executing this call, detected at run time. Not
+    /// `builtin.cpu`: that is the CPU the program was compiled for, which a
+    /// baseline or cross build leaves generic and a binary moved between
+    /// machines makes stale.
+    pub fn cpuName() @"DoxaError_error.Common"![]const u8 {
+        const query: std.Target.Query = .{ .cpu_model = .native };
+        const resolved = std.zig.system.resolveTargetQuery(std.Io.Threaded.global_single_threaded.io(), query) catch return error.NotSupported;
+        return resolved.cpu.model.name;
     }
 
     pub fn isWindows() bool {
@@ -36,6 +49,13 @@ public function arch() returns string {
 
 public function abi() returns string {
     return Host.abiName();
+}
+
+# The model of the CPU running the program (e.g. `"znver4"`), detected when
+# called rather than fixed when compiled; `error.Common.NotSupported` when the
+# host cannot be probed.
+public function cpu() returns string | error.StdError {
+    return Host.cpuName()
 }
 
 public function isWindows() returns tetra {

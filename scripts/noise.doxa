@@ -38,16 +38,32 @@ function contains(names :: string[], needle :: string) returns tetra {
     return found
 }
 
+# A field as the log writes it, after its `, ` separator.
+function column(fields :: string[], index :: int) returns string {
+    const text is fields[index]
+    if @length(text) > 0 and text[0] == " " then {
+        return @slice(text, 1, @length(text) - 1)
+    }
+    return text
+}
+
 # Record a complete CSV row if it falls inside the campaign window.
-# `fields` is the row in log column order; rows that are not nine columns
-# wide (the header) or predate the window are counted by the caller.
-function takeRow(fields :: string[], since :: int, ^order :: string[], ^names :: string[], ^pcts :: float[], ^kept :: int) {
-    if @length(fields) != 9 or fields[0] == "test" then {
+# `fields` is the row in log column order; rows that are not thirteen columns
+# wide, the header, rows that predate the window, and rows whose outputs did
+# not match C (`match` false: the timing is not of the same computation) are
+# counted by the caller. Each kept row's build (`commit`, `host`, `opt`) is
+# collected, so a window spanning two builds shows.
+function takeRow(fields :: string[], since :: int, ^order :: string[], ^names :: string[], ^pcts :: float[], ^builds :: string[], ^kept :: int) {
+    if @length(fields) != 13 or fields[0] == "test" then {
         return
     }
     const date is @int(fields[8])
-    if date < since then {
+    if date < since or column(fields, 12) == "false" then {
         return
+    }
+    const build is "{column(fields, 9)} {column(fields, 10)} {column(fields, 11)}"
+    if not contains(builds, build) then {
+        @push(builds, build)
     }
     const test is fields[0]
     @push(names, test)
@@ -91,6 +107,7 @@ public entry function main() {
     var order :: string[]
     var names :: string[]
     var pcts :: float[]
+    var builds :: string[]
     var fields :: string[]
     var field is ""
     var kept is 0
@@ -105,7 +122,7 @@ public entry function main() {
             @push(fields, field)
             field is ""
             seen += 1
-            takeRow(fields, since, ^order, ^names, ^pcts, ^kept)
+            takeRow(fields, since, ^order, ^names, ^pcts, ^builds, ^kept)
             @clear(fields)
         }
         else if c != "\u{d}" then {
@@ -116,10 +133,18 @@ public entry function main() {
     if @length(field) > 0 then {
         @push(fields, field)
         seen += 1
-        takeRow(fields, since, ^order, ^names, ^pcts, ^kept)
+        takeRow(fields, since, ^order, ^names, ^pcts, ^builds, ^kept)
     }
 
     std.io.println("window: date >= {since}   rows kept: {kept} of {seen}   ({path})")
+    # A noise floor is one build's spread; more than one build here means the
+    # window mixes real changes into it.
+    each build in builds {
+        std.io.println("build: {build}")
+    }
+    if @length(builds) > 1 then {
+        std.io.println("warning: the window spans {@length(builds)} builds; its spread is not a noise floor")
+    }
     std.io.println("test\t| n\t| min\t| max\t| spread\t| max step\t| mean\t| series")
 
     var worst_spread is 0.0

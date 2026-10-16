@@ -1,0 +1,40 @@
+# Numeric limits.
+#
+# `+`, `-` and `*` on `int` and `byte` fault on overflow and underflow in every
+# build mode; `+%`, `-%` and `*%` wrap instead (`docs/math.md`). Each limit is
+# a constant expression, so a call folds to its value.
+
+# The largest `int`, 9223372036854775807.
+public function maxInt() returns int {
+    return 9223372036854775807
+}
+
+# The smallest `int`, -9223372036854775808.
+public function minInt() returns int {
+    return -9223372036854775807 - 1
+}
+
+# The largest finite `float`, about 1.7976931348623157e308.
+public function maxFloat() returns float {
+    return 1.7976931348623157e308
+}
+
+# The smallest finite `float`: the negation of `maxFloat()`.
+public function minFloat() returns float {
+    return -1.7976931348623157e308
+}
+
+# The smallest positive normal `float`, about 2.2250738585072014e-308.
+public function minNormalFloat() returns float {
+    return 2.2250738585072014e-308
+}
+
+# The largest `byte`, 0xFF.
+public function maxByte() returns byte {
+    return 0xFF
+}
+
+# The smallest `byte`, 0x00.
+public function minByte() returns byte {
+    return 0x00
+}
