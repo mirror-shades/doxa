@@ -3,6 +3,9 @@ module std from @std()
 
 const ns_per_s is 1_000_000_000
 
+# The clang level both sides compile at; recorded in every stats.csv row.
+const opt_level is 2
+
 const tests is [
     # smoke tests
     "fib",
@@ -16,117 +19,177 @@ const tests is [
     "vec"
 ]
 
-struct CompileStats {
-    public c_compile_time :: int[],
-    public d_compile_time :: int[],
-}
-
+# One workload's measurements, one entry per run, in run order.
+# wall: the whole exec, measured by sample()
+# compute: the elapsed time the benchmark binary reports itself
 struct Result {
     public test :: string,
-    public runs :: int,
-    public user_time_d :: int,
-    public user_time_c :: int,
-    public kernel_time_d :: int,
-    public kernel_time_c :: int,
+    public wall_d :: int[],
+    public wall_c :: int[],
+    public compute_d :: int[],
+    public compute_c :: int[],
+    public compile_d :: int,
+    public compile_c :: int,
     public is_match :: tetra,
-    
-    public function new(test :: string, runs :: int, user_time_d :: int, user_time_c :: int, kernel_time_d :: int, kernel_time_c :: int, is_match :: tetra) returns Result {
-        return $Result {
-            test is test,
-            runs is runs,
-            user_time_d is user_time_d,
-            user_time_c is user_time_c,
-            kernel_time_d is kernel_time_d,
-            kernel_time_c is kernel_time_c,
-            is_match is is_match,
+}
+
+# A benchmark binary prints exactly `<elapsed ns>, <checksum>`. Splits at the
+# one comma; anything else is a protocol violation and fails the run.
+function parseOutput(output :: string, ^elapsed :: int, ^checksum :: string) returns tetra {
+    var comma is -1
+    each c at i in output {
+        if c == "," then {
+            if comma >= 0 then return false
+            comma is i
         }
     }
+    if comma < 0 then return false
+    elapsed is @int(@slice(output, 0, comma))
+    checksum is trim(@slice(output, comma + 1, @length(output) - comma - 1))
+    return true
 }
 
-#handle globally because we will reuse the same stats for all results
-var compile_stats is $CompileStats {
-    c_compile_time is [],
-    d_compile_time is [],
+function trim(text :: string) returns string {
+    var start is 0
+    var end is @length(text)
+    while start < end and isSpace(text[start]) do start += 1 {}
+    while end > start and isSpace(text[end - 1]) do end -= 1 {}
+    return @slice(text, start, end - start)
 }
 
-function runSuite(runs :: int, ^results :: Result[]) {
+function isSpace(c :: string) returns tetra {
+    return c == " " or c == "\n" or c == "\u{D}" or c == "\t"
+}
 
-    std.io.println("Compiling benchmarks...")
+# Compiles one benchmark source; returns the wall time in ns, or -1 on failure.
+function timeCompile(command :: string) returns int {
+    const start is std.time.monotonic()
+    const code is std.process.exec(nativeCommand(command)) as int else {
+        std.io.println("Error executing command: {command}")
+        return -1
+    }
+    const end is std.time.monotonic()
+    if code != 0 then {
+        std.io.println("Command exited with status {code}: {command}")
+        return -1
+    }
+    return end - start
+}
 
-    # Compile C with `zig cc` — the exact toolchain Doxa uses internally for
-    # .ll -> .o (see main.zig). Both sides are given the host CPU explicitly
-    # (`-mcpu=native`): Doxa's native path passes an explicit `-target`, which
-    # makes `zig cc` stop auto-detecting the host CPU, so the compiler adds
-    # `-mcpu=native` for native builds itself. Naming it on the C side too keeps
-    # the target-feature set identical (no SSE2-vs-AVX2 confound).
-    # -ffp-contract=off is passed to both so neither forms FMAs the other
-    # cannot, keeping floating-point results bit-identical.
-    # zig cc does not auto-append .exe on Windows, so add it explicitly there.
+function doxaCompile(src :: string, out :: string) returns string {
+    return "./doxa/bin/doxa compile {src} -o {out} --opt={opt_level}"
+}
+
+# Compile C with `zig cc` — the exact toolchain Doxa uses internally for
+# .ll -> .o (see main.zig). Both sides are given the host CPU explicitly
+# (`-mcpu=native`): Doxa's native path passes an explicit `-target`, which
+# makes `zig cc` stop auto-detecting the host CPU, so the compiler adds
+# `-mcpu=native` for native builds itself. Naming it on the C side too keeps
+# the target-feature set identical (no SSE2-vs-AVX2 confound).
+# -ffp-contract=off is passed to both so neither forms FMAs the other
+# cannot, keeping floating-point results bit-identical.
+# zig cc does not auto-append .exe on Windows, so add it explicitly there.
+function cCompile(src :: string, out :: string) returns string {
     var exe_suffix is ""
     if std.host.isWindows() then {
         exe_suffix is ".exe"
     }
+    return "zig cc {src} -o {out}{exe_suffix} -O{opt_level} -mcpu=native -ffp-contract=off"
+}
 
-    const warmup is tests[0]
-    std.process.exec(nativeCommand("./doxa/bin/doxa compile test/benchmark/d-src/{warmup}.doxa -o test/benchmark/d-bin/{warmup} --opt=2"))
-    std.process.exec(nativeCommand("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -mcpu=native -ffp-contract=off"))
+# Runs one binary once, adding its wall and self-reported compute time.
+function sample(command :: string, ^wall :: int[], ^compute :: int[], ^checksum :: string) returns tetra {
+    const start is std.time.tick()
+    const output is std.process.execCapture(nativeCommand(command)) as string else {
+        std.io.println("Error executing command: {command}: {output}")
+        return false
+    }
+    const end is std.time.tick()
+    var elapsed is 0
+    if not parseOutput(output, ^elapsed, ^checksum) then {
+        std.io.println("Malformed benchmark output from {command}: {output}")
+        return false
+    }
+    @push(wall, end - start)
+    @push(compute, elapsed)
+    return true
+}
 
+# Returns false when any compile or run fails; the results are then unusable.
+function runSuite(runs :: int, ^results :: Result[]) returns tetra {
+
+    std.io.println("Compiling benchmarks...")
+
+    # Prime both toolchains (Doxa's runtime object, zig's C runtime) with a
+    # program outside the measured set, so every workload's compile is timed
+    # from the same state: shared parts cached, its own code compiled cold.
+    if timeCompile(doxaCompile("test/benchmark/warmup/warmup.doxa", "test/benchmark/d-bin/warmup")) < 0 then return false
+    if timeCompile(cCompile("test/benchmark/warmup/warmup.c", "test/benchmark/c-bin/warmup")) < 0 then return false
+
+    var compiles_d :: int[]
+    var compiles_c :: int[]
     each test in tests {
-        const d_compile_start_time is std.time.monotonic()
-        std.process.exec(nativeCommand("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2"))
-        const d_compile_end_time is std.time.monotonic()
-        @push(compile_stats.d_compile_time, d_compile_end_time - d_compile_start_time)
-        const c_compile_start_time is std.time.monotonic()
-            std.process.exec(nativeCommand("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -mcpu=native -ffp-contract=off"))
-        const c_compile_end_time is std.time.monotonic()
-        @push(compile_stats.c_compile_time, c_compile_end_time - c_compile_start_time)
+        const compile_d is timeCompile(doxaCompile("test/benchmark/d-src/{test}.doxa", "test/benchmark/d-bin/{test}"))
+        if compile_d < 0 then return false
+        @push(compiles_d, compile_d)
+        const compile_c is timeCompile(cCompile("test/benchmark/c-src/{test}.c", "test/benchmark/c-bin/{test}"))
+        if compile_c < 0 then return false
+        @push(compiles_c, compile_c)
     }
 
     std.io.println("Running benchmarks...")
 
-    each test in tests {
-        # Totals accumulated across runs; averaged at report time.
-        var user_time_d is 0
-        var user_time_c is 0
-        var kernel_time_d is 0
-        var kernel_time_c is 0
+    each test at index in tests {
+        var wall_d :: int[]
+        var wall_c :: int[]
+        var compute_d :: int[]
+        var compute_c :: int[]
         var is_match is true
         each run in 0 to runs - 1 {
-            # user time: wall time of the whole exec, measured by timeExec
-            # kernel time: the elapsed time the benchmark binary reports itself
-            const output_d is timeExec("./test/benchmark/d-bin/{test}", ^user_time_d)
-            const output_c is timeExec("./test/benchmark/c-bin/{test}", ^user_time_c)
-            const split_d_output is split(output_d)
-            const split_c_output is split(output_c)
-            kernel_time_d += @int(split_d_output[0])
-            kernel_time_c += @int(split_c_output[0])
-            is_match is is_match and matchOutput(split_c_output[1], split_d_output[1])
+            var checksum_d is ""
+            var checksum_c is ""
+            # Alternate which side runs first, so neither always inherits the
+            # other's thermal and cache state.
+            if run % 2 == 0 then {
+                if not sample("./test/benchmark/d-bin/{test}", ^wall_d, ^compute_d, ^checksum_d) then return false
+                if not sample("./test/benchmark/c-bin/{test}", ^wall_c, ^compute_c, ^checksum_c) then return false
+            } else {
+                if not sample("./test/benchmark/c-bin/{test}", ^wall_c, ^compute_c, ^checksum_c) then return false
+                if not sample("./test/benchmark/d-bin/{test}", ^wall_d, ^compute_d, ^checksum_d) then return false
+            }
+            if not matchOutput(checksum_c, checksum_d) then is_match is false
         }
-        @push(results, Result.new(test, runs, user_time_d, user_time_c, kernel_time_d, kernel_time_c, is_match))
+        @push(results, $Result {
+            test is test,
+            wall_d is wall_d,
+            wall_c is wall_c,
+            compute_d is compute_d,
+            compute_c is compute_c,
+            compile_d is compiles_d[index],
+            compile_c is compiles_c[index],
+            is_match is is_match,
+        })
     }
     std.io.println("Completed {runs} runs")
+    return true
 }
 
-function split(output :: string) returns string[] {
-    var result :: string[]
-    var current is ""
-    each c in output {
-        if c == "," then {
-            @push(result, current)
-            current is ""
-        }
-        else if c == " " then {}
-        else {
-            current += c
-        }
+function sum(values :: int[]) returns int {
+    var total is 0
+    each v in values {
+        total += v
     }
-    @push(result, current)
-    return result
+    return total
 }
 
-# Convert a total nanosecond count into an average in seconds across runs.
-function averageSeconds(total_ns :: int, runs :: int) returns float {
-    return @float(total_ns) / @float(ns_per_s) / @float(runs)
+# Mean of nanosecond samples, in seconds.
+function meanSeconds(samples :: int[]) returns float {
+    return @float(sum(samples)) / @float(ns_per_s) / @float(@length(samples))
+}
+
+# Mean wall time outside the measured region, in seconds.
+function meanOverhead(wall :: int[], compute :: int[]) returns float {
+    return @float(sum(wall) - sum(compute)) / @float(ns_per_s) / @float(@length(wall))
 }
 
 # Percentage of d relative to the C baseline; guarded against a zero baseline.
@@ -137,67 +200,83 @@ function percentVsC(c_value :: float, d_value :: float) returns float {
     return 0.0
 }
 
-function compare(result :: Result, index :: int) {
-    # kernel time is the benchmark's own measured compute time (apples-to-apples)
-    const c_compute is averageSeconds(result.kernel_time_c, result.runs)
-    const d_compute is averageSeconds(result.kernel_time_d, result.runs)
-    # user time only reflects process/runtime overhead outside the measured loop
-    const c_overhead is averageSeconds(result.user_time_c - result.kernel_time_c, result.runs)
-    const d_overhead is averageSeconds(result.user_time_d - result.kernel_time_d, result.runs)
+# `part` as a percentage of `whole`; guarded against a zero whole.
+function percentOf(part :: float, whole :: float) returns float {
+    if whole > 0.0 then {
+        return part / whole * 100
+    }
+    return 0.0
+}
 
-    const d_compute_pct is percentVsC(c_compute, d_compute)
+function compare(result :: Result) {
+    # compute time is the benchmark's own measured time (apples-to-apples)
+    const c_compute is meanSeconds(result.compute_c)
+    const d_compute is meanSeconds(result.compute_d)
+    # overhead only reflects process/runtime cost outside the measured loop
+    const c_overhead is meanOverhead(result.wall_c, result.compute_c)
+    const d_overhead is meanOverhead(result.wall_d, result.compute_d)
 
-    # name, matches, doxa runtime, c runtime, +-%, doxa overhead n(%), c overhead n(%), doxa compile time, c compile time, +-%
+    # The spread of the per-run percentages: a mean delta inside it is noise.
+    var low is 0.0
+    var high is 0.0
+    each c_ns at i in result.compute_c {
+        const pct is percentVsC(@float(c_ns), @float(result.compute_d[i]))
+        if i == 0 or pct < low then low is pct
+        if i == 0 or pct > high then high is pct
+    }
+
+    # name, matches, doxa runtime, c runtime, +-%, per-run range, doxa overhead n(%), c overhead n(%), doxa compile time, c compile time, +-%
     @print("{result.test}\t| ")
     @print("match: {result.is_match}\t| ")
     @print("{roundToString(d_compute, 4)}s\t| ")
     @print("{roundToString(c_compute, 4)}s\t| ")
-    @print("{roundToString(d_compute_pct, 2)}%   \t| ")
-    @print("{roundToString(d_overhead, 4)}s ({roundToString((result.user_time_d - result.kernel_time_d) / result.kernel_time_d * 100, 2)}%)\t| ")
-    @print("{roundToString(c_overhead, 4)}s ({roundToString((result.user_time_c - result.kernel_time_c) / result.kernel_time_c * 100, 2)}%)\t| ")
-    # compile time is measured once per test (not per run), so convert ns -> s with runs = 1
-    const d_compile is averageSeconds(compile_stats.d_compile_time[index], 1)
-    const c_compile is averageSeconds(compile_stats.c_compile_time[index], 1)
+    @print("{roundToString(percentVsC(c_compute, d_compute), 2)}%   \t| ")
+    @print("{roundToString(low, 2)}..{roundToString(high, 2)}%\t| ")
+    @print("{roundToString(d_overhead, 4)}s ({roundToString(percentOf(d_overhead, d_compute), 2)}%)\t| ")
+    @print("{roundToString(c_overhead, 4)}s ({roundToString(percentOf(c_overhead, c_compute), 2)}%)\t| ")
+    const d_compile is @float(result.compile_d) / @float(ns_per_s)
+    const c_compile is @float(result.compile_c) / @float(ns_per_s)
     @print("{roundToString(d_compile, 4)}s\t| ")
     @print("{roundToString(c_compile, 4)}s\t| ")
     std.io.println("{roundToString(percentVsC(c_compile, d_compile), 2)}%")
 }
 
+# `value` rounded half away from zero to `precision` decimals, always printed
+# with exactly that many.
 function roundToString(value :: float, precision :: int) returns string {
-    var str_value is @string(value)
-    var decimal_index is -1
-    each char at i in str_value {
-        if decimal_index < 0 then {
-            if char == "." then decimal_index is i
-        }
+    var scale is 1
+    each i in 1 to precision {
+        scale *= 10
     }
-    if(@length(str_value) < decimal_index + precision + 1) then {
-        const diff is decimal_index + precision + 1 - @length(str_value)
-        each i in 0 to diff - 1 {
-            str_value += "0"
-        }
-        return str_value
+    var magnitude is value
+    var sign is ""
+    if value < 0.0 then {
+        magnitude is 0.0 - value
     }
-    # otherwise just slice the string and return the truncated value
-    return @slice(str_value, 0, decimal_index+precision+1)
+    const scaled is @int(magnitude * @float(scale) + 0.5)
+    if value < 0.0 and scaled != 0 then sign is "-"
+    if precision == 0 then return "{sign}{scaled}"
+    var fraction is "{scaled % scale}"
+    while @length(fraction) < precision { fraction is "0" + fraction }
+    return "{sign}{scaled // scale}.{fraction}"
 }
 
 function matchOutput(c_output :: string, d_output :: string) returns tetra {
-    if(c_output != d_output) then {
-        const c_len is @length(c_output)
-        const d_len is @length(d_output)
-        if c_len != d_len then {
-            std.io.println("Output length mismatch: c:{c_len} != d:{d_len}")
-        }
-        each c at i in c_output {
-            if c != d_output[i] then {
-                std.io.println("Output mismatch at index {i}: c:{c} != d:{d_output[i]}")
-            }
-        }
-        std.io.println("Output mismatch c:{c_output} != d:{d_output}")
-        return false
+    if c_output == d_output then return true
+    const c_len is @length(c_output)
+    const d_len is @length(d_output)
+    if c_len != d_len then {
+        std.io.println("Output length mismatch: c:{c_len} != d:{d_len}")
     }
-    return true
+    var shared is c_len
+    if d_len < shared then shared is d_len
+    each i in 0 to shared - 1 {
+        if c_output[i] != d_output[i] then {
+            std.io.println("Output mismatch at index {i}: c:{c_output[i]} != d:{d_output[i]}")
+        }
+    }
+    std.io.println("Output mismatch c:{c_output} != d:{d_output}")
+    return false
 }
 
 function nativeCommand(command :: string) returns string {
@@ -213,64 +292,81 @@ function nativeCommand(command :: string) returns string {
     return converted
 }
 
-function timeExec(command :: string, ^time :: int) returns string {
-    const startTime is std.time.tick()
-    const output is std.process.execCapture(nativeCommand(command)) as string else {
-        std.io.println("Error executing command: {command}")
-        return ""
+# The compiler build being measured: the checkout's commit, `-dirty` when
+# tracked files differ from it (the binary then holds uncommitted source).
+function compilerCommit() returns string {
+    const head is std.process.execCapture("git rev-parse --short=12 HEAD") as string else {
+        return "unknown"
     }
-    const endTime is std.time.tick()
-    time += (endTime - startTime)
-    return output
+    const changes is std.process.execCapture("git status --porcelain --untracked-files=no") as string else {
+        return "unknown"
+    }
+    if @length(trim(changes)) > 0 then return "{trim(head)}-dirty"
+    return trim(head)
 }
 
-function writeStats(^results :: Result[]) {
+# Returns false when the log's header is not this schema; nothing is appended.
+function writeStats(^results :: Result[]) returns tetra {
     const path is "test/benchmark/stats.csv"
-    const header is "test, runs, c_compute, d_compute, c_overhead, d_overhead, compute_pct, compute_delta, date\n"
+    const header is "test, runs, c_compute, d_compute, c_overhead, d_overhead, compute_pct, compute_delta, date, commit, host, opt, match\n"
 
     if not std.file.exists(path) then {
         std.file.write(path, header)
     }
+    const log is std.file.read(path) as string else {
+        std.io.println("Cannot read {path}")
+        return false
+    }
+    if @slice(log, 0, @length(header)) != header then {
+        std.io.println("{path} does not start with the current header; refusing to append:\n{header}")
+        return false
+    }
+    const commit is compilerCommit()
+    const cpu is std.host.cpu() as string else "unknown"
+    const host is "{std.host.os()}-{std.host.arch()}-{cpu}"
+    const date is std.time.unix()
     each result in results {
-        const c_compute is averageSeconds(result.kernel_time_c, result.runs)
-        const d_compute is averageSeconds(result.kernel_time_d, result.runs)
-        const c_overhead is averageSeconds(result.user_time_c - result.kernel_time_c, result.runs)
-        const d_overhead is averageSeconds(result.user_time_d - result.kernel_time_d, result.runs)
+        const c_compute is meanSeconds(result.compute_c)
+        const d_compute is meanSeconds(result.compute_d)
+        const c_overhead is meanOverhead(result.wall_c, result.compute_c)
+        const d_overhead is meanOverhead(result.wall_d, result.compute_d)
         const compute_pct is percentVsC(c_compute, d_compute)
         const compute_delta is d_compute - c_compute
-        std.file.append(path, "{result.test}, {result.runs}, {@float(roundToString(c_compute, 4))}, {@float(roundToString(d_compute, 4))}, {@float(roundToString(c_overhead, 4))}, {@float(roundToString(d_overhead, 4))}, {@float(roundToString(compute_pct, 2))}, {@float(roundToString(compute_delta, 4))}, {std.time.unix()}\n")
+        std.file.append(path, "{result.test}, {@length(result.compute_d)}, {roundToString(c_compute, 4)}, {roundToString(d_compute, 4)}, {roundToString(c_overhead, 4)}, {roundToString(d_overhead, 4)}, {roundToString(compute_pct, 2)}, {roundToString(compute_delta, 4)}, {date}, {commit}, {host}, O{opt_level}, {result.is_match}\n")
     }
+    return true
 
 }
 
-function prepareEnv() {
+function prepareEnv() returns tetra {
     if std.file.isDir("test/benchmark/d-bin") then {
         const result is std.file.delete("test/benchmark/d-bin", true) as nothing else {
             std.io.println("Failed to remove d-bin: {result}")
-            return
+            return false
         }
     }
     if std.file.isDir("test/benchmark/c-bin") then {
         const result is std.file.delete("test/benchmark/c-bin", true) as nothing else {
             std.io.println("Failed to remove c-bin: {result}")
-            return
+            return false
         }
     }
     std.file.makeDir("test/benchmark/d-bin") as nothing else {
         std.io.println("Failed to create d-bin")
-        return
+        return false
     }
     std.file.makeDir("test/benchmark/c-bin") as nothing else {
         std.io.println("Failed to create c-bin")
-        return
+        return false
     }
+    return true
 }
 
 function printResults(^results :: Result[]) {
-    std.io.println("test\t| matches\t| doxa runtime\t| c runtime\t| runtime %\t| doxa overhead\t\t| c overhead\t\t| doxa compile\t| c compile\t| compile %")
-    std.io.println("---------------------------------------------------------------------------------------------------------------------------------------------------------------")
-    each result at index in results {
-        compare(result, index)
+    std.io.println("test\t| matches\t| doxa runtime\t| c runtime\t| runtime %\t| per-run %\t| doxa overhead\t\t| c overhead\t\t| doxa compile\t| c compile\t| compile %")
+    std.io.println("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+    each result in results {
+        compare(result)
     }
 }
 
@@ -281,6 +377,7 @@ public entry function suite() {
 
     const args is std.process.args() as string[] else {
         std.io.println("Error getting arguments")
+        std.process.exit(1)
         return
     }
     each arg at i in args {
@@ -293,10 +390,22 @@ public entry function suite() {
             write is true
         }
     }
-    prepareEnv()
-    runSuite(runs, ^results)
+    if runs < 1 then {
+        std.io.println("--runs must be at least 1, got {runs}")
+        std.process.exit(1)
+        return
+    }
+    if not prepareEnv() then {
+        std.process.exit(1)
+        return
+    }
+    if not runSuite(runs, ^results) then {
+        std.io.println("Benchmark suite aborted; nothing written")
+        std.process.exit(1)
+        return
+    }
     printResults(^results)
     if write then {
-        writeStats(^results)
+        if not writeStats(^results) then std.process.exit(1)
     }
 }

@@ -1,0 +1,36 @@
+# Heap values pushed into a caller's array through a `^` parameter land in
+# the array's arena, so they outlive the callee that made them.
+struct Item {
+    public tag :: string,
+}
+
+function addStrings(^out :: string[], n :: int) {
+    for i while i < n do i += 1 {
+        @push(out, "item-{i}")
+    }
+}
+
+function addArrays(^out :: int[][], n :: int) {
+    for i while i < n do i += 1 {
+        @push(out, [i, i + 1])
+    }
+}
+
+function addItems(^out :: Item[], n :: int) {
+    for i while i < n do i += 1 {
+        @push(out, $Item { tag is "tag-{i}" })
+    }
+}
+
+public entry function main() {
+    var strings :: string[] is []
+    var arrays :: int[][] is []
+    var items :: Item[] is []
+    addStrings(^strings, 3)
+    addArrays(^arrays, 3)
+    addItems(^items, 2)
+    addStrings(^strings, 1)
+    @print("{strings}\n")
+    @print("{arrays}\n")
+    @print("{items[0].tag} {items[1].tag}\n")
+}

@@ -1,0 +1,10 @@
+module std from @std()
+
+# The detected model differs per machine; only its presence is pinned.
+public entry function main() {
+    const name is std.host.cpu() as string else {
+        std.io.println("cpu detection failed: {name}")
+        return
+    }
+    std.io.println("{@length(name) > 0}")
+}

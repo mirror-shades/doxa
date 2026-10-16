@@ -1,0 +1,48 @@
+# Values built in a callee and returned, then the caller's arena churned
+# before they are read back: each must have been copied out of the callee's
+# arena, never left pointing into memory a later allocation reuses.
+struct Named {
+    public name :: string,
+    public scores :: int[],
+}
+
+function makeString(n :: int) returns string {
+    return "s{n}-{n * 2}"
+}
+
+function makeArray(n :: int) returns int[] {
+    var out :: int[] is []
+    for i while i < n do i += 1 {
+        @push(out, i * i)
+    }
+    return out
+}
+
+function makeNamed(n :: int) returns Named {
+    return $Named { name is "named-{n}", scores is [n, n + 1, n + 2] }
+}
+
+function makeUnion(n :: int) returns string | int[] {
+    if n % 2 == 0 then return "even-{n}"
+    return [n, n]
+}
+
+function churn() {
+    for i while i < 200 do i += 1 {
+        var junk :: string is "junk-{i}-{i}-{i}"
+        var more :: int[] is [i, i, i, i, i, i, i, i]
+    }
+}
+
+public entry function main() {
+    var s :: string is makeString(7)
+    var a :: int[] is makeArray(5)
+    var n :: Named is makeNamed(3)
+    var u :: string | int[] is makeUnion(4)
+    var w :: string | int[] is makeUnion(5)
+    churn()
+    @print("{s}\n")
+    @print("{a}\n")
+    @print("{n.name} {n.scores}\n")
+    @print("{u} {w}\n")
+}

@@ -1,0 +1,20 @@
+# Each recursive call opens and exits its own arena while the value it
+# returns is copied out to its caller, across hundreds of scope exits.
+function build(depth :: int) returns int[] {
+    if depth == 0 then return []
+    var below :: int[] is build(depth - 1)
+    @push(below, depth)
+    return below
+}
+
+function label(depth :: int) returns string {
+    if depth == 0 then return "."
+    return "{label(depth - 1)}{depth % 10}"
+}
+
+public entry function main() {
+    var xs :: int[] is build(300)
+    @print("{@length(xs)} {xs[0]} {xs[299]}\n")
+    var s :: string is label(40)
+    @print("{s}\n")
+}

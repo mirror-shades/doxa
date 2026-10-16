@@ -20,4 +20,5 @@ test {
     _ = @import("src/lsp/internal_methods.zig");
     _ = @import("src/analysis/consteval.zig");
     _ = @import("src/runtime/scope_arena.zig");
+    _ = @import("src/instrument/report.zig");
 }

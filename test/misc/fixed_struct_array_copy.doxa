@@ -1,0 +1,20 @@
+# A fixed array of scalar-only structs converted to a dynamic one, then
+# copied: returned out of its arena, stored into a global and pushed to.
+# Every element copy is the struct's words; none may come back null.
+struct P { public x :: int, public y :: int }
+
+var g :: P[] is []
+
+function make() returns P[] {
+    var f :: P[2] is [$P { x is 1, y is 2 }, $P { x is 3, y is 4 }]
+    var d :: P[] is f
+    return d
+}
+
+public entry function main() {
+    var d :: P[] is make()
+    @print("{d[0].x} {d[1].y}\n")
+    g is d
+    @push(g, $P { x is 5, y is 6 })
+    @print("{g[0].x} {g[2].x}\n")
+}

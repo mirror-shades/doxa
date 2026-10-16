@@ -1,0 +1,39 @@
+# Globals stored from inside a function live in the root arena: once the
+# function returns they are still whole, and mutating them afterwards writes
+# through the root-owned value. A map is always the root's.
+struct Point {
+    public label :: string,
+    public x :: int,
+}
+
+var names :: string[] is []
+var origin :: Point is $Point { label is "none", x is 0 }
+var tagged :: string | int[] is "none"
+
+map Counts :: int returns string {
+    0 then "zero"
+}
+
+function fill(n :: int) {
+    var local :: string[] is []
+    for i while i < n do i += 1 {
+        @push(local, "name-{i}")
+    }
+    names is local
+    origin is $Point { label is "set-{n}", x is n }
+    tagged is [n, n * 10]
+    Counts[n] is "count-{n}"
+}
+
+public entry function main() {
+    fill(3)
+    @push(names, "late")
+    names[0] is "first"
+    origin.x is origin.x + 100
+    origin.label is "moved"
+    @print("{names}\n")
+    @print("{origin.label} {origin.x}\n")
+    @print("{tagged}\n")
+    Counts[0] is "changed"
+    @print("{Counts[0]} {Counts[3]}\n")
+}

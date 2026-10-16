@@ -1,0 +1,9 @@
+module std from @std()
+
+public entry function main() {
+    std.io.println("int {std.math.minInt()} {std.math.maxInt()}")
+    std.io.println("byte {std.math.minByte()} {std.math.maxByte()}")
+    std.io.println("float max {std.math.maxFloat() > 1.7e308} {std.math.maxFloat() * 10.0 > std.math.maxFloat()}")
+    std.io.println("float min {std.math.minFloat() == -std.math.maxFloat()}")
+    std.io.println("float normal {std.math.minNormalFloat() > 0.0} {std.math.minNormalFloat() < 2.3e-308}")
+}

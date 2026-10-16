@@ -1,0 +1,4 @@
+entry function main() {
+    var r is 0xFF + 0x01
+    @print("{r}")
+}

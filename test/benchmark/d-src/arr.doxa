@@ -12,7 +12,7 @@ function arr_reduce(arr :: int[]) returns int {
 
     for r while r < OUTER do r += 1 {
         for i while i < N do i += 1 {
-            sum += arr[i]
+            sum +%= arr[i]
         }
     }
     return sum
@@ -27,7 +27,7 @@ public entry function main() {
     }
 
     for i while i < SINK_ITERS do i += 1 {
-        sink += arr[i % N]
+        sink +%= arr[i % N]
     }
 
     const t0 is std.time.monotonic()

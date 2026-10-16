@@ -1,0 +1,5 @@
+# A map field is spelled `map name :: K returns V`, without `var` / `const`.
+
+struct Box {
+    public var map tags :: int returns string,
+}

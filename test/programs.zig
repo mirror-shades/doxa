@@ -4,6 +4,8 @@
 //!   together.
 //! - **compile**: one `doxa compile` per distinct program, then one run of the
 //!   binary per case. A `.reject` case is judged on its compile.
+//! - **memcheck**: the run pipeline under `--instrument=memcheck`, for the
+//!   cases that opt in.
 //!
 //! Cases run concurrently across a crew of workers and never abort the suite:
 //! whatever happens to a case, a harness error included, becomes its outcome,
@@ -56,13 +58,14 @@ pub fn check(gpa: Allocator, pipeline: cases.Pipeline) !void {
     const suite: Suite = .{
         .gpa = gpa,
         .io = io,
+        .pipeline = pipeline,
         .doxa = &doxa,
         .cases = selected.items,
         .programs = programs.items,
         .results = results,
     };
     switch (pipeline) {
-        .run => try crew.each(io, programs.items, &suite, Suite.viaRun),
+        .run, .memcheck => try crew.each(io, programs.items, &suite, Suite.viaRun),
         .compile => {
             const builds = try suite.planBuilds();
             defer {
@@ -84,6 +87,7 @@ pub fn check(gpa: Allocator, pipeline: cases.Pipeline) !void {
 const Suite = struct {
     gpa: Allocator,
     io: Io,
+    pipeline: cases.Pipeline,
     doxa: *const harness.Doxa,
     cases: []const Case,
     /// Parallel to `cases`: each case's program ordinal (`cases.program_of`).
@@ -99,6 +103,8 @@ const Suite = struct {
         const arena = worker.arena.allocator();
         var args: std.ArrayList([]const u8) = .empty;
         try args.appendSlice(arena, &.{ "run", case.path, suite.doxa.include, worker.cache_flag });
+        try args.appendSlice(arena, case.build_args);
+        if (suite.pipeline == .memcheck) try args.append(arena, "--instrument=memcheck");
         if (case.extra_args.len != 0) {
             try args.append(arena, "--");
             try args.appendSlice(arena, case.extra_args);
@@ -123,7 +129,7 @@ const Suite = struct {
         for (suite.cases, suite.programs, 0..) |case, program, index| {
             for (builds.items) |build| {
                 if (build.program == program) break;
-            } else try builds.append(suite.gpa, .{ .path = case.path, .program = program, .owner = index });
+            } else try builds.append(suite.gpa, .{ .path = case.path, .build_args = case.build_args, .program = program, .owner = index });
         }
         return builds.toOwnedSlice(suite.gpa);
     }
@@ -132,6 +138,7 @@ const Suite = struct {
 /// A program's `doxa compile`, shared by every case that runs it.
 const Build = struct {
     path: []const u8,
+    build_args: []const []const u8,
     /// The program's ordinal (`cases.program_of`).
     program: usize,
     /// Index of the first case using this program; a failed build is reported
@@ -160,9 +167,14 @@ const Compiled = struct {
             target.harness_error = err;
             return;
         };
-        target.capture = suite.doxa.run(suite.gpa, suite.io, .{ .args = &.{
-            "compile", target.path, "-o", out, suite.doxa.include, worker.cache_flag,
-        } }) catch |err| {
+        const args = std.mem.concat(worker.arena.allocator(), []const u8, &.{
+            &.{ "compile", target.path, "-o", out, suite.doxa.include, worker.cache_flag },
+            target.build_args,
+        }) catch |err| {
+            target.harness_error = err;
+            return;
+        };
+        target.capture = suite.doxa.run(suite.gpa, suite.io, .{ .args = args }) catch |err| {
             target.harness_error = err;
             return;
         };

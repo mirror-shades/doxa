@@ -55,6 +55,47 @@ pub const expected_stdlib_methods_results = [_]print_result{
     .{ .value = "clear [] [] []" },
 };
 
+pub const expected_int_pow_results = [_]print_result{
+    .{ .value = "50031545098999707 -9223372036854775808 4611686018427387904 -27 0 1 -1 1 1 1 9223372030926249001 281474976710656" },
+    .{ .value = "50031545098999707 -9223372036854775808 4611686018427387904 -27 0 1 -1 1 1 1 9223372030926249001 281474976710656" },
+};
+
+pub const expected_byte_pow_results = [_]print_result{
+    .{ .value = "0x80 0x10 0xE1 0x01 0x01 0x00 0xF3" },
+};
+
+pub const expected_wrap_operators_results = [_]print_result{
+    .{ .value = "int +% -9223372036854775808 5" },
+    .{ .value = "int -% 9223372036854775807 -1" },
+    .{ .value = "int *% -2 -20" },
+    .{ .value = "int -%x -9223372036854775808 -7" },
+    .{ .value = "byte +% 0x00 0x30" },
+    .{ .value = "byte -% 0xFF 0x10" },
+    .{ .value = "byte *% 0x00 0x0F" },
+    .{ .value = "byte -%x 0xFF 0x00" },
+    .{ .value = "compound -9223372036854775808 0xFF 0x00" },
+    .{ .value = "constant 0x00 -3 -2" },
+};
+
+pub const expected_map_identity_results = [_]print_result{
+    .{ .value = "through a loop's array" },
+    .{ .value = "through a global's array" },
+    .{ .value = "through a returned field" },
+    .{ .value = "through a binding" },
+};
+
+pub const expected_nesting_at_limit_results = [_]print_result{
+    .{ .value = "1" },
+};
+
+pub const expected_std_math_results = [_]print_result{
+    .{ .value = "int -9223372036854775808 9223372036854775807" },
+    .{ .value = "byte 0x00 0xFF" },
+    .{ .value = "float max true true" },
+    .{ .value = "float min true" },
+    .{ .value = "float normal true true" },
+};
+
 pub const expected_slice_heap_string_results = [_]print_result{
     .{ .value = "asd" },
     .{ .value = "asdf" },
@@ -247,6 +288,47 @@ pub const expected_fixed_struct_array_params_results = [_]print_result{
     .{ .value = "5" },
     .{ .value = "1 4" },
     .{ .value = "222 333 111" },
+};
+
+pub const expected_fixed_struct_array_copy_results = [_]print_result{
+    .{ .value = "1 4" },
+    .{ .value = "1 5" },
+};
+
+pub const expected_memory_escape_reuse_results = [_]print_result{
+    .{ .value = "s7-14" },
+    .{ .value = "[0, 1, 4, 9, 16]" },
+    .{ .value = "named-3 [3, 4, 5]" },
+    .{ .value = "even-4 [5, 5]" },
+};
+
+pub const expected_memory_global_from_function_results = [_]print_result{
+    .{ .value = "[\"first\", \"name-1\", \"name-2\", \"late\"]" },
+    .{ .value = "moved 103" },
+    .{ .value = "[3, 30]" },
+    .{ .value = "changed count-3" },
+};
+
+pub const expected_memory_alias_push_results = [_]print_result{
+    .{ .value = "[\"item-0\", \"item-1\", \"item-2\", \"item-0\"]" },
+    .{ .value = "[[0, 1], [1, 2], [2, 3]]" },
+    .{ .value = "tag-0 tag-1" },
+};
+
+pub const expected_memory_deep_recursion_results = [_]print_result{
+    .{ .value = "300 1 300" },
+    .{ .value = ".1234567890123456789012345678901234567890" },
+};
+
+pub const expected_memory_long_churn_results = [_]print_result{
+    .{ .value = "4999 12516390 [0, 1000, 2000, 3000, 4000]" },
+};
+
+pub const expected_memory_block_scope_results = [_]print_result{
+    .{ .value = "[21, 24]" },
+    .{ .value = "id-3!" },
+    .{ .value = "early-5 small" },
+    .{ .value = "[\"n0\", \"n1\", \"n2\", \"n3\"]" },
 };
 
 pub const expected_float_compare_results = [_]print_result{

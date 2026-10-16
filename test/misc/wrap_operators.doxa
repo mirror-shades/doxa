@@ -1,0 +1,48 @@
+module std from @std()
+
+# Parameters keep every operand out of the constant evaluator, so these run.
+function add(a :: int, b :: int) returns int {
+    return a +% b
+}
+function sub(a :: int, b :: int) returns int {
+    return a -% b
+}
+function mul(a :: int, b :: int) returns int {
+    return a *% b
+}
+function neg(a :: int) returns int {
+    return -%a
+}
+function addByte(a :: byte, b :: byte) returns byte {
+    return a +% b
+}
+function subByte(a :: byte, b :: byte) returns byte {
+    return a -% b
+}
+function mulByte(a :: byte, b :: byte) returns byte {
+    return a *% b
+}
+function negByte(a :: byte) returns byte {
+    return -%a
+}
+
+public entry function main() {
+    const max is std.math.maxInt()
+    const min is std.math.minInt()
+    std.io.println("int +% {add(max, 1)} {add(2, 3)}")
+    std.io.println("int -% {sub(min, 1)} {sub(2, 3)}")
+    std.io.println("int *% {mul(max, 2)} {mul(-4, 5)}")
+    std.io.println("int -%x {neg(min)} {neg(7)}")
+    std.io.println("byte +% {addByte(0xFF, 0x01)} {addByte(0x10, 0x20)}")
+    std.io.println("byte -% {subByte(0x00, 0x01)} {subByte(0x20, 0x10)}")
+    std.io.println("byte *% {mulByte(0x10, 0x10)} {mulByte(0x03, 0x05)}")
+    std.io.println("byte -%x {negByte(0x01)} {negByte(0x00)}")
+    var h is max
+    h +%= 1
+    var b is 0x00
+    b -%= 0x01
+    var c is 0x10
+    c *%= 0x10
+    std.io.println("compound {h} {b} {c}")
+    std.io.println("constant {0xFF +% 0x01} {2 -% 5} {9223372036854775807 *% 2}")
+}

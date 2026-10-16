@@ -1,0 +1,45 @@
+map Global :: int returns string {
+    1 then "g"
+}
+
+struct Box {
+    public map tags :: int returns string,
+}
+
+var held is [Global]
+
+function keep() {
+    held is [Global, Global]
+}
+
+function boxed() returns Box {
+    return $Box { tags is Global }
+}
+
+# Every map is its declaration's, in the root arena: an array of maps, a
+# map-typed field and a binding all hold the declaration's map, so a write
+# through any of them is a write to `Global`, wherever the holder was copied.
+public entry function main() {
+    var local is [Global]
+    for i while i < 2 do i += 1 {
+        local is [Global, Global]
+    }
+    local[0][1] is "through a loop's array"
+    @print("{Global[1]}\n")
+
+    keep()
+    held[1][1] is "through a global's array"
+    @print("{Global[1]}\n")
+
+    var b is boxed()
+    b.tags[1] is "through a returned field"
+    @print("{Global[1]}\n")
+
+    var outer is Global
+    for i while i < 2 do i += 1 {
+        var inner is $Box { tags is Global }
+        outer is inner.tags
+    }
+    outer[1] is "through a binding"
+    @print("{Global[1]}\n")
+}

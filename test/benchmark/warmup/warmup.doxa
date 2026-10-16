@@ -1,0 +1,7 @@
+# Untimed: primes the toolchain caches before the measured compiles (suite.doxa).
+# Uses the std modules every benchmark uses, so their inline-Zig shims are built.
+module std from @std()
+
+public entry function main() {
+    std.io.println("{std.time.monotonic()}")
+}

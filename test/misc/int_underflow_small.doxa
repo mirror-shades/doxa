@@ -1,0 +1,7 @@
+module std from @std()
+function step(x :: int) returns int {
+    return x - 1
+}
+public entry function main() {
+    std.io.println("{step(std.math.minInt())}")
+}

@@ -1,0 +1,20 @@
+# Many arena enter, reset and exit cycles with allocation interleaved: a
+# value kept across iterations is copied out of each iteration's arena before
+# it is reset.
+function step(prev :: string, i :: int) returns string {
+    var parts :: string[] is [prev, "{i}"]
+    return "{parts[1]}"
+}
+
+public entry function main() {
+    var kept :: string is "start"
+    var total :: int is 0
+    var history :: int[] is []
+    for i while i < 5000 do i += 1 {
+        var scratch :: int[] is [i, i, i]
+        kept is step(kept, i)
+        total += scratch[0] + @length(kept)
+        if i % 1000 == 0 then @push(history, i)
+    }
+    @print("{kept} {total} {history}\n")
+}

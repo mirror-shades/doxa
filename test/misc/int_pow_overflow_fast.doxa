@@ -1,0 +1,4 @@
+function pw(a :: int, b :: int) returns int {
+    return a ** b
+}
+@print("{pw(2, 63)}\n")

@@ -66,6 +66,13 @@ test "native cpu cache: the resolved host key is stable and not the constant" {
     try testing.expectEqual(first.digest, second.digest);
     try testing.expect(!std.mem.eql(u8, first.bytes(), "native"));
 
+    // `bytes` must point into the key itself. A by-value receiver would return
+    // a slice into a dead copy: the digest value stays the same, but the
+    // caller reads whatever the stack holds by the time it hashes, so the key
+    // varies run to run and every compile rebuilds the runtime object.
+    try testing.expectEqual(@intFromPtr(&first.digest), @intFromPtr(first.bytes().ptr));
+    try testing.expectEqual(first.digest.len, first.bytes().len);
+
     // The key must vary with the CPU it names, which is what makes a
     // cross-machine cache miss. Two different inputs are enough to show the
     // digest is derived rather than constant.

@@ -8,7 +8,12 @@ pub const peek_result = answers.peek_result;
 /// both `doxa run` and `doxa compile`; a case opts out of one only when it
 /// tests something pipeline-specific, and that opt-out is stated here rather
 /// than being an accident of whichever suite happened to be edited.
-pub const Pipeline = enum { run, compile };
+///
+/// `memcheck` is `doxa run --instrument=memcheck`: reclaimed arenas are
+/// poisoned and every read is checked against them, so a latent
+/// use-after-reclaim fails instead of passing on reused memory. It is opt-in,
+/// for the memory suite (`test/misc/memory/`).
+pub const Pipeline = enum { run, compile, memcheck };
 
 /// How a case's result is judged.
 pub const Mode = enum {
@@ -35,6 +40,9 @@ pub const Case = struct {
     expected_print: ?[]const print_result = null,
     expected_peek: ?[]const peek_result = null,
     extra_args: []const []const u8 = &.{},
+    /// Compiler flags for both pipelines (e.g. `--opt-mode=fast`). They are
+    /// part of the program: cases that share a source share its flags.
+    build_args: []const []const u8 = &.{},
     pipelines: []const Pipeline = &.{ .run, .compile },
     /// `.terminate`: the program's exit status.
     expect_code: ?u8 = null,
@@ -95,6 +103,11 @@ pub fn outputPathFor(allocator: std.mem.Allocator, source_path: []const u8) ![]u
     return std.fmt.allocPrint(allocator, "test/out/{s}", .{sourceStem(source_path)});
 }
 
+/// The memory suite (`test/misc/memory/`) runs plain and under memcheck.
+// TODO: pin the out-of-memory fault. Nothing caps an arena, so a program can
+// exhaust memory only by exhausting the machine's, which is not deterministic.
+const memory_pipelines: []const Pipeline = &.{ .run, .compile, .memcheck };
+
 const shared_cases = [_]Case{
     .{
         .name = "big file",
@@ -138,6 +151,36 @@ const shared_cases = [_]Case{
         .name = "stdlib methods",
         .path = "./test/misc/stdlib_methods.doxa",
         .expected_print = answers.expected_stdlib_methods_results[0..],
+    },
+    .{
+        .name = "nesting at the limit compiles and runs",
+        .path = "./test/misc/nesting_at_limit.doxa",
+        .expected_print = answers.expected_nesting_at_limit_results[0..],
+    },
+    .{
+        .name = "std.math limits",
+        .path = "./test/misc/std_math.doxa",
+        .expected_print = answers.expected_std_math_results[0..],
+    },
+    .{
+        .name = "a map is its declaration's wherever it is held or copied",
+        .path = "./test/misc/map_identity.doxa",
+        .expected_print = answers.expected_map_identity_results[0..],
+    },
+    .{
+        .name = "+%, -% and *% wrap int and byte arithmetic",
+        .path = "./test/misc/wrap_operators.doxa",
+        .expected_print = answers.expected_wrap_operators_results[0..],
+    },
+    .{
+        .name = "a byte power that fits is exact",
+        .path = "./test/misc/byte_pow.doxa",
+        .expected_print = answers.expected_byte_pow_results[0..],
+    },
+    .{
+        .name = "an int power is exact at run time and as a constant",
+        .path = "./test/misc/int_pow.doxa",
+        .expected_print = answers.expected_int_pow_results[0..],
     },
     .{
         .name = "slice heap string",
@@ -373,6 +416,47 @@ const shared_cases = [_]Case{
         .name = "fixed struct array params",
         .path = "./test/misc/fixed_struct_array_params.doxa",
         .expected_print = answers.expected_fixed_struct_array_params_results[0..],
+    },
+    .{
+        .name = "fixed struct array copy",
+        .path = "./test/misc/fixed_struct_array_copy.doxa",
+        .expected_print = answers.expected_fixed_struct_array_copy_results[0..],
+    },
+    .{
+        .name = "memory: escape then reuse",
+        .path = "./test/misc/memory/escape_reuse.doxa",
+        .expected_print = answers.expected_memory_escape_reuse_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: globals stored from a function",
+        .path = "./test/misc/memory/global_from_function.doxa",
+        .expected_print = answers.expected_memory_global_from_function_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: alias push into a container",
+        .path = "./test/misc/memory/alias_push.doxa",
+        .expected_print = answers.expected_memory_alias_push_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: deep recursion across scope exits",
+        .path = "./test/misc/memory/deep_recursion.doxa",
+        .expected_print = answers.expected_memory_deep_recursion_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: long arena churn",
+        .path = "./test/misc/memory/long_churn.doxa",
+        .expected_print = answers.expected_memory_long_churn_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: a block reclaims its arena",
+        .path = "./test/misc/memory/block_scope.doxa",
+        .expected_print = answers.expected_memory_block_scope_results[0..],
+        .pipelines = memory_pipelines,
     },
     .{
         .name = "union struct field",
@@ -708,6 +792,13 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "host cpu",
+        .path = "./test/misc/host_cpu.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "true" },
+        },
+    },
+    .{
         .name = "inline zig string escape",
         .path = "./test/misc/inline_zig_string_escape.doxa",
         .expected_print = &[_]print_result{
@@ -1004,6 +1095,54 @@ const shared_cases = [_]Case{
         .expect_stderr = "Integer overflow at overflow_fault.doxa:2:12",
     },
     .{
+        .name = "an int overflow faults in a fast build",
+        .path = "./test/misc/int_overflow_fast.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=fast"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at int_overflow_fast.doxa:3:12",
+    },
+    .{
+        .name = "an int underflow faults in a small build",
+        .path = "./test/misc/int_underflow_small.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=small"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at int_underflow_small.doxa:3:12",
+    },
+    .{
+        .name = "a byte overflow (0xFF + 0x01) faults in a fast build",
+        .path = "./test/misc/byte_overflow_fast.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=fast"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at byte_overflow_fast.doxa:3:12",
+    },
+    .{
+        .name = "a byte underflow (0x00 - 0x01) faults in a small build",
+        .path = "./test/misc/byte_underflow_small.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=small"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at byte_underflow_small.doxa:3:12",
+    },
+    .{
+        .name = "a byte power past 0xFF faults in a fast build",
+        .path = "./test/misc/byte_pow_overflow_fast.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=fast"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at byte_pow_overflow_fast.doxa:2:12",
+    },
+    .{
+        .name = "an int power past maxInt faults in a fast build",
+        .path = "./test/misc/int_pow_overflow_fast.doxa",
+        .mode = .terminate,
+        .build_args = &.{"--opt-mode=fast"},
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at int_pow_overflow_fast.doxa:2:12",
+    },
+    .{
         .name = "a @pop of an empty array faults",
         .path = "./test/misc/pop_empty_fault.doxa",
         .mode = .terminate,
@@ -1035,6 +1174,27 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1003",
         .expect_stderr = "String is not assignable to type Float",
+    },
+    .{
+        .name = "a map declaration takes no var or const",
+        .path = "./test/misc/map_const_decl.doxa",
+        .mode = .reject,
+        .expect_error = "E2001",
+        .expect_stderr = "a map is declared with a bare 'map'",
+    },
+    .{
+        .name = "a map field takes no var or const",
+        .path = "./test/misc/map_var_field.doxa",
+        .mode = .reject,
+        .expect_error = "E2001",
+        .expect_stderr = "a map is declared with a bare 'map'",
+    },
+    .{
+        .name = "a map entry pairs its key and value with then",
+        .path = "./test/misc/map_entry_is.doxa",
+        .mode = .reject,
+        .expect_error = "E2001",
+        .expect_stderr = "expected 'then' between a map key and its value",
     },
     .{
         .name = "syntax error",
@@ -1300,6 +1460,20 @@ const rejected_cases = [_]Case{
         .expect_stderr = "constant_overflow_error.doxa:2:14: integer overflow in a constant expression",
     },
     .{
+        .name = "a byte overflow in a constant expression is rejected",
+        .path = "./test/syntax/byte_constant_overflow_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1024",
+        .expect_stderr = "byte_constant_overflow_error.doxa:2:14: integer overflow in a constant expression",
+    },
+    .{
+        .name = "a wrapping operator on floats is rejected",
+        .path = "./test/syntax/wrap_float_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1006",
+        .expect_stderr = "Wrapping +% requires integer or byte operands",
+    },
+    .{
         .name = "a division by a constant zero is rejected",
         .path = "./test/syntax/constant_division_by_zero_error.doxa",
         .mode = .reject,
@@ -1340,6 +1514,13 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1031",
         .expect_stderr = "byte value out of range (must be 0-255)",
+    },
+    .{
+        .name = "nesting one level past the limit is rejected",
+        .path = "./test/syntax/nesting_too_deep_error.doxa",
+        .mode = .reject,
+        .expect_error = "E2031",
+        .expect_stderr = "nesting_too_deep_error.doxa:3:268: Nesting depth exceeds 256",
     },
     .{
         .name = "a function declared inside a body is rejected",
@@ -1637,13 +1818,26 @@ pub const cases = shared_cases ++ calculator_cases ++ rejected_cases;
 /// For each case, the position of its program among the table's distinct
 /// programs, in table order. The suites schedule by it, so a program reaches
 /// the same worker, and that worker's warm cache, on every run.
+fn sameArgs(a: []const []const u8, b: []const []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (!std.mem.eql(u8, x, y)) return false;
+    }
+    return true;
+}
+
 pub const program_of = blk: {
     @setEvalBranchQuota(cases.len * cases.len * 16);
     var ordinals: [cases.len]usize = undefined;
     var distinct: usize = 0;
     for (cases, 0..) |case, index| {
         ordinals[index] = for (cases[0..index], 0..) |earlier, earlier_index| {
-            if (std.mem.eql(u8, earlier.path, case.path)) break ordinals[earlier_index];
+            if (std.mem.eql(u8, earlier.path, case.path)) {
+                if (!sameArgs(earlier.build_args, case.build_args)) {
+                    @compileError("cases sharing " ++ case.path ++ " must share its build_args");
+                }
+                break ordinals[earlier_index];
+            }
         } else fresh: {
             distinct += 1;
             break :fresh distinct - 1;

@@ -18,6 +18,10 @@ test "compile pipeline" {
     try programs.check(testing.allocator, .compile);
 }
 
+test "memcheck pipeline" {
+    try programs.check(testing.allocator, .memcheck);
+}
+
 test {
     _ = @import("test_build_script.zig");
     _ = @import("test_emit.zig");

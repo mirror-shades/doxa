@@ -27,29 +27,29 @@ public entry function main() {
 
     var sink is 0
     for i while i < N do i += 1 {
-        sink += arr[i].x + arr[i].y + arr[i].z + arr[i].w
+        sink +%= arr[i].x +% arr[i].y +% arr[i].z +% arr[i].w
     }
 
     const t0 is std.time.monotonic()
     var carry is 1
     for s while s < STEPS do s += 1 {
         for i while i < N do i += 1 {
-            const nx is (arr[i].x + carry) % MOD
-            const ny is (arr[i].y + nx) % MOD
-            const nz is (arr[i].z + ny) % MOD
-            const nw is (arr[i].w + nz) % MOD
+            const nx is (arr[i].x +% carry) % MOD
+            const ny is (arr[i].y +% nx) % MOD
+            const nz is (arr[i].z +% ny) % MOD
+            const nw is (arr[i].w +% nz) % MOD
             arr[i].x is nx
             arr[i].y is ny
             arr[i].z is nz
             arr[i].w is nw
-            carry is (nw + 1) % MOD
+            carry is (nw +% 1) % MOD
         }
     }
     const t1 is std.time.monotonic()
 
     var checksum is 0
     for i while i < N do i += 1 {
-        checksum += arr[i].x + arr[i].y + arr[i].z + arr[i].w
+        checksum +%= arr[i].x +% arr[i].y +% arr[i].z +% arr[i].w
     }
 
     const elapsed is t1 - t0

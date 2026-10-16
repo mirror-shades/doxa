@@ -1,0 +1,5 @@
+# A map entry is written `key then value`; `is` assigns, it does not pair.
+
+map Dict {
+    1 is "first"
+}

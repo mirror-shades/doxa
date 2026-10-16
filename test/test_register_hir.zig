@@ -301,6 +301,24 @@ test "register hir verifier: scopes are closed before a return" {
     try expectFault(a, &no_program, &f, "still open");
 }
 
+test "register hir verifier: a map is made only in the root arena" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A map in a function's own arena would make its copies real copies;
+    // every map is a program-level declaration in the root arena instead.
+    const key: ir.HIRType = .Int;
+    const value: ir.HIRType = .String;
+    const map: Type = .of(.{ .Map = .{ .key = &key, .value = &value } });
+    var fx = try ArenaFixture.init(a, "local_map", .Nothing);
+    _ = try fx.b.define(.{ .map_new = .{ .arena = fx.body, .else_value = null } }, map);
+    try fx.b.effect(.{ .scope_exit = .{ .arena = fx.body } });
+    try fx.b.ret(null);
+    const f = try fx.b.finish();
+    try expectFault(a, &no_program, &f, "not the root arena");
+}
+
 test "register hir verifier: nothing is used after its arena closes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -355,7 +373,7 @@ test "register hir verifier: a slot outlives what is stored in it" {
     for ([_]bool{ false, true }) |rehomed| {
         var fx = try ArenaFixture.init(a, "kept", .Nothing);
         // The slot belongs to the body arena; the value to an inner scope.
-        const slot = try fx.b.addSlot(.String, fx.body, "kept");
+        const slot = try fx.b.addSlot(.String, fx.body);
         const inner = try fx.b.define(.{ .scope_enter = .{ .parent = fx.body } }, .arena);
         var s = try fx.greeting(inner);
         if (rehomed) s = try fx.b.define(.{ .rehome = .{ .arena = fx.body, .operand = s } }, string);
@@ -435,8 +453,8 @@ test "register hir verifier: one slot is never lent twice to one call" {
 
     for ([_]bool{ false, true }) |same| {
         var fx = try ArenaFixture.init(a, "caller", .Nothing);
-        const left = try fx.b.addSlot(.Int, fx.body, "left");
-        const right = try fx.b.addSlot(.Int, fx.body, "right");
+        const left = try fx.b.addSlot(.Int, fx.body);
+        const right = try fx.b.addSlot(.Int, fx.body);
         const l = try fx.b.define(.{ .slot_addr = left }, .{ .ref = .Int });
         const r = try fx.b.define(.{ .slot_addr = if (same) left else right }, .{ .ref = .Int });
         try fx.b.effect(.{ .call = .{ .callee = @enumFromInt(0), .args = &.{ l, fx.body, r, fx.body } } });
