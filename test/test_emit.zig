@@ -1005,17 +1005,33 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     defer allocator.free(traced);
     try testing.expectEqualStrings(frames, traced);
 
-    // Optimized, every Doxa frame still shows, innermost first, inlined ones
-    // included. CodeView often records no column there, so columns are not
-    // pinned.
+    // Optimized, the trace keeps the frames that survive inlining and still
+    // ends at the entry. Every frame is the program's, and the last is
+    // `main`, kept out of line by `__doxa_enter`.
     const optimized = try runFault(allocator, &tmp, faultSource, &.{"-O2"});
     defer allocator.free(optimized);
     try testing.expectStringStartsWith(optimized, headline);
-    const get = std.mem.indexOf(u8, optimized, "  in get at probe.doxa:2:") orelse return error.TestExpectedContains;
-    const outer = std.mem.indexOf(u8, optimized, "  in outer at probe.doxa:6:") orelse return error.TestExpectedContains;
-    const main = std.mem.indexOf(u8, optimized, "  in main at probe.doxa:11:") orelse return error.TestExpectedContains;
-    try testing.expect(get < outer and outer < main);
-    try testing.expect(std.mem.indexOf(u8, optimized, "<globals>") == null);
+    var frame_lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, optimized[headline.len..], "\n"), '\n');
+    var last: []const u8 = "";
+    var count: usize = 0;
+    while (frame_lines.next()) |frame| : (count += 1) {
+        try testing.expectStringStartsWith(frame, "  in ");
+        try expectContains(frame, " at probe.doxa:");
+        last = frame;
+    }
+    try testing.expect(count >= 1);
+    try testing.expectStringStartsWith(last, "  in main at probe.doxa:");
+    // The PDB reader resolves inlined frames, so on Windows each still shows,
+    // innermost first; CodeView often records no column there. Zig's DWARF
+    // reader does not resolve them (`Dwarf.getSymbols` ignores
+    // `resolve_inline_callers`), so elsewhere an inlined frame's code is
+    // reported under the function it was inlined into.
+    if (builtin.os.tag == .windows) {
+        const get = std.mem.indexOf(u8, optimized, "  in get at probe.doxa:2:") orelse return error.TestExpectedContains;
+        const outer = std.mem.indexOf(u8, optimized, "  in outer at probe.doxa:6:") orelse return error.TestExpectedContains;
+        const main = std.mem.indexOf(u8, optimized, "  in main at probe.doxa:11:") orelse return error.TestExpectedContains;
+        try testing.expect(get < outer and outer < main);
+    }
 
     // A fault under a global's initializer names that frame `<globals>`, at
     // the initializer's line, on every platform.
