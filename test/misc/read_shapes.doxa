@@ -14,10 +14,6 @@ struct Box {
     }
 }
 
-map Counts {
-    "a" then 1
-}
-
 function box() returns Box {
     return $Box{ items is [1, 2], label is "box" }
 }
@@ -47,9 +43,9 @@ entry function main() {
     var b is box()
     @print("{@length(b.items)} {b.items[0] + b.items[1]} {b.label + "!"} {box().label} {box().items[1]}\n")
 
-    # Indexing: an array of strings, a string, a map, a call result.
+    # Indexing: an array of strings, a string, a call result.
     const ws is words()
-    @print("{ws[1]} {@length(ws[1])} {s[1]} {Counts["a"] as int else 0} {words()[0] + "?"}\n")
+    @print("{ws[1]} {@length(ws[1])} {s[1]} {words()[0] + "?"}\n")
 
     # An `each` binding.
     var total is 0

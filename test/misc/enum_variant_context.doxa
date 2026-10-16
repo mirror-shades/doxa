@@ -8,9 +8,8 @@ struct Box {
     public s :: a.Status,
 }
 
-map labels :: b.Result returns string {
-    .Ok then "fine",
-    .Err then "broken",
+function label(r :: b.Result) returns string {
+    return if r == .Ok then "fine" else "broken"
 }
 
 function pick(flag :: int) returns b.Result {
@@ -27,5 +26,5 @@ entry function main() {
     const box is $Box { s is .Fail }
     const list :: a.Status[] is [.Ok, .Fail]
     const chosen :: b.Result is if s == .Fail then .Err else .Ok
-    @print("{a.show(.Ok)} {b.show(.Err)} {s == .Fail} {known == .Ok} {pick(1) == .Ok} {box.s == .Fail} {list[1] == .Fail} {chosen == .Err} {labels[.Err]}\n")
+    @print("{a.show(.Ok)} {b.show(.Err)} {s == .Fail} {known == .Ok} {pick(1) == .Ok} {box.s == .Fail} {list[1] == .Fail} {chosen == .Err} {label(.Err)}\n")
 }

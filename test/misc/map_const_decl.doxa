@@ -1,6 +1,0 @@
-# A map is declared with a bare `map`: it exists to change at runtime, so
-# `var` / `const` say nothing about it. A fixed table is a `match`.
-
-const map Fixed :: int returns string {
-    1 then "one"
-}

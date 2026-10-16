@@ -163,11 +163,6 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_std_math_results[0..],
     },
     .{
-        .name = "a map is its declaration's wherever it is held or copied",
-        .path = "./test/misc/map_identity.doxa",
-        .expected_print = answers.expected_map_identity_results[0..],
-    },
-    .{
         .name = "+%, -% and *% wrap int and byte arithmetic",
         .path = "./test/misc/wrap_operators.doxa",
         .expected_print = answers.expected_wrap_operators_results[0..],
@@ -514,7 +509,6 @@ const shared_cases = [_]Case{
             .{ .value = "1.5 3" },
             .{ .value = "end" },
             .{ .value = "sound sound light" },
-            .{ .value = "1.0 3.0 1 3" },
         },
     },
     .{
@@ -606,7 +600,7 @@ const shared_cases = [_]Case{
         .expected_print = &[_]print_result{
             .{ .value = "3 5 5 h" },
             .{ .value = "2 3 box! box 2" },
-            .{ .value = "cde 3 e 1 ab?" },
+            .{ .value = "cde 3 e ab?" },
             .{ .value = "5" },
             .{ .value = "8 values! 14 6" },
             .{ .value = "then 2 9" },
@@ -1168,34 +1162,6 @@ const shared_cases = [_]Case{
 /// Programs the compiler must reject, each pinned to the code and text of the
 /// error it reports.
 const rejected_cases = [_]Case{
-    .{
-        .name = "a map entry store is checked against the map's value type",
-        .path = "./test/misc/map_store_type_error.doxa",
-        .mode = .reject,
-        .expect_error = "E1003",
-        .expect_stderr = "String is not assignable to type Float",
-    },
-    .{
-        .name = "a map declaration takes no var or const",
-        .path = "./test/misc/map_const_decl.doxa",
-        .mode = .reject,
-        .expect_error = "E2001",
-        .expect_stderr = "a map is declared with a bare 'map'",
-    },
-    .{
-        .name = "a map field takes no var or const",
-        .path = "./test/misc/map_var_field.doxa",
-        .mode = .reject,
-        .expect_error = "E2001",
-        .expect_stderr = "a map is declared with a bare 'map'",
-    },
-    .{
-        .name = "a map entry pairs its key and value with then",
-        .path = "./test/misc/map_entry_is.doxa",
-        .mode = .reject,
-        .expect_error = "E2001",
-        .expect_stderr = "expected 'then' between a map key and its value",
-    },
     .{
         .name = "syntax error",
         .path = "./test/syntax/equals_for_assign.doxa",

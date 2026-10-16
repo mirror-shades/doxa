@@ -13,14 +13,6 @@ function name(s :: Signal) returns string {
     }
 }
 
-map Levels :: string returns float {
-    "a" then 1,
-}
-
-map ByLight :: Light returns int {
-    .Red then 1,
-}
-
 struct Reading {
     public level :: float,
     public note :: int | string
@@ -55,8 +47,4 @@ public entry function main() {
     @push(signals, Light.Green)
     @insert(signals, 0, Sound.Low)
     @print("{name(signals[0])} {name(signals[1])} {name(signals[2])}\n")
-
-    Levels["b"] is n
-    ByLight[Light.Green] is n
-    @print("{Levels["a"]} {Levels["b"]} {ByLight[Light.Red]} {ByLight[Light.Green]}\n")
 }

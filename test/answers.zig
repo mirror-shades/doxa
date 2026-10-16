@@ -77,13 +77,6 @@ pub const expected_wrap_operators_results = [_]print_result{
     .{ .value = "constant 0x00 -3 -2" },
 };
 
-pub const expected_map_identity_results = [_]print_result{
-    .{ .value = "through a loop's array" },
-    .{ .value = "through a global's array" },
-    .{ .value = "through a returned field" },
-    .{ .value = "through a binding" },
-};
-
 pub const expected_nesting_at_limit_results = [_]print_result{
     .{ .value = "1" },
 };
@@ -306,7 +299,6 @@ pub const expected_memory_global_from_function_results = [_]print_result{
     .{ .value = "[\"first\", \"name-1\", \"name-2\", \"late\"]" },
     .{ .value = "moved 103" },
     .{ .value = "[3, 30]" },
-    .{ .value = "changed count-3" },
 };
 
 pub const expected_memory_alias_push_results = [_]print_result{
@@ -854,7 +846,6 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"string\"" },
     .{ .type = "string", .value = "\"Species\"" },
     .{ .type = "string", .value = "\"Species\"" },
-    .{ .type = "string", .value = "\"map\"" },
     .{ .type = "nothing", .value = "nothing" },
     .{ .type = "int[]", .value = "[1, 2, 3, 99, 4, 5]" },
     .{ .type = "nothing", .value = "nothing" },
@@ -1341,28 +1332,6 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "0" },
     .{ .type = "int", .value = "3" },
     .{ .type = "float", .value = "0.0" },
-    .{ .type = ">float | nothing", .value = "1.5" },
-    .{ .type = ">float | nothing", .value = "3.5" },
-    .{ .type = ">float | nothing", .value = "4.5" },
-    .{ .type = "float | >nothing", .value = "nothing" },
-    .{ .type = ">string | nothing", .value = "\"Bob\"" },
-    .{ .type = ">string | nothing", .value = "\"Sam\"" },
-    .{ .type = "string | >nothing", .value = "nothing" },
-    .{ .type = "string", .value = "\"Bob\"" },
-    .{ .type = "string", .value = "\"Sam\"" },
-    .{ .type = "string", .value = "\"not found\"" },
-    .{ .type = ">string | nothing", .value = "\"one\"" },
-    .{ .type = ">string | nothing", .value = "\"two\"" },
-    .{ .type = ">string | nothing", .value = "\"one\"" },
-    .{ .type = ">string | nothing", .value = "\"two\"" },
-    .{ .type = ">string | nothing", .value = "\"one\"" },
-    .{ .type = ">string | nothing", .value = "\"two\"" },
-    .{ .type = ">string | nothing", .value = "\"red\"" },
-    .{ .type = ">string | nothing", .value = "\"blue\"" },
-    .{ .type = "Employee", .value = "{ salary: 1000, person: { age: 26, name: \"Mike\" } }" },
-    .{ .type = "Employee", .value = "{ salary: 0, person: { age: 0, name: \"Unknown\" } }" },
-    .{ .type = "string", .value = "\"world\"" },
-    .{ .type = "string", .value = "\"default\"" },
     .{ .type = "int[]", .value = "[1, 2, 3, 4, 5, 6]" },
     .{ .type = "int[]", .value = "[0, 1, 2, 3]" },
     .{ .type = "int[]", .value = "[]" },

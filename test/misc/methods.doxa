@@ -21,12 +21,6 @@ var dog is $Animal {
     species is Species.DOG,
 }
 
-map mapping {
-    1 then "one",
-    2 then "two",
-    3 then "three",
-}
-
 ##
 # LENGTH
 ##
@@ -139,7 +133,6 @@ nested?
 @type(dog.name)? # string
 @type(dog.species)? # Species
 @type(Species.DOG)? # Species
-@type(mapping)? # map
 
 ##
 # INSERT

@@ -955,6 +955,17 @@ test "debug info: a Linux binary ships without its debug information, which a .g
     const crc_at = std.mem.alignForward(usize, name.len + 1, 4);
     try testing.expectEqual(std.hash.crc.Crc32.hash(debug), std.mem.readInt(u32, link[crc_at..][0..4], .little));
 
+    // Both carry the same build ID, a content hash: a second build of the
+    // same program in another directory gets the same one.
+    const id = buildId(binary).?;
+    try testing.expectEqual(20, id.len);
+    try testing.expectEqualSlices(u8, id, buildId(debug).?);
+    var again_tmp = testing.tmpDir(.{});
+    defer again_tmp.cleanup();
+    const again = try compileProbeLinux(allocator, &again_tmp, localsSource, &.{}, "");
+    defer allocator.free(again);
+    try testing.expectEqualSlices(u8, id, buildId(again).?);
+
     // `--strip` leaves no debug information anywhere, and no `.debug` file.
     var stripped_tmp = testing.tmpDir(.{});
     defer stripped_tmp.cleanup();
@@ -963,6 +974,62 @@ test "debug info: a Linux binary ships without its debug information, which a .g
     try testing.expect(!try hasSection(stripped, ".debug_info"));
     try testing.expect(!try hasSection(stripped, ".gnu_debuglink"));
     try testing.expectError(error.NoSuchOutput, firstOutput(allocator, &stripped_tmp, ".debug"));
+}
+
+test "debug info: a compiled macOS binary gets a .dSYM whose UUID matches it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    // Only Apple targets get one: a Linux build makes none on any host.
+    const linux = try compileProbeLinux(allocator, &tmp, localsSource, &.{}, "");
+    allocator.free(linux);
+    try testing.expect(try dsymOf(allocator, &tmp) == null);
+
+    // `dsymutil` comes with Xcode's command-line tools, on the macOS runner.
+    if (builtin.os.tag != .macos) return;
+    var mac_tmp = testing.tmpDir(.{});
+    defer mac_tmp.cleanup();
+    const ll = try compileProbe(allocator, &mac_tmp, &.{.{ .path = "probe.doxa", .data = localsSource }}, &.{}, "ll");
+    allocator.free(ll);
+    const dsym = (try dsymOf(allocator, &mac_tmp)) orelse return error.NoDsym;
+    defer allocator.free(dsym.dwarf);
+    defer allocator.free(dsym.binary);
+    try testing.expectEqualSlices(u8, &(machoUuid(dsym.binary) orelse return error.NoUuid), &(machoUuid(dsym.dwarf) orelse return error.NoUuid));
+    try expectContains(dsym.dwarf, "total");
+}
+
+/// The `probe-*` binary in `tmp`'s `bin/` and the DWARF file of the `.dSYM`
+/// beside it, if there is one.
+fn dsymOf(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir) !?struct { binary: []u8, dwarf: []u8 } {
+    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
+    defer bin.close(testing.io);
+    var it = bin.iterate();
+    while (try it.next(testing.io)) |entry| {
+        if (!std.mem.startsWith(u8, entry.name, "probe-") or !std.mem.endsWith(u8, entry.name, ".dSYM")) continue;
+        const stem = entry.name[0 .. entry.name.len - ".dSYM".len];
+        const dwarf_path = try std.fmt.allocPrint(allocator, "{s}/Contents/Resources/DWARF/{s}", .{ entry.name, stem });
+        defer allocator.free(dwarf_path);
+        const dwarf = try bin.readFileAlloc(testing.io, dwarf_path, allocator, .unlimited);
+        errdefer allocator.free(dwarf);
+        return .{ .binary = try bin.readFileAlloc(testing.io, stem, allocator, .unlimited), .dwarf = dwarf };
+    }
+    return null;
+}
+
+/// The `LC_UUID` of a 64-bit little-endian Mach-O file.
+fn machoUuid(file: []const u8) ?[16]u8 {
+    const header_size = 32;
+    if (file.len < header_size or std.mem.readInt(u32, file[0..4], .little) != std.macho.MH_MAGIC_64) return null;
+    const commands = std.mem.readInt(u32, file[16..20], .little);
+    var at: usize = header_size;
+    for (0..commands) |_| {
+        const cmd = std.mem.readInt(u32, file[at..][0..4], .little);
+        const size = std.mem.readInt(u32, file[at + 4 ..][0..4], .little);
+        if (cmd == @intFromEnum(std.macho.LC.UUID)) return file[at + 8 ..][0..16].*;
+        at += size;
+    }
+    return null;
 }
 
 test "debug info: the object carries local names" {
@@ -1221,6 +1288,120 @@ test "complexity: loop nests, where in-loop allocations land, and calls that all
     const without = try emitIrFor(allocator, &tmp, complexitySource, "-O0");
     defer allocator.free(without);
     try testing.expectEqualStrings(without, with);
+}
+
+const transitiveSource =
+    \\function parse(n :: int) returns string {
+    \\    return "n{n}"
+    \\}
+    \\
+    \\function load(n :: int) returns int {
+    \\    return @length(parse(n))
+    \\}
+    \\
+    \\function sum(n :: int) returns int {
+    \\    var t :: int is 0
+    \\    for i while i < n do i += 1 {
+    \\        t += i
+    \\    }
+    \\    return t
+    \\}
+    \\
+    \\function wrapper(n :: int) returns int {
+    \\    return sum(n)
+    \\}
+    \\
+    \\function ping(n :: int) returns int {
+    \\    if n <= 0 then return 0
+    \\    return pong(n - 1)
+    \\}
+    \\
+    \\function pong(n :: int) returns int {
+    \\    return ping(n - 1)
+    \\}
+    \\
+    \\entry function main() {
+    \\    var total :: int is 0
+    \\    for i while i < 3 do i += 1 {
+    \\        total += load(i) + wrapper(i) + ping(i)
+    \\    }
+    \\    @print("{total}\n")
+    \\}
+;
+
+test "complexity: a call in a loop names what its callees allocate or repeat" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+    const io = testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "calls.doxa", .data = transitiveSource });
+    const slot: harness.Slot = try .claim(allocator, io, "probe");
+    defer slot.release(allocator, io);
+
+    const out = try doxaStdout(allocator, &tmp, slot, &.{ "run", "calls.doxa", "--emit-complexity" });
+    defer allocator.free(out);
+    try testing.expectEqualStrings("7\n", out);
+    const text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "calls" });
+    defer allocator.free(text);
+
+    // `load` allocates only through `parse`, `wrapper` loops only through
+    // `sum`: each finding names the function that does it.
+    try expectContains(text, "  calls.doxa:33:18\tmain\tcalls load (allocates through parse) in the loop at calls.doxa:32:5\n");
+    try expectContains(text, "  calls.doxa:33:28\tmain\tcalls wrapper (loops through sum) in the loop at calls.doxa:32:5\n");
+    // Mutual recursion settles, and a chain that neither allocates nor
+    // loops is no finding.
+    try testing.expect(std.mem.indexOf(u8, text, "calls ping") == null);
+}
+
+const rankedSource =
+    \\function make(n :: int) returns string {
+    \\    return "n{n}"
+    \\}
+    \\
+    \\entry function main() {
+    \\    var cold :: string[] is []
+    \\    for i while i < 2 do i += 1 {
+    \\        @push(cold, make(i))
+    \\    }
+    \\    var hot :: string[] is []
+    \\    for i while i < 50 do i += 1 {
+    \\        @push(hot, make(i))
+    \\    }
+    \\    @print("{@length(cold)} {@length(hot)}\n")
+    \\}
+;
+
+test "complexity: with line counts, findings are ranked by how often they ran" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+    const io = testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "ranked.doxa", .data = rankedSource });
+    const slot: harness.Slot = try .claim(allocator, io, "probe");
+    defer slot.release(allocator, io);
+
+    // Without counts, source order.
+    const out = try doxaStdout(allocator, &tmp, slot, &.{ "run", "ranked.doxa", "--emit-complexity" });
+    defer allocator.free(out);
+    try testing.expectEqualStrings("2 50\n", out);
+    const plain = try doxaStdout(allocator, &tmp, slot, &.{ "report", "ranked" });
+    defer allocator.free(plain);
+    const cold_call = "  ranked.doxa:8:21\tmain\tcalls make (allocates) in the loop at ranked.doxa:7:5";
+    const hot_call = "  ranked.doxa:12:20\tmain\tcalls make (allocates) in the loop at ranked.doxa:11:5";
+    try testing.expect(std.mem.indexOf(u8, plain, cold_call).? < std.mem.indexOf(u8, plain, hot_call).?);
+
+    // With an `--instrument=lines` run, the 50-iteration loop leads each
+    // section, and every row says how often its statement ran.
+    const counted_out = try doxaStdout(allocator, &tmp, slot, &.{ "run", "ranked.doxa", "--emit-complexity", "--instrument=lines" });
+    defer allocator.free(counted_out);
+    const counted = try doxaStdout(allocator, &tmp, slot, &.{ "report", "ranked" });
+    defer allocator.free(counted);
+    const hot = std.mem.indexOf(u8, counted, hot_call ++ " (ran 50 times)\n") orelse return error.TestExpectedContains;
+    const cold = std.mem.indexOf(u8, counted, cold_call ++ " (ran 2 times)\n") orelse return error.TestExpectedContains;
+    try testing.expect(hot < cold);
+    const hot_push = std.mem.indexOf(u8, counted, "  ! ranked.doxa:12:9\tmain\tarray_push") orelse return error.TestExpectedContains;
+    const cold_push = std.mem.indexOf(u8, counted, "  ! ranked.doxa:8:9\tmain\tarray_push") orelse return error.TestExpectedContains;
+    try testing.expect(hot_push < cold_push);
 }
 
 // ── Memory: --emit-memory and doxa report ──
@@ -1617,10 +1798,6 @@ const containerSource =
     \\    Blue,
     \\}
     \\
-    \\map Ages :: int returns int {
-    \\    1 then 20,
-    \\}
-    \\
     \\var flag :: int | string
     \\var tint is true
     \\var c is Color.Blue
@@ -1631,12 +1808,11 @@ const containerSource =
     \\    c is Color.Red
     \\    flag is 1
     \\    tint is false
-    \\    Ages[2] is 5
     \\    @print("{dynamic[0]} {fixed[1]} {@length(dynamic)}")
     \\}
 ;
 
-test "debug info: arrays, maps, unions and enumerations are described" {
+test "debug info: arrays, unions and enumerations are described" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const allocator = testing.allocator;
@@ -1652,12 +1828,12 @@ test "debug info: arrays, maps, unions and enumerations are described" {
     // A dynamic array is its header, with a typed data pointer and a length.
     try expectContains(ll, "!DICompositeType(tag: DW_TAG_structure_type, name: \"array\", ");
     try expectContains(ll, "!DIDerivedType(tag: DW_TAG_member, name: \"data\", ");
-    // A map is its header, with its length.
-    try expectContains(ll, "!DICompositeType(tag: DW_TAG_structure_type, name: \"map\", ");
-    // A union or group is the box, whose tag is the DoxaTag enumeration.
+    // A union or group is the box, whose tag is the DoxaTag enumeration,
+    // read from the runtime's own enum.
     try expectContains(ll, "!DICompositeType(tag: DW_TAG_structure_type, name: \"value\", ");
     try expectContains(ll, "!DICompositeType(tag: DW_TAG_enumeration_type, name: \"tag\", ");
-    try expectContains(ll, "!DIEnumerator(name: \"Map\", value: 10)");
+    try expectContains(ll, "!DIEnumerator(name: \"Function\", value: 9)");
+    try testing.expect(std.mem.indexOf(u8, ll, "!DIEnumerator(name: \"Map\"") == null);
     // An enum and a tetra are enumerations of their values.
     try expectContains(ll, "!DICompositeType(tag: DW_TAG_enumeration_type, name: \"Color\", ");
     try expectContains(ll, "!DIEnumerator(name: \"Blue\", value: 2)");
@@ -1722,6 +1898,16 @@ fn section(file: []const u8, name: []const u8) ?[]const u8 {
         return file[@intCast(s.sh_offset)..][0..@intCast(s.sh_size)];
     }
     return null;
+}
+
+/// The `NT_GNU_BUILD_ID` note's ID in `file`, if it has one.
+fn buildId(file: []const u8) ?[]const u8 {
+    const note = section(file, ".note.gnu.build-id") orelse return null;
+    const name_size = std.mem.readInt(u32, note[0..4], .little);
+    const id_size = std.mem.readInt(u32, note[4..8], .little);
+    if (std.mem.readInt(u32, note[8..12], .little) != std.elf.NT_GNU_BUILD_ID) return null;
+    const id_start = 12 + std.mem.alignForward(usize, name_size, 4);
+    return note[id_start..][0..id_size];
 }
 
 fn hasSection(file: []const u8, name: []const u8) !bool {

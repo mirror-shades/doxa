@@ -16,24 +16,27 @@ public struct Context {
 }
 
 public struct SourceManager {
-    var map FileToContext :: string returns Context
+    files :: Context[]
 
     public function new() returns SourceManager {
         return $SourceManager {
-            FileToContext is {}
+            files is []
         }
     }
 
     public method addFile(_name :: string, _literal :: string, _line_breaks :: int[]) {
-        this.FileToContext[_name] is Context.new(_name, _literal, _line_breaks)
+        @push(this.files, Context.new(_name, _literal, _line_breaks))
     }
 
     public method getFile(_name :: string) returns Context {
-        return this.FileToContext[_name]
+        each context in this.files {
+            if context.name == _name then return context
+        }
+        @panic("no source file named {_name}")
     }
 
     public method getLineColumn(file :: string, offset :: int) returns Pair {
-        const line_break_context is this.FileToContext[file].line_breaks
+        const line_break_context is this.getFile(file).line_breaks
         var line_number is 1
         each lb in line_break_context {
             if offset > lb then {
@@ -48,7 +51,7 @@ public struct SourceManager {
     }
 
     public method hasFile(_name :: string) returns tetra {
-        each context in FileToContext {
+        each context in this.files {
             if context.name == _name then return true
         }
         return false

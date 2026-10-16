@@ -301,24 +301,6 @@ test "register hir verifier: scopes are closed before a return" {
     try expectFault(a, &no_program, &f, "still open");
 }
 
-test "register hir verifier: a map is made only in the root arena" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-
-    // A map in a function's own arena would make its copies real copies;
-    // every map is a program-level declaration in the root arena instead.
-    const key: ir.HIRType = .Int;
-    const value: ir.HIRType = .String;
-    const map: Type = .of(.{ .Map = .{ .key = &key, .value = &value } });
-    var fx = try ArenaFixture.init(a, "local_map", .Nothing);
-    _ = try fx.b.define(.{ .map_new = .{ .arena = fx.body, .else_value = null } }, map);
-    try fx.b.effect(.{ .scope_exit = .{ .arena = fx.body } });
-    try fx.b.ret(null);
-    const f = try fx.b.finish();
-    try expectFault(a, &no_program, &f, "not the root arena");
-}
-
 test "register hir verifier: nothing is used after its arena closes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
