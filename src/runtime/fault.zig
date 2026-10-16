@@ -117,9 +117,10 @@ fn writeBacktrace(first: usize) void {
     if (!std.options.allow_stack_tracing) return noBacktrace("stack tracing is disabled in this runtime", null);
     const info = std.debug.getSelfDebugInfo() catch |err| return noBacktrace("cannot read the program's debug information", err);
     var addresses: [64]usize = undefined;
-    // A fault is a crash, so the unwinder may fall back to frame pointers
-    // where unwind information fails, as Zig's own panic handler does.
-    const trace = std.debug.captureCurrentStackTrace(.{ .first_address = first, .allow_unsafe_unwind = true }, &addresses);
+    // Only safe unwinding: a fault handler must never crash or hang. An
+    // unsafe frame-pointer walk read garbage on macOS (a crash after the
+    // fault's line, or a hang).
+    const trace = std.debug.captureCurrentStackTrace(.{ .first_address = first }, &addresses);
     if (trace.return_addresses.len == 0) return noBacktrace("the stack could not be unwound to the faulting frame", null);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();

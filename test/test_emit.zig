@@ -1005,27 +1005,26 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     defer allocator.free(traced);
     try testing.expectEqualStrings(frames, traced);
 
-    // Optimized, the trace keeps the frames that survive inlining and still
-    // ends at the entry. Every frame is the program's, and the last is
-    // `main`, kept out of line by `__doxa_enter`.
+    // Optimized, the trace keeps the frames that survive inlining, and still
+    // ends at the entry: every frame is the program's, and none is
+    // `<globals>`.
     const optimized = try runFault(allocator, &tmp, faultSource, &.{"-O2"});
     defer allocator.free(optimized);
     try testing.expectStringStartsWith(optimized, headline);
     var frame_lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, optimized[headline.len..], "\n"), '\n');
-    var last: []const u8 = "";
     var count: usize = 0;
     while (frame_lines.next()) |frame| : (count += 1) {
         try testing.expectStringStartsWith(frame, "  in ");
         try expectContains(frame, " at probe.doxa:");
-        last = frame;
     }
     try testing.expect(count >= 1);
-    try testing.expectStringStartsWith(last, "  in main at probe.doxa:");
+    try testing.expect(std.mem.indexOf(u8, optimized, "<globals>") == null);
     // The PDB reader resolves inlined frames, so on Windows each still shows,
     // innermost first; CodeView often records no column there. Zig's DWARF
     // reader does not resolve them (`Dwarf.getSymbols` ignores
-    // `resolve_inline_callers`), so elsewhere an inlined frame's code is
-    // reported under the function it was inlined into.
+    // `resolve_inline_callers`): elsewhere a function with calls inlined into
+    // it shows one frame, named for the innermost inlined function at its
+    // line (`in get at probe.doxa:2:12` for the whole chain).
     if (builtin.os.tag == .windows) {
         const get = std.mem.indexOf(u8, optimized, "  in get at probe.doxa:2:") orelse return error.TestExpectedContains;
         const outer = std.mem.indexOf(u8, optimized, "  in outer at probe.doxa:6:") orelse return error.TestExpectedContains;

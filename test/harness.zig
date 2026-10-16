@@ -10,10 +10,12 @@ const platform = @import("platform");
 const process = @import("process.zig");
 
 /// The deadline for one `doxa` invocation. A cold cache builds the runtime
-/// object before anything else, which takes seconds on its own and longer with
-/// every worker doing it at once, so this sits far above any case's honest
-/// cost. It exists to turn a hang into a named failure, not to measure speed.
-pub const timeout = Io.Duration.fromSeconds(120);
+/// object, and for a target not built before Zig's libc and compiler_rt,
+/// before anything else: a minute on its own on a CI runner, and several
+/// with every worker doing it at once (120 s proved too short on 4-core
+/// Windows runners). So this sits far above any case's honest cost. It
+/// exists to turn a hang into a named failure, not to measure speed.
+pub const timeout = Io.Duration.fromSeconds(600);
 
 /// The installed compiler under test, run from the repository root.
 pub const Doxa = struct {
