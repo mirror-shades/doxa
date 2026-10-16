@@ -192,6 +192,14 @@ const TargetTriple = struct {
         return std.mem.eql(u8, self.os, "windows");
     }
 
+    /// An Apple OS, whose ABI requires a frame record in every function.
+    fn isDarwin(self: TargetTriple) bool {
+        for ([_][]const u8{ "macos", "ios", "tvos", "watchos", "visionos" }) |os| {
+            if (std.mem.eql(u8, self.os, os)) return true;
+        }
+        return false;
+    }
+
     /// Append `-target <triple>` to `args`. Native builds still pass an
     /// explicit host triple so the bundled Zig resolves its own C runtime
     /// objects instead of the host's; some host `crt1.o` files carry
@@ -844,7 +852,7 @@ fn compileToNative(
             .format = if (target.isWindows()) .codeview else .dwarf,
             .optimized = cli_options.opt.level != .o0,
         } else null;
-        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, debug_options, cli_options.instrument);
+        var emitter = try llvm_emit.Emitter.init(emit_alloc, module, debug_options, cli_options.instrument, target.isDarwin());
         var ll = std.Io.Writer.Allocating.init(emit_alloc);
         emitter.emit(&ll.writer) catch |err| {
             if (err == error.EmitFault) reporter.reportInternal("the emitter rejected the register HIR: {s}. This is a compiler bug, not an error in the program", .{emitter.fault.?}, @src());

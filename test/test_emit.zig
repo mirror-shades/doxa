@@ -638,7 +638,19 @@ test "module: every function carries the tune-cpu attribute group" {
     const ir_text = try emitIrFor(allocator, &tmp, probe, "--opt=0");
     defer allocator.free(ir_text);
 
-    try testing.expect(std.mem.indexOf(u8, ir_text, "attributes #0 = { \"tune-cpu\"=\"generic\" }") != null);
+    const plain_group = "attributes #0 = { \"tune-cpu\"=\"generic\" }";
+    const darwin_group = "attributes #0 = { \"tune-cpu\"=\"generic\" \"frame-pointer\"=\"non-leaf\" }";
+    try expectContains(ir_text, if (builtin.os.tag.isDarwin()) darwin_group else plain_group);
+
+    // Darwin's ABI requires a frame record in every function: unwinders,
+    // profilers and the runtime's backtrace walk the frame-pointer chain.
+    // Elsewhere the code is left as it was.
+    const darwin = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = probe }}, &.{ "--opt=0", "--strip", "--arch=aarch64", "--os=macos" }, "ll");
+    defer allocator.free(darwin);
+    try expectContains(darwin, darwin_group);
+    const linux = try compileProbe(allocator, &tmp, &.{.{ .path = "probe.doxa", .data = probe }}, &.{ "--opt=0", "--strip", "--arch=x86_64", "--os=linux" }, "ll");
+    defer allocator.free(linux);
+    try expectContains(linux, plain_group);
 
     var defines: usize = 0;
     var lines = std.mem.splitScalar(u8, ir_text, '\n');

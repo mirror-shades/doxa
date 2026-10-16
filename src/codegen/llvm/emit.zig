@@ -49,8 +49,13 @@ pub const Emitter = struct {
     next_global: u32 = 0,
     /// A fault in the HIR the emitter was handed: a compiler bug.
     fault: ?[]const u8 = null,
-    /// Debug metadata, under `-g`.
+    /// Debug metadata, unless `--strip`.
     debug: ?debug.Debug = null,
+    /// Every function keeps a frame record (`"frame-pointer"="non-leaf"`):
+    /// the platform ABI requires it on Darwin, where unwinders, profilers
+    /// and the runtime's backtrace walk the frame-pointer chain. Clang sets
+    /// the same for C there.
+    frame_pointers: bool = false,
     /// What `--instrument=` asks the program to count.
     instrument: instrument.Members = .{},
     /// The instrumented sites, one `.profmap` line each, numbered by their
@@ -63,7 +68,7 @@ pub const Emitter = struct {
 
     /// `debug_options` asks for debug metadata (`-g`); without it the IR
     /// carries none. Without an `instrument` member it carries no counter.
-    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, debug_options: ?debug.Options, members: instrument.Members) !Emitter {
+    pub fn init(alloc: std.mem.Allocator, module: *const ir.Module, debug_options: ?debug.Options, members: instrument.Members, frame_pointers: bool) !Emitter {
         const entry = module.functions[@intFromEnum(module.init)].span.module;
         const layout = try Layout.init(alloc, module);
         return .{
@@ -73,6 +78,7 @@ pub const Emitter = struct {
             .ranges = Ranges.init(alloc, module),
             .globals = std.Io.Writer.Allocating.init(alloc),
             .instrument = members,
+            .frame_pointers = frame_pointers,
             .sites = std.Io.Writer.Allocating.init(alloc),
             .debug = if (debug_options) |options| try debug.Debug.init(alloc, &module.program, layout, entry, options) else null,
         };
@@ -96,7 +102,10 @@ pub const Emitter = struct {
         try w.writeAll(self.globals.written());
         if (self.uses_int_pow) try w.writeAll(int_pow);
         if (self.uses_byte_pow) try w.writeAll(byte_pow);
-        try w.writeAll("\nattributes #0 = { \"tune-cpu\"=\"generic\" }\n");
+        try w.writeAll(if (self.frame_pointers)
+            "\nattributes #0 = { \"tune-cpu\"=\"generic\" \"frame-pointer\"=\"non-leaf\" }\n"
+        else
+            "\nattributes #0 = { \"tune-cpu\"=\"generic\" }\n");
         if (self.debug) |*d| try d.write(w);
     }
 
