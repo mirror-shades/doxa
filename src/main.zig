@@ -23,6 +23,7 @@ const instrument = @import("./runtime/instrument.zig");
 const report = @import("./instrument/report.zig");
 const complexity = @import("./instrument/complexity.zig");
 const memory_report = @import("./instrument/memory.zig");
+const debug_split = @import("./debug_split.zig");
 
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -1046,6 +1047,10 @@ fn compileToNative(
         try target.appendTargetArg(&args_ln);
         try target.appendCpuArg(&args_ln);
         try args_ln.append(cli_options.opt.zigFlag());
+        // `--strip` leaves no debug information in the binary at all: none
+        // of the program's, and none of the runtime's or libc's, which is
+        // most of an ELF binary's size.
+        if (!cli_options.debug_info) try args_ln.append("-fstrip");
         try args_ln.append("-lc");
         if (target.isWindows() and inline_zig_wrapper_paths.len > 0) {
             try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
@@ -1089,6 +1094,53 @@ fn compileToNative(
             },
         }
     }
+
+    // An ELF binary's debug information goes beside it, in `<binary>.debug`,
+    // as Windows keeps a `.pdb` (`debug_split.zig`). A build without it
+    // leaves no stale one.
+    if (!target.isWindows() and !target.isDarwin()) {
+        const debug_path = try std.mem.concat(allocator, u8, &.{ exe, ".debug" });
+        defer allocator.free(debug_path);
+        if (cli_options.debug_info) {
+            profiler.begin("split-debug");
+            defer profiler.end();
+            try splitDebugInfo(io, allocator, reporter, exe, debug_path);
+        } else try removeSideFile(io, debug_path);
+    }
+}
+
+/// Move `exe` to `debug_path` and write the binary to ship, without its debug
+/// sections, in its place. Each file is whole before it takes its name.
+fn splitDebugInfo(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, exe: []const u8, debug_path: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    const linked = try cwd.readFileAlloc(io, exe, allocator, .unlimited);
+    defer allocator.free(linked);
+    const stripped = debug_split.strip(allocator, linked, std.fs.path.basename(debug_path), std.hash.crc.Crc32.hash(linked)) catch |err| switch (err) {
+        // TODO: a big-endian target keeps its debug information inside.
+        error.UnsupportedElf => return,
+        error.MalformedElf => {
+            reporter.reportInternal("the linker wrote an ELF file the debug-information split cannot read. This is a compiler bug, not an error in the program", .{}, @src());
+            return error.Unexpected;
+        },
+        error.OutOfMemory => |e| return e,
+    };
+    defer allocator.free(stripped);
+
+    const staged = try std.mem.concat(allocator, u8, &.{ exe, ".stripped" });
+    defer allocator.free(staged);
+    {
+        const original = try cwd.openFile(io, exe, .{});
+        defer original.close(io);
+        const permissions = (try original.stat(io)).permissions;
+        const file = try cwd.createFile(io, staged, .{ .permissions = permissions });
+        defer file.close(io);
+        var buffer: [64 * 1024]u8 = undefined;
+        var writer = file.writer(io, &buffer);
+        try writer.interface.writeAll(stripped);
+        try writer.end();
+    }
+    try std.Io.Dir.rename(cwd, exe, cwd, debug_path, io);
+    try std.Io.Dir.rename(cwd, staged, cwd, exe, io);
 }
 
 // Spawn the native binary produced for `doxa run`. `program_args[0]` is the

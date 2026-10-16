@@ -929,13 +929,50 @@ test "debug info: a local holding a parameter's value is not that parameter" {
     try testing.expect(std.mem.indexOf(u8, ll[current..line_end], "arg:") == null);
 }
 
+test "debug info: a Linux binary ships without its debug information, which a .gnu_debuglink names" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const binary = try compileProbeLinux(allocator, &tmp, localsSource, &.{}, "");
+    defer allocator.free(binary);
+    const debug = try firstOutput(allocator, &tmp, ".debug");
+    defer allocator.free(debug);
+
+    // The DWARF is in the debug file, not the binary.
+    try testing.expect(try hasSection(debug, ".debug_info"));
+    try testing.expect(!try hasSection(binary, ".debug_info"));
+    try testing.expect(!try hasSection(binary, ".debug_line"));
+    try testing.expect(try hasSection(binary, ".gnu_debuglink"));
+    try testing.expect(try hasSection(binary, ".eh_frame"));
+    try testing.expect(binary.len < debug.len);
+    // `.gnu_debuglink` names the file beside the binary, then holds its
+    // CRC-32, four-byte aligned after the name.
+    const link = section(binary, ".gnu_debuglink").?;
+    const name = link[0..std.mem.indexOfScalar(u8, link, 0).?];
+    try testing.expect(std.mem.startsWith(u8, name, "probe-") and std.mem.endsWith(u8, name, ".debug"));
+    try testing.expect(std.mem.indexOfScalar(u8, name, '/') == null);
+    const crc_at = std.mem.alignForward(usize, name.len + 1, 4);
+    try testing.expectEqual(std.hash.crc.Crc32.hash(debug), std.mem.readInt(u32, link[crc_at..][0..4], .little));
+
+    // `--strip` leaves no debug information anywhere, and no `.debug` file.
+    var stripped_tmp = testing.tmpDir(.{});
+    defer stripped_tmp.cleanup();
+    const stripped = try compileProbeLinux(allocator, &stripped_tmp, localsSource, &.{"--strip"}, "");
+    defer allocator.free(stripped);
+    try testing.expect(!try hasSection(stripped, ".debug_info"));
+    try testing.expect(!try hasSection(stripped, ".gnu_debuglink"));
+    try testing.expectError(error.NoSuchOutput, firstOutput(allocator, &stripped_tmp, ".debug"));
+}
+
 test "debug info: the object carries local names" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const allocator = testing.allocator;
 
-    // DWARF, read from a Linux executable.
-    const elf = try compileProbeLinux(allocator, &tmp, localsSource, &.{});
+    // DWARF, read from the `.debug` file a Linux build writes beside the
+    // binary.
+    const elf = try compileProbeLinux(allocator, &tmp, localsSource, &.{}, ".debug");
     defer allocator.free(elf);
     try expectContains(elf, "total");
     try expectContains(elf, "Point");
@@ -1667,11 +1704,46 @@ fn firstOutput(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, ext: []co
     return error.NoSuchOutput;
 }
 
-/// Compiles `source` for Linux with `flags` and returns the linked binary.
-fn compileProbeLinux(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8, flags: []const []const u8) ![]u8 {
+/// The contents of the section named `name` in the little-endian ELF64 file
+/// `file`, if it has one. The section headers decide it, not the bytes: the
+/// runtime's own code holds section names and `.debug` paths as strings.
+fn section(file: []const u8, name: []const u8) ?[]const u8 {
+    const Shdr = std.elf.Elf64_Shdr;
+    const header = std.mem.bytesToValue(std.elf.Elf64_Ehdr, file[0..@sizeOf(std.elf.Elf64_Ehdr)]);
+    const headers = file[@intCast(header.e_shoff)..];
+    const strings_header = std.mem.bytesToValue(Shdr, headers[header.e_shstrndx * @sizeOf(Shdr) ..][0..@sizeOf(Shdr)]);
+    const strings = file[@intCast(strings_header.sh_offset)..][0..@intCast(strings_header.sh_size)];
+    for (0..header.e_shnum) |i| {
+        const s = std.mem.bytesToValue(Shdr, headers[i * @sizeOf(Shdr) ..][0..@sizeOf(Shdr)]);
+        if (s.sh_type == std.elf.SHT_NULL) continue;
+        const start = strings[s.sh_name..];
+        if (!std.mem.eql(u8, start[0..std.mem.indexOfScalar(u8, start, 0).?], name)) continue;
+        if (s.sh_type == std.elf.SHT_NOBITS) return &.{};
+        return file[@intCast(s.sh_offset)..][0..@intCast(s.sh_size)];
+    }
+    return null;
+}
+
+fn hasSection(file: []const u8, name: []const u8) !bool {
+    return section(file, name) != null;
+}
+
+/// Compiles `source` for Linux with `flags` and returns the output with
+/// extension `ext`: the binary (`""`), or its debug information (`.debug`).
+fn compileProbeLinux(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8, flags: []const []const u8, ext: []const u8) ![]u8 {
     const all = try std.mem.concat(allocator, []const u8, &.{ flags, &.{ "--arch=x86_64", "--os=linux" } });
     defer allocator.free(all);
     const ll = try compileProbe(allocator, tmp, &.{.{ .path = "probe.doxa", .data = source }}, all, "ll");
     defer allocator.free(ll);
-    return firstOutput(allocator, tmp, "");
+    if (ext.len != 0) return firstOutput(allocator, tmp, ext);
+    // The binary has no extension: the one `probe-*` file without a dot.
+    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
+    defer bin.close(testing.io);
+    var it = bin.iterate();
+    while (try it.next(testing.io)) |entry| {
+        if (std.mem.startsWith(u8, entry.name, "probe-") and std.mem.indexOfScalar(u8, entry.name, '.') == null) {
+            return bin.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
+        }
+    }
+    return error.NoSuchOutput;
 }
