@@ -57,11 +57,6 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
             return true;
         },
 
-        .Map => {
-            if (a.map_key_type == null or b.map_key_type == null or a.map_value_type == null or b.map_value_type == null) return false;
-            return typesEqual(self, a.map_key_type.?, b.map_key_type.?) and typesEqual(self, a.map_value_type.?, b.map_value_type.?);
-        },
-
         .Function => {
             if (a.function_type == null or b.function_type == null) return false;
             const af = a.function_type.?;

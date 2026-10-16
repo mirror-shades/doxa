@@ -85,7 +85,6 @@ pub fn copyReason(f: *const ir.Function, value: ValueId) ir.CopyReason {
                 .array_set => |st| if (st.value == value) .element else null,
                 .array_push => |st| if (st.value == value) .element else null,
                 .array_insert => |st| if (st.value == value) .element else null,
-                .map_set => |st| if (st.value == value) .element else null,
                 .field_set => |st| if (st.value == value) .element else null,
                 .call => |c| if (std.mem.indexOfScalar(ValueId, c.args, value) != null) .argument else null,
                 .call_zig => |c| if (std.mem.indexOfScalar(ValueId, c.args, value) != null) .argument else null,
@@ -180,7 +179,7 @@ fn isRemovable(op: ir.Op) bool {
         .str_concat, .str_len, .str_substring, .str_last, .str_drop_last, .str_find, .str_insert, .str_remove,
         .str_char, .str_to_int, .str_to_float, .str_to_byte, .str_pack, .str_unpack, .to_string,
         .array_new, .array_from_fixed, .array_range, .array_get, .array_len, .array_slice, .array_concat, .array_find,
-        .map_new, .map_get, .struct_new, .field_get, .load, .global_load, .clone, .rehome,
+        .struct_new, .field_get, .load, .global_load, .clone, .rehome,
         => true,
         else => false,
     };

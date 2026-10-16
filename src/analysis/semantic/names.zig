@@ -257,8 +257,6 @@ pub fn resolveTypeInfo(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, module
     if (type_info.union_type) |union_type| {
         for (union_type.types) |member_type| try resolveTypeInfo(self, member_type, module, location);
     }
-    if (type_info.map_key_type) |key| try resolveTypeInfo(self, key, module, location);
-    if (type_info.map_value_type) |value| try resolveTypeInfo(self, value, module, location);
 }
 
 /// Resolve every named type in an annotation against `module`, recording the
@@ -273,10 +271,6 @@ pub fn resolveTypeExpr(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr, module
         .Array => |array| try resolveTypeExpr(self, array.element_type, module),
         .Struct => |fields| for (fields) |field| try resolveTypeExpr(self, field.type_expr, module),
         .Union => |types| for (types) |member_type| try resolveTypeExpr(self, member_type, module),
-        .Map => |map| {
-            if (map.key_type) |key| try resolveTypeExpr(self, key, module);
-            try resolveTypeExpr(self, map.value_type, module);
-        },
         .Basic, .Enum => {},
     }
 }

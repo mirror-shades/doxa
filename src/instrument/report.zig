@@ -192,6 +192,29 @@ fn writeTrace(w: *std.Io.Writer, alloc: std.mem.Allocator, report: Report) !void
     };
 }
 
+/// How often the statement at `at` (`file:line:col`) ran: the most any
+/// line counter on its line counted. The join of a static finding, which
+/// names a site, with an `--instrument=lines` run.
+pub fn lineCount(sites: []const Site, at: []const u8) u64 {
+    const colon = std.mem.lastIndexOfScalar(u8, at, ':') orelse return 0;
+    const head = at[0..colon];
+    const line_colon = std.mem.lastIndexOfScalar(u8, head, ':') orelse return 0;
+    const file = head[0..line_colon];
+    const line = std.fmt.parseInt(u32, head[line_colon + 1 ..], 10) catch return 0;
+    var most: u64 = 0;
+    for (sites) |s| {
+        if (!std.mem.eql(u8, s.kind, "line") or s.line != line or !std.mem.eql(u8, s.file, file)) continue;
+        most = @max(most, @as(u64, @intCast(@max(s.count, 0))));
+    }
+    return most;
+}
+
+/// Whether `sites` holds `--instrument=lines` counters.
+pub fn hasLines(sites: []const Site) bool {
+    for (sites) |s| if (std.mem.eql(u8, s.kind, "line")) return true;
+    return false;
+}
+
 fn eqlKind(s: Site, kind: []const u8) bool {
     return std.mem.eql(u8, s.kind, kind);
 }
@@ -346,7 +369,7 @@ pub fn command(io: std.Io, alloc: std.mem.Allocator, args: []const []const u8, d
     const w = &out.interface;
     (if (json) writeJson(w, .{ .profile = profile, .complexity = findings, .memory = memory_rows }) else text: {
         if (profile) |r| writeText(w, alloc, r) catch |err| break :text err;
-        if (findings) |f| complexity.writeText(w, f) catch |err| break :text err;
+        if (findings) |f| complexity.writeText(w, alloc, f, if (profile) |p| p.sites else null) catch |err| break :text err;
         if (memory_rows) |m| memory.writeText(w, m, if (profile) |r| r.sites else null) catch |err| break :text err;
     }) catch return 1;
     w.flush() catch return 1;

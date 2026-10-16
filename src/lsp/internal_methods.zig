@@ -80,7 +80,6 @@ fn typeLabel(t: ast.Type) []const u8 {
         .Struct => "struct",
         .Enum => "enum",
         .Custom => "custom",
-        .Map => "map",
         .Nothing => "nothing",
         .Union => "union",
     };

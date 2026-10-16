@@ -333,7 +333,7 @@ fn writePlain(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]con
     var mutated = [2]u64{ 0, 0 };
     for (rows) |r| if (eql(r.kind, "plain") and r.fields.len == 4) {
         const is_mutated = eql(r.fields[3], "1");
-        const runs: u64 = if (weighted) lineCount(sites.?, r.fields[0]) else 0;
+        const runs: u64 = if (weighted) report.lineCount(sites.?, r.fields[0]) else 0;
         try w.print("  {s} {s}\t{s}\t{s}\t{s}", .{ if (is_mutated) "!" else " ", r.fields[0], r.function, r.fields[1], if (eql(r.fields[2], "element")) "stored into a container" else "bound to a variable" });
         if (weighted) try w.print("\tran {d} time{s}", .{ runs, if (runs == 1) "" else "s" });
         try w.writeAll("\n");
@@ -347,22 +347,6 @@ fn writePlain(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]con
     try w.print("\nB adds between {d} and {d} copies at {d} sites", .{ mutated[0], total[0], total[0] });
     if (weighted) try w.print("; in this run, between {d} and {d} copies made", .{ mutated[1], total[1] });
     try w.writeAll(".\n");
-}
-
-/// How often the statement at `at` (`file:line:col`) ran: the most any
-/// line counter on its line counted.
-fn lineCount(sites: []const report.Site, at: []const u8) u64 {
-    const colon = std.mem.lastIndexOfScalar(u8, at, ':') orelse return 0;
-    const head = at[0..colon];
-    const line_colon = std.mem.lastIndexOfScalar(u8, head, ':') orelse return 0;
-    const file = head[0..line_colon];
-    const line = std.fmt.parseInt(u32, head[line_colon + 1 ..], 10) catch return 0;
-    var most: u64 = 0;
-    for (sites) |s| {
-        if (!eql(s.kind, "line") or s.line != line or !eql(s.file, file)) continue;
-        most = @max(most, @as(u64, @intCast(@max(s.count, 0))));
-    }
-    return most;
 }
 
 /// Where a retained value lands, and the fix the compiler knows of.

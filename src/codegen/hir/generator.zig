@@ -574,10 +574,6 @@ pub const Generator = struct {
                 try self.reflected_structs.put(self.alloc, key, {});
             },
             .Array => |a| try self.markReflected(a.element.*),
-            .Map => |m| {
-                try self.markReflected(m.key.*);
-                try self.markReflected(m.value.*);
-            },
             .Union => |u| for (u.members) |m| try self.markReflected(m.*),
             .Group, .Unknown, .Poison => self.force_struct_descriptors = true,
             .Int, .Byte, .Float, .String, .Tetra, .Nothing, .Enum, .Function => {},

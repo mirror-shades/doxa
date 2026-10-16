@@ -204,19 +204,6 @@ fn forEachChild(
         .StructLiteral => |sl| {
             for (sl.fields) |f| visit(f.value, name, found);
         },
-        .Map => |m| {
-            for (m.entries) |entry| {
-                visit(entry.key, name, found);
-                visit(entry.value, name, found);
-            }
-        },
-        .MapLiteral => |m| {
-            for (m.entries) |entry| {
-                visit(entry.key, name, found);
-                visit(entry.value, name, found);
-            }
-            if (m.else_value) |ev| visit(ev, name, found);
-        },
         .Exists => |q| {
             visit(q.array, name, found);
             visit(q.condition, name, found);

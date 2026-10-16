@@ -97,7 +97,6 @@ pub fn storeInto(op: ir.Op) ?struct { container: ValueId, value: ValueId } {
         .array_push => |s| .{ .container = s.array, .value = s.value },
         .array_set => |s| .{ .container = s.array, .value = s.value },
         .array_insert => |s| .{ .container = s.array, .value = s.value },
-        .map_set => |s| .{ .container = s.map, .value = s.value },
         .field_set => |s| .{ .container = s.object, .value = s.value },
         else => null,
     };

@@ -34,7 +34,6 @@ pub const TokenLiteral = union(enum) {
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
-    map: std.StringHashMap(TokenLiteral),
 };
 
 pub const CustomTypeKind = enum {

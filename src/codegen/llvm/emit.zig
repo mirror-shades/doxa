@@ -54,7 +54,8 @@ pub const Emitter = struct {
     /// Every function keeps a frame record (`"frame-pointer"="non-leaf"`):
     /// the platform ABI requires it on Darwin, where unwinders, profilers
     /// and the runtime's backtrace walk the frame-pointer chain. Clang sets
-    /// the same for C there.
+    /// the same for C there. Elsewhere it is off: it cost a call-bound
+    /// benchmark about 5% (`plan/diagnostics-follow-up.md` step 7).
     frame_pointers: bool = false,
     /// What `--instrument=` asks the program to count.
     instrument: instrument.Members = .{},
@@ -500,8 +501,6 @@ const prelude =
     \\declare i32 @doxa_str_cmp(ptr, i64, ptr, i64)
     \\declare void @doxa_str_concat(ptr, ptr, i64, ptr, i64, ptr, ptr)
     \\declare void @doxa_str_clone(ptr, ptr, i64, ptr, ptr)
-    \\declare ptr @doxa_str_clone_raw(ptr, ptr, i64)
-    \\declare void @doxa_str_from_cstr(ptr, ptr, ptr, ptr)
     \\declare void @doxa_substring(ptr, ptr, i64, i64, i64, ptr, ptr)
     \\declare void @doxa_str_insert(ptr, ptr, i64, i64, ptr, i64, ptr, ptr)
     \\declare i8 @doxa_str_remove(ptr, ptr, i64, i64, ptr, ptr)
@@ -547,13 +546,6 @@ const prelude =
     \\declare void @doxa_fixed_structs_default(ptr, ptr, i64, ptr)
     \\declare void @doxa_array_copy_to_fixed(ptr, ptr, ptr, i64, i64)
     \\declare void @doxa_array_copy_to_fixed_structs(ptr, ptr, i64, i64)
-    \\declare ptr @doxa_map_new(ptr, i64, i64, i64)
-    \\declare ptr @doxa_map_scope(ptr)
-    \\declare void @doxa_map_set_i64(ptr, i64, i64)
-    \\declare void @doxa_map_set_str(ptr, ptr, i64, i64)
-    \\declare void @doxa_map_set_else_i64(ptr, i64)
-    \\declare i8 @doxa_map_try_get_i64(ptr, i64, ptr)
-    \\declare i8 @doxa_map_try_get_str(ptr, ptr, i64, ptr)
     \\declare ptr @doxa_struct_new(ptr, ptr)
     \\declare ptr @doxa_struct_clone(ptr, ptr)
     \\declare ptr @doxa_struct_clone_scalar(ptr, i64, ptr)

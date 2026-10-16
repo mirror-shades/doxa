@@ -51,10 +51,6 @@ pub const TypeLowering = struct {
                 // is a dynamic array the analyzer tags `const_literal`.
                 .size = if (ti.array_storage == .fixed) @intCast(ti.array_size.?) else null,
             } },
-            .Map => .{ .Map = .{
-                .key = try self.lowered(ti.map_key_type orelse return error.IncompleteType),
-                .value = try self.lowered(ti.map_value_type orelse return error.IncompleteType),
-            } },
             .Enum, .Struct, .Custom => self.named((ti.custom_type orelse return error.IncompleteType).resolved()),
             .Function => blk: {
                 const ft = ti.function_type orelse return error.IncompleteType;

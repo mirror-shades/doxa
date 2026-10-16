@@ -22,7 +22,6 @@ pub const HIRType = union(enum) {
     /// array. The two are distinct types with distinct representations, and
     /// fixed-to-dynamic is the explicit `array_from_fixed` conversion.
     Array: struct { element: *const HIRType, size: ?u32 = null },
-    Map: struct { key: *const HIRType, value: *const HIRType },
 
     Struct: StructId,
     Enum: EnumId,
@@ -48,7 +47,6 @@ pub const HIRType = union(enum) {
         return switch (a) {
             .Int, .Byte, .Float, .String, .Tetra, .Nothing, .Unknown, .Poison => true,
             .Array => |array| array.size == b.Array.size and array.element.eql(b.Array.element.*),
-            .Map => |map| map.key.eql(b.Map.key.*) and map.value.eql(b.Map.value.*),
             .Struct => |id| id == b.Struct,
             .Enum => |id| id == b.Enum,
             .Group => |id| id == b.Group,

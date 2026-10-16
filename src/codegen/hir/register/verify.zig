@@ -11,10 +11,7 @@
 //!    no value is used once its arena is closed or reset; a heap value stored
 //!    into a slot, a global or a `^` target, or returned, lives in an arena
 //!    that outlives the destination — or reaches it through `clone`/`rehome`.
-//!    Container stores re-home at runtime and are exempt. A map is made only
-//!    in the root arena (it is a program-level declaration), so every map
-//!    value lives there wherever it is read from, and a copy of one is the
-//!    map itself.
+//!    Container stores re-home at runtime and are exempt.
 //! 5. Aliases: a `ref` is the address of a slot or a `^` parameter, is never
 //!    a block parameter, and no call takes two `^` arguments naming one slot;
 //!    a `^` argument travels with the arena that owns its slot.
@@ -717,28 +714,6 @@ const Verifier = struct {
                 try self.expectDoxa(a.value, array.element.*);
                 try self.resultIs(inst, .{ .doxa = .Int });
             },
-            .map_new => |m| {
-                try self.expectArena(m.arena);
-                const t = try self.resultDoxa(inst);
-                if (t != .Map) return self.fail("map.new yields a non-map", .{});
-                if (m.else_value) |e| try self.storesAs(e, t.Map.value.*);
-            },
-            .map_get => |m| {
-                const map = try self.expectTag(m.map, .Map);
-                try self.expectDoxa(m.key, map.key.*);
-                // A map with an `else` yields its value type; one without
-                // yields `value | nothing`, which the analyzer typed.
-                const t = try self.resultDoxa(inst);
-                if (!t.eql(map.value.*) and !(t == .Union and try self.isMember(t, map.value.*) and try self.isMember(t, .Nothing))) {
-                    return self.fail("map.get yields neither the value type nor value | nothing", .{});
-                }
-            },
-            .map_set => |m| {
-                const map = try self.expectTag(m.map, .Map);
-                try self.expectDoxa(m.key, map.key.*);
-                try self.storesAs(m.value, map.value.*);
-                try self.noResult(inst);
-            },
             .struct_new => |s| {
                 try self.expectArena(s.arena);
                 const t = try self.resultDoxa(inst);
@@ -1056,9 +1031,6 @@ const Verifier = struct {
     /// The region of the heap value `inst` defines; null while an operand's
     /// region is still unknown in the fixpoint.
     fn regionOf(self: *Verifier, inst: ir.Inst) Error!?Region {
-        // A map lives in the root arena however it is reached: an element or
-        // a field holds the declaration's map, never a copy (rule 4).
-        if (self.typeOf(inst.result.?).doxa == .Map) return .root;
         return switch (inst.op) {
             .constant => .static,
             .str_concat => |s| .{ .arena = s.arena },
@@ -1074,14 +1046,12 @@ const Verifier = struct {
             .array_range => |a| .{ .arena = a.arena },
             .array_slice => |a| .{ .arena = a.arena },
             .array_concat => |a| .{ .arena = a.arena },
-            .map_new => |m| .{ .arena = m.arena },
             .struct_new => |s| .{ .arena = s.arena },
             .clone, .rehome => |c| .{ .arena = c.arena },
             // An element lives in its container's arena.
             .array_get => |a| self.region[@intFromEnum(a.array)],
             .array_pop => |u| self.region[@intFromEnum(u.operand)],
             .array_remove => |a| self.region[@intFromEnum(a.array)],
-            .map_get => |m| self.region[@intFromEnum(m.map)],
             .field_get => |g| self.region[@intFromEnum(g.object)],
             // A box shares its member's storage.
             .box, .unbox, .repack => |u| if (self.typeOf(u.operand).isHeap()) self.region[@intFromEnum(u.operand)] else .static,
@@ -1225,9 +1195,6 @@ const Verifier = struct {
                 open.items[open.items.len - 1] = inst.result.?;
             },
             .store => |s| try self.checkStore(s.value, self.refArena(s.ref)),
-            .map_new => |m| if (self.arena_kind[@intFromEnum(m.arena)].? != .root) {
-                return self.fail("makes a map in %{d}, not the root arena; a map is a program-level declaration", .{@intFromEnum(m.arena)});
-            },
             .global_store => |g| if (self.typeOf(g.value).isHeap()) {
                 const region = self.region[@intFromEnum(g.value)].?;
                 if (!self.regionOutlives(region, .root)) return self.fail("stores %{d} into a global without re-homing it to the root arena", .{@intFromEnum(g.value)});

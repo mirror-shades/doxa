@@ -26,7 +26,7 @@ pub fn doxaType(t: HIRType) []const u8 {
         .Tetra => "i2",
         .String => "%DoxaString",
         .Union, .Group => "%DoxaValue",
-        .Array, .Map, .Struct, .Function => "ptr",
+        .Array, .Struct, .Function => "ptr",
         // `nothing` has one value and no storage; it is an `i1 0` wherever a
         // value of it must be spelled.
         .Nothing => "i1",
@@ -67,8 +67,8 @@ pub fn elementTag(t: HIRType) u64 {
         .Struct => Tag.structure,
         .Enum => Tag.enumeration,
         .Union, .Group => Tag.value,
-        // A map or function element is a pointer the runtime never walks.
-        .Map, .Function => 255,
+        // A function element is a pointer the runtime never walks.
+        .Function => 255,
         .Unknown, .Poison => unreachable,
     };
 }
@@ -76,7 +76,7 @@ pub fn elementTag(t: HIRType) u64 {
 /// Bytes one element of `t` occupies in a dynamic array.
 pub fn elementSize(t: HIRType) u64 {
     return switch (t) {
-        .Int, .Float, .Enum, .Array, .Struct, .Map, .Function => 8,
+        .Int, .Float, .Enum, .Array, .Struct, .Function => 8,
         .Byte, .Tetra => 1,
         .String => 16,
         .Union, .Group => @sizeOf(rt.DoxaValue),
@@ -108,7 +108,6 @@ pub fn valueTag(t: HIRType) rt.DoxaTag {
         .Tetra => .Tetra,
         .Nothing => .Nothing,
         .Function => .Function,
-        .Map => .Map,
         .Union, .Group, .Unknown, .Poison => unreachable, // a box holds no box
     };
 }
@@ -206,8 +205,7 @@ pub const Layout = struct {
 
     /// Which structs may skip their descriptor. A struct needs one when its
     /// fields are not all scalar, when a reflection site reaches it, or when
-    /// a runtime operation finds it by address: as a map key or value, a box
-    /// member, an element of a nested dynamic array, or a field of a struct
+    /// a runtime operation finds it by address: as a box member, an element of a nested dynamic array, or a field of a struct
     /// that keeps its descriptor and is reflected.
     pub fn init(alloc: std.mem.Allocator, module: *const ir.Module) !Layout {
         const fields = module.program.struct_fields;
@@ -251,10 +249,6 @@ pub const Layout = struct {
         fn value(self: *NeedsVisitor, t: HIRType) void {
             switch (t) {
                 .Array => |a| self.element(a.element.*, a.size != null),
-                .Map => |m| {
-                    self.nested(m.key.*);
-                    self.nested(m.value.*);
-                },
                 .Union => |u| for (u.members) |m| self.nested(m.*),
                 .Group => |gid| for (self.program.group_members[gid]) |m| self.nested(m),
                 .Function => |f| {
@@ -279,10 +273,6 @@ pub const Layout = struct {
             switch (t) {
                 .Struct => |id| self.needs[id] = true,
                 .Array => |a| self.nested(a.element.*),
-                .Map => |m| {
-                    self.nested(m.key.*);
-                    self.nested(m.value.*);
-                },
                 .Union => |u| for (u.members) |m| self.nested(m.*),
                 .Group => |gid| for (self.program.group_members[gid]) |m| self.nested(m),
                 .Function => |f| {

@@ -205,7 +205,7 @@ const FunctionEmitter = struct {
                 };
                 const ptr = switch (t) {
                     .String => (try ctx.fx.stringParts(ctx.fx.name(v))).ptr,
-                    .Array, .Struct, .Map => ctx.fx.name(v),
+                    .Array, .Struct => ctx.fx.name(v),
                     else => return,
                 };
                 const site = try ctx.fx.e.faultSite(.use_after_reclaim, ctx.fx.span);
@@ -534,9 +534,6 @@ const FunctionEmitter = struct {
                 }
             },
 
-            .map_new => |m| try self.mapNew(inst, m.arena, m.else_value),
-            .map_get => |m| try self.mapGet(inst, m.map, m.key),
-            .map_set => |m| try self.mapSet(m.map, m.key, m.value),
 
             .struct_new => |s| try self.structNew(inst, s.arena, s.fields),
             .field_get => |g| try self.fieldGet(inst, g.object, g.index),
@@ -881,7 +878,7 @@ const FunctionEmitter = struct {
             .Tetra => self.tmp("zext i2 {s} to i64", .{v}),
             .Float => self.tmp("bitcast double {s} to i64", .{v}),
             .Nothing => "0",
-            .Array, .Map, .Struct, .Function => self.tmp("ptrtoint ptr {s} to i64", .{v}),
+            .Array, .Struct, .Function => self.tmp("ptrtoint ptr {s} to i64", .{v}),
             .String, .Union, .Group, .Unknown, .Poison => self.e.faultf("stores a {s} as one word", .{@tagName(t)}),
         };
     }
@@ -894,7 +891,7 @@ const FunctionEmitter = struct {
             .Tetra => self.tmp("trunc i64 {s} to i2", .{bits}),
             .Float => self.tmp("bitcast i64 {s} to double", .{bits}),
             .Nothing => "0",
-            .Array, .Map, .Struct, .Function => self.tmp("inttoptr i64 {s} to ptr", .{bits}),
+            .Array, .Struct, .Function => self.tmp("inttoptr i64 {s} to ptr", .{bits}),
             .String, .Union, .Group, .Unknown, .Poison => self.e.faultf("reads a {s} from one word", .{@tagName(t)}),
         };
     }
@@ -980,7 +977,6 @@ const FunctionEmitter = struct {
             else
                 self.stringCall("doxa_array_to_string", "ptr {s}, ptr {s}", .{ arena, v }),
             .Union, .Group => self.stringCall("doxa_value_to_string", "ptr {s}, ptr {s}", .{ arena, try self.spillValue(v) }),
-            .Map => self.e.stringConstant("<map>"),
             .Function => self.e.stringConstant("<function>"),
             .Unknown, .Poison => unreachable,
         };
@@ -1260,101 +1256,6 @@ const FunctionEmitter = struct {
             .Union, .Group => try self.line("call void @doxa_array_insert_value(ptr {s}, i64 {s}, ptr {s})", .{ a, i, try self.spillValue(v) }),
             else => try self.line("call void @doxa_array_insert(ptr {s}, i64 {s}, i64 {s})", .{ a, i, try self.storageBits(v, element) }),
         }
-    }
-
-    // ── Maps ──
-    //
-    // A map stores raw `i64` words: a string key or value as a C string in
-    // the map's own arena, a box as a pointer to a `%DoxaValue` there.
-
-    fn mapWord(self: *FunctionEmitter, map: []const u8, v: []const u8, t: HIRType) Error![]const u8 {
-        return switch (t) {
-            .String => blk: {
-                const scope = try self.tmp("call ptr @doxa_map_scope(ptr {s})", .{map});
-                const s = try self.stringParts(v);
-                const raw = try self.tmp("call ptr @doxa_str_clone_raw(ptr {s}, ptr {s}, i64 {s})", .{ scope, s.ptr, s.len });
-                break :blk self.tmp("ptrtoint ptr {s} to i64", .{raw});
-            },
-            .Union, .Group => blk: {
-                const scope = try self.tmp("call ptr @doxa_map_scope(ptr {s})", .{map});
-                const cell = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 24, i64 8)", .{scope});
-                try self.line("store %DoxaValue {s}, ptr {s}", .{ v, cell });
-                break :blk self.tmp("ptrtoint ptr {s} to i64", .{cell});
-            },
-            else => self.storageBits(v, t),
-        };
-    }
-
-    /// The value a map word holds; a string is copied into `arena`.
-    fn mapValue(self: *FunctionEmitter, arena: []const u8, bits: []const u8, t: HIRType) Error![]const u8 {
-        return switch (t) {
-            .String => self.stringCall("doxa_str_from_cstr", "ptr {s}, ptr {s}", .{ arena, try self.tmp("inttoptr i64 {s} to ptr", .{bits}) }),
-            .Union, .Group => self.tmp("load %DoxaValue, ptr {s}", .{try self.tmp("inttoptr i64 {s} to ptr", .{bits})}),
-            else => self.fromBits(bits, t),
-        };
-    }
-
-    fn mapNew(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, else_value: ?ValueId) Error!void {
-        const t = self.f.typeOf(inst.result.?).doxa;
-        try self.def(inst, "call ptr @doxa_map_new(ptr {s}, i64 0, i64 {d}, i64 {d})", .{ self.name(arena), layout.elementTag(t.Map.key.*), layout.elementTag(t.Map.value.*) });
-        if (else_value) |ev| {
-            const map = self.name(inst.result.?);
-            try self.line("call void @doxa_map_set_else_i64(ptr {s}, i64 {s})", .{ map, try self.mapWord(map, self.name(ev), t.Map.value.*) });
-        }
-    }
-
-    fn mapSet(self: *FunctionEmitter, map: ValueId, key: ValueId, value: ValueId) Error!void {
-        const t = self.doxaOf(map).Map;
-        const m = self.name(map);
-        const v = try self.mapWord(m, self.name(value), t.value.*);
-        if (t.key.* == .String) {
-            // The runtime copies a new key into the map's arena.
-            const k = try self.stringParts(self.name(key));
-            try self.line("call void @doxa_map_set_str(ptr {s}, ptr {s}, i64 {s}, i64 {s})", .{ m, k.ptr, k.len, v });
-            return;
-        }
-        try self.line("call void @doxa_map_set_i64(ptr {s}, i64 {s}, i64 {s})", .{ m, try self.storageBits(self.name(key), t.key.*), v });
-    }
-
-    /// Look `key` up in `map`; the found word is written to `slot`. A string
-    /// key is compared in place.
-    fn mapLookup(self: *FunctionEmitter, map: []const u8, key: ValueId, key_type: HIRType, slot: []const u8) Error![]const u8 {
-        if (key_type == .String) {
-            const k = try self.stringParts(self.name(key));
-            return self.tmp("call i8 @doxa_map_try_get_str(ptr {s}, ptr {s}, i64 {s}, ptr {s})", .{ map, k.ptr, k.len, slot });
-        }
-        return self.tmp("call i8 @doxa_map_try_get_i64(ptr {s}, i64 {s}, ptr {s})", .{ map, try self.storageBits(self.name(key), key_type), slot });
-    }
-
-    /// `m[k]`: the map's value, or for a map without `else` the value boxed
-    /// as `value | nothing`, `nothing` when the key is absent.
-    fn mapGet(self: *FunctionEmitter, inst: *const ir.Inst, map: ValueId, key: ValueId) Error!void {
-        const t = self.doxaOf(map).Map;
-        const result_type = self.f.typeOf(inst.result.?).doxa;
-        const m = self.name(map);
-        const scope = try self.tmp("call ptr @doxa_map_scope(ptr {s})", .{m});
-        const slot = try self.alloca("i64");
-        const found = try self.mapLookup(m, key, t.key.*, slot);
-        const bits = try self.tmp("load i64, ptr {s}", .{slot});
-        // A map with an `else` always finds a value.
-        if (result_type.eql(t.value.*)) {
-            self.names[@intFromEnum(inst.result.?)] = try self.mapValue(scope, bits, t.value.*);
-            return;
-        }
-        const value = try self.mapValue(scope, bits, t.value.*);
-        const header = try self.e.boxHeader(result_type);
-        const value_index = try self.memberIndex(result_type, t.value.*);
-        const nothing_index = try self.memberIndex(result_type, .Nothing);
-        const payload = try self.payloadWords(value, t.value.*);
-        const hit = try self.tmp("icmp ne i8 {s}, 0", .{found});
-        const tag = try self.tmp("select i1 {s}, i32 {d}, i32 {d}", .{ hit, @intFromEnum(layout.valueTag(t.value.*)), @intFromEnum(rt.DoxaTag.Nothing) });
-        const reserved = try self.tmp("select i1 {s}, i32 {d}, i32 {d}", .{ hit, header | value_index, header | nothing_index });
-        const word = try self.tmp("select i1 {s}, i64 {s}, i64 0", .{ hit, payload.bits });
-        const len = try self.tmp("select i1 {s}, i64 {s}, i64 0", .{ hit, payload.len });
-        const v0 = try self.tmp("insertvalue %DoxaValue undef, i32 {s}, 0", .{tag});
-        const v1 = try self.tmp("insertvalue %DoxaValue {s}, i32 {s}, 1", .{ v0, reserved });
-        const v2 = try self.tmp("insertvalue %DoxaValue {s}, i64 {s}, 2", .{ v1, word });
-        try self.def(inst, "insertvalue %DoxaValue {s}, i64 {s}, 3", .{ v2, len });
     }
 
     // ── Structs ──
@@ -1668,7 +1569,6 @@ const FunctionEmitter = struct {
             .Array => try self.typeText(t),
             .Union => if (display.members) |m| m[0] else "union",
             .Group => |gid| p.group_names[gid],
-            .Map => "map",
             .Function => "function",
             .Unknown, .Poison => unreachable,
         };
@@ -1714,7 +1614,6 @@ const FunctionEmitter = struct {
                 if (a.size != null) return self.e.faultf("peeks a fixed array; the generator converts it first", .{});
                 try self.line("call void @doxa_print_array_hdr(ptr {s})", .{v});
             },
-            .Map => try self.line("call void @doxa_write_cstr(ptr {s}, i64 5)", .{try self.e.string("<map>")}),
             .Function => try self.line("call void @doxa_write_cstr(ptr {s}, i64 10)", .{try self.e.string("<function>")}),
             .Unknown, .Poison => unreachable,
         }

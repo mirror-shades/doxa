@@ -142,7 +142,7 @@ const OperandWriter = struct {
 
 fn showsResultType(op: ir.Op) bool {
     return switch (op) {
-        .constant, .convert, .box, .unbox, .repack, .array_new, .map_new, .struct_new, .array_range => true,
+        .constant, .convert, .box, .unbox, .repack, .array_new, .struct_new, .array_range => true,
         else => false,
     };
 }
@@ -195,9 +195,6 @@ fn opName(op: ir.Op) []const u8 {
         .array_concat => "array.concat",
         .array_find => "array.find",
         .array_copy_to_fixed => "array.copy_to_fixed",
-        .map_new => "map.new",
-        .map_get => "map.get",
-        .map_set => "map.set",
         .struct_new => "struct.new",
         .field_get => "field.get",
         .field_set => "field.set",
@@ -311,12 +308,6 @@ pub fn writeHIRType(w: *Writer, program: *const ir.Program, t: ir.HIRType) Write
         .Array => |array| {
             try writeHIRType(w, program, array.element.*);
             if (array.size) |size| try w.print("[{d}]", .{size}) else try w.writeAll("[]");
-        },
-        .Map => |m| {
-            try w.writeAll("map ");
-            try writeHIRType(w, program, m.key.*);
-            try w.writeAll(" -> ");
-            try writeHIRType(w, program, m.value.*);
         },
         .Struct => |id| try writeNamed(w, program.struct_names, "S", id),
         .Enum => |id| try writeNamed(w, program.enum_names, "E", id),

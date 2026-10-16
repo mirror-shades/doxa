@@ -85,7 +85,7 @@ pub const ErrorList = error{
     MissingEntryPointFunction,
     FunctionNotFound,
     UnsupportedFunctionCallType,
-    MapDeclaredWithVarOrConst,
+    FieldDeclaredWithVarOrConst,
     ExpectedReturnsKeyword,
     ExpectedMethod,
     ExpectedLeftBraceOrReturnsKeyword,
@@ -162,8 +162,6 @@ pub const ErrorList = error{
     ExpectedClosingParen,
     ExpectedExpression,
     ExpectedIdentifier,
-    ExpectedMapKey,
-    DuplicateElseClause,
     ExpectedAssignmentOperator,
     ExpectedLiteral,
     ExpectedString,
@@ -176,7 +174,6 @@ pub const ErrorList = error{
     ExpectedRightBrace,
     ExpectedRightUnion,
     ExpectedThen,
-    ExpectedMapThen,
     ExpectedElse,
     ExpectedColon,
     ExpectedCommaOrBracket,
@@ -445,11 +442,8 @@ pub const ErrorCode = struct {
     // 6xxx - Collections & Data Structures
     pub const INVALID_ARRAY_TYPE = "E6001";
     pub const ARRAY_TYPE_MISMATCH = "E6002";
-    pub const INVALID_MAP_KEY = "E6003";
-    pub const KEY_NOT_FOUND = "E6004";
     pub const INDEX_OUT_OF_BOUNDS = "E6005";
     pub const INVALID_ARRAY_INDEX_TYPE = "E6006";
-    pub const INVALID_MAP_KEY_TYPE = "E6007";
     pub const CANNOT_INDEX_TYPE = "E6008";
     pub const FIELD_NOT_FOUND = "E6009";
     pub const STRUCT_HAS_NO_FIELDS = "E6010";

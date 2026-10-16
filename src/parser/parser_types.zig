@@ -43,7 +43,6 @@ fn parserErrorHint(err: anyerror) []const u8 {
         error.ExpectedIdentifier => "expected an identifier",
         error.ExpectedType => "expected a type",
         error.ExpectedThen => "expected 'then' after the condition",
-        error.ExpectedMapThen => "expected 'then' between a map key and its value",
         error.ExpectedElse => "expected 'else'",
         error.ExpectedColon => "expected ':'",
         error.ExpectedAssignmentOperator => "expected an assignment operator",
@@ -54,10 +53,9 @@ fn parserErrorHint(err: anyerror) []const u8 {
         error.ExpectedFunctionBody => "expected a function body",
         error.ExpectedFunctionReturnType => "expected a function return type",
         error.ExpectedString, error.ExpectedStringLiteral => "expected a string literal",
-        error.ExpectedMapKey => "expected a map key",
         error.ExpectedInKeyword => "expected 'in'",
         error.ExpectedWhereKeyword => "expected 'where'",
-        error.MapDeclaredWithVarOrConst => "a map is declared with a bare 'map', never 'var map' or 'const map'",
+        error.FieldDeclaredWithVarOrConst => "a struct field is declared without 'var' or 'const'",
         error.ExpectedPattern => "expected a pattern",
         error.ExpectedEnumVariant => "expected an enum variant",
         error.ExpectedModuleName => "expected a module name",
@@ -432,13 +430,6 @@ pub const Parser = struct {
                         return error.InvalidEntryPoint;
                     }
                     try statements.append(decl);
-                },
-                .MAP_KEYWORD => {
-                    const map_stmt = try declaration_parser.parseMapDecl(self, is_public);
-                    if (is_entry) {
-                        return error.InvalidEntryPoint;
-                    }
-                    try statements.append(map_stmt);
                 },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
@@ -979,101 +970,6 @@ pub const Parser = struct {
             },
         };
         return enum_member;
-    }
-
-    pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
-        var entries = std.array_list.Managed(*ast.MapEntry).init(self.allocator);
-        errdefer {
-            for (entries.items) |entry| {
-                entry.deinit(self.allocator);
-                self.allocator.destroy(entry);
-            }
-            entries.deinit();
-        }
-
-        var else_value: ?*ast.Expr = null;
-        errdefer if (else_value) |ev| {
-            ev.deinit(self.allocator);
-            self.allocator.destroy(ev);
-        };
-
-        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            while (self.peek().type == .NEWLINE) self.advance();
-
-            // Handle else clause
-            if (self.peek().type == .ELSE) {
-                if (else_value != null) return error.DuplicateElseClause;
-                self.advance();
-
-                else_value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-                if (self.peek().type == .COMMA) {
-                    self.advance();
-                }
-                while (self.peek().type == .NEWLINE) self.advance();
-                continue;
-            }
-
-            const key = blk: {
-                const token_type = self.peek().type;
-                switch (token_type) {
-                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
-                        const prec = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
-                        break :blk prec;
-                    },
-                    else => return error.ExpectedMapKey,
-                }
-            };
-
-            if (self.peek().type != .THEN) {
-                key.deinit(self.allocator);
-                self.allocator.destroy(key);
-                return error.ExpectedMapThen;
-            }
-            self.advance();
-
-            const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-            const entry = try self.allocator.create(ast.MapEntry);
-            entry.* = .{
-                .key = key,
-                .value = value,
-            };
-            try entries.append(entry);
-
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            }
-            while (self.peek().type == .NEWLINE) self.advance();
-        }
-
-        if (self.peek().type != .RIGHT_BRACE) {
-            return error.ExpectedRightBrace;
-        }
-        self.advance();
-
-        const expr = try self.allocator.create(ast.Expr);
-        expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.peek()),
-            },
-            .data = if (else_value != null) .{
-                .MapLiteral = .{
-                    .entries = try entries.toOwnedSlice(),
-                    .key_type = null,
-                    .value_type = null,
-                    .else_value = else_value,
-                },
-            } else .{
-                .Map = .{
-                    .entries = try entries.toOwnedSlice(),
-                    .key_type = null,
-                    .value_type = null,
-                },
-            },
-        };
-        return expr;
     }
 
     fn reportWarning(self: *Parser, message: []const u8) void {

@@ -47,12 +47,12 @@ fn row(alloc: std.mem.Allocator, w: *std.Io.Writer, module: *const ir.Module, f:
     try w.print("\t{s}\t{d}\n", .{ kind, @intFromBool(try mutatedAfter(alloc, f, value)) });
 }
 
-/// Whether a value of `t` can be changed in place: an array, a map, a struct,
+/// Whether a value of `t` can be changed in place: an array, a struct,
 /// or a box that can hold one. A string is immutable, so a copy of one is
 /// never observable.
 fn mutable(program: *const ir.Program, t: ir.HIRType) bool {
     return switch (t) {
-        .Array, .Map, .Struct => true,
+        .Array, .Struct => true,
         .Union => |u| for (u.members) |m| {
             if (mutable(program, m.*)) break true;
         } else false,
@@ -72,7 +72,7 @@ fn held(f: *const ir.Function, value: ValueId) bool {
         .inst => |at| at,
     };
     return switch (f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
-        .load, .global_load, .field_get, .array_get, .map_get => true,
+        .load, .global_load, .field_get, .array_get => true,
         .box, .unbox, .repack => |u| held(f, u.operand),
         else => false,
     };
@@ -109,7 +109,6 @@ fn mutatedAfter(alloc: std.mem.Allocator, f: *const ir.Function, value: ValueId)
                 const derived: ?ValueId = switch (inst.op) {
                     .field_get => |g| if (views[@intFromEnum(g.object)]) inst.result else null,
                     .array_get => |g| if (views[@intFromEnum(g.array)]) inst.result else null,
-                    .map_get => |g| if (views[@intFromEnum(g.map)]) inst.result else null,
                     .box, .unbox, .repack => |u| if (views[@intFromEnum(u.operand)]) inst.result else null,
                     .store => |s| blk: {
                         if (!views[@intFromEnum(s.value)]) break :blk null;
@@ -169,7 +168,6 @@ fn mutates(f: *const ir.Function, op: ir.Op, views: []const bool, slots: *const 
         .array_remove => |s| s.array,
         .array_pop, .array_clear => |u| u.operand,
         .array_copy_to_fixed => |s| s.fixed,
-        .map_set => |s| s.map,
         .field_set => |s| s.object,
         .call => |c| return lendsView(f, c.args, slots),
         .call_zig => |c| return lendsView(f, c.args, slots),

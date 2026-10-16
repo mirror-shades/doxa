@@ -14,6 +14,7 @@
 const std = @import("std");
 const ir = @import("../hir/register/ir.zig");
 const layout_mod = @import("layout.zig");
+const rt = @import("../../runtime/doxa_rt.zig");
 
 const HIRType = ir.HIRType;
 
@@ -219,7 +220,6 @@ pub const Debug = struct {
             .Struct => |id| self.pointer(try self.structType(id)),
             .Union, .Group => self.boxType(),
             .Array => |a| self.pointer(if (a.size) |_| try self.fixedArrayType(t) else try self.arrayHeaderType(a.element.*)),
-            .Map => self.pointer(try self.mapType()),
             .Function => |sig| self.pointer(try self.signatureType(sig.params, sig.ret.*)),
             .Unknown, .Poison => unreachable, // analysis hands codegen complete types
         };
@@ -281,25 +281,6 @@ pub const Debug = struct {
         return self.node("!DICompositeType(tag: DW_TAG_structure_type, name: \"array\", size: 448, elements: !{d})", .{members});
     }
 
-    /// A map's value is a pointer to its header, whose length is visible;
-    /// the entries are the runtime's to walk.
-    fn mapType(self: *Debug) Error!u32 {
-        const u64t = try self.node("!DIBasicType(name: \"int\", size: 64, encoding: DW_ATE_unsigned)", .{});
-        const i64t = try self.node("!DIBasicType(name: \"int\", size: 64, encoding: DW_ATE_signed)", .{});
-        const ptr = try self.pointer(null);
-        const members = try self.list(&.{
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"entries\", baseType: !{d}, offset: 0)", .{ptr}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"len\", baseType: !{d}, offset: 64)", .{u64t}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"capacity\", baseType: !{d}, offset: 128)", .{u64t}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"key_tag\", baseType: !{d}, offset: 192)", .{u64t}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"value_tag\", baseType: !{d}, offset: 256)", .{u64t}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"scope\", baseType: !{d}, offset: 320)", .{ptr}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"else_value\", baseType: !{d}, offset: 384)", .{i64t}),
-            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"has_else_value\", baseType: !{d}, offset: 448)", .{try self.node("!DIBasicType(name: \"bool\", size: 1, encoding: DW_ATE_boolean)", .{})}),
-        });
-        return self.node("!DICompositeType(tag: DW_TAG_structure_type, name: \"map\", size: 512, elements: !{d})", .{members});
-    }
-
     fn tetraType(self: *Debug) Error!u32 {
         const values = [_][]const u8{ "false", "true", "both", "neither" };
         const elems = try self.alloc.alloc(u32, values.len);
@@ -354,12 +335,13 @@ pub const Debug = struct {
         return type_node;
     }
 
-    /// `DoxaTag` (`doxa_rt.zig`): the kind of value a box holds.
+    /// `DoxaTag` (`doxa_rt.zig`): the kind of value a box holds, read from
+    /// the runtime's own enum so the two cannot drift apart.
     fn tagType(self: *Debug) Error!u32 {
         if (self.tag_type) |n| return n;
-        const tags = [_][]const u8{ "Int", "Float", "Byte", "String", "Array", "Struct", "Enum", "Tetra", "Nothing", "Function", "Map" };
+        const tags = std.meta.fields(rt.DoxaTag);
         const elems = try self.alloc.alloc(u32, tags.len);
-        for (tags, 0..) |name, i| elems[i] = try self.node("!DIEnumerator(name: \"{s}\", value: {d})", .{ name, i });
+        inline for (tags, 0..) |tag, i| elems[i] = try self.node("!DIEnumerator(name: \"{s}\", value: {d})", .{ tag.name, tag.value });
         const underlying = try self.node("!DIBasicType(name: \"int\", size: 32, encoding: DW_ATE_unsigned)", .{});
         const type_node = try self.node("distinct !DICompositeType(tag: DW_TAG_enumeration_type, name: \"tag\", baseType: !{d}, size: 32, elements: !{d})", .{ underlying, try self.list(elems) });
         self.tag_type = type_node;

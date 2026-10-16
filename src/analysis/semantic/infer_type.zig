@@ -512,31 +512,6 @@ fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticE
     errdefer self.allocator.destroy(type_info);
 
     switch (expr.data) {
-        .Map => |*map_expr| {
-            type_info.* = .{ .base = .Map };
-            const resolved = try resolveMapTypes(self, map_expr.entries, map_expr.key_type, map_expr.value_type, expr.base);
-            map_expr.key_type = resolved.key_type;
-            map_expr.value_type = resolved.value_type;
-            type_info.map_key_type = resolved.key_type;
-            type_info.map_value_type = resolved.value_type;
-            type_info.map_has_else_value = false;
-            try validateMapEntries(self, map_expr.entries, resolved.key_type, resolved.value_type);
-        },
-        .MapLiteral => |*map_literal| {
-            type_info.* = .{ .base = .Map, .map_has_else_value = (map_literal.else_value != null) };
-            const resolved = try resolveMapTypes(self, map_literal.entries, map_literal.key_type, map_literal.value_type, expr.base);
-            map_literal.key_type = resolved.key_type;
-            map_literal.value_type = resolved.value_type;
-            type_info.map_key_type = resolved.key_type;
-            type_info.map_value_type = resolved.value_type;
-            try validateMapEntries(self, map_literal.entries, resolved.key_type, resolved.value_type);
-            if (map_literal.else_value) |else_expr| {
-                const else_type = try inferTypeFromExpr(self, else_expr);
-                if (resolved.value_type) |expected_val| {
-                    try helpers.unifyTypes(self, expected_val, else_type, .{ .location = getLocationFromBase(else_expr.base) });
-                }
-            }
-        },
         .Literal => |lit| {
             type_info.inferFrom(lit);
             switch (lit) {
@@ -1066,50 +1041,6 @@ const op: []const u8 = switch (bin.operator.type) {
                     // If we can't determine the element type, default to Nothing
                     type_info.base = .Nothing;
                 }
-            } else if (array_type.base == .Map) {
-                // `m[.Red]`: the map's key type is the shorthand's context.
-                if (array_type.map_key_type) |key_type| {
-                    helpers.contextualizeEnumMember(self, index.index, index_type, key_type);
-                    _ = helpers.reportUndeclaredVariant(self, index.index, index_type, key_type, .{ .location = getLocationFromBase(index.index.base) });
-                }
-                if (index_type.base != .String and index_type.base != .Int and index_type.base != .Enum and index_type.base != .Custom) {
-                    if (index_type.base == .Union) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.INVALID_MAP_KEY_TYPE,
-                            "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
-                            .{},
-                        );
-                    } else {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.INVALID_MAP_KEY_TYPE,
-                            "Map key must be string, int, or enum, got {s}",
-                            .{@tagName(index_type.base)},
-                        );
-                    }
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
-
-                if (array_type.map_value_type) |value_type| {
-                    if (array_type.map_has_else_value) {
-                        type_info.* = value_type.*;
-                    } else {
-                        try assignValueOrNothingUnion(self, type_info, value_type);
-                    }
-                } else {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_MAP_KEY_TYPE, // TODO: dedicated error code
-                        "Map value type not inferred; declare explicit 'returns <Type>' or add a first entry to infer",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
-                }
             } else if (array_type.base == .String) {
                 if (index_type.base != .Int) {
                     self.reporter.reportCompileError(
@@ -1128,7 +1059,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
                     ErrorCode.CANNOT_INDEX_TYPE,
-                    "Cannot index non-array/map/string type {s}",
+                    "Cannot index non-array/string type {s}",
                     .{@tagName(array_type.base)},
                 );
                 self.fatal_error = true;
@@ -1522,16 +1453,14 @@ const op: []const u8 = switch (bin.operator.type) {
             const index_type = try inferTypeFromExpr(self, index_assign.index);
             const value_type = if (array_type.base == .Array and array_type.array_type != null)
                 try inferTypeIn(self, index_assign.value, array_type.array_type.?)
-            else if (array_type.base == .Map and array_type.map_value_type != null)
-                try inferTypeIn(self, index_assign.value, array_type.map_value_type.?)
             else
                 try inferTypeFromExpr(self, index_assign.value);
 
-            if (array_type.base != .Array and array_type.base != .Map) {
+            if (array_type.base != .Array) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
                     ErrorCode.CANNOT_INDEX_TYPE,
-                    "Cannot assign to index of non-array/non-map type {s}",
+                    "Cannot assign to index of non-array type {s}",
                     .{@tagName(array_type.base)},
                 );
                 self.fatal_error = true;
@@ -1539,7 +1468,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 return type_info;
             }
 
-            if (array_type.base == .Array and index_type.base != .Int) {
+            if (index_type.base != .Int) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
                     ErrorCode.INVALID_ARRAY_INDEX_TYPE,
@@ -1549,39 +1478,10 @@ const op: []const u8 = switch (bin.operator.type) {
                 self.fatal_error = true;
                 type_info.base = .Nothing;
                 return type_info;
-            } else if (array_type.base == .Map and index_type.base != .Int and index_type.base != .String and index_type.base != .Enum and index_type.base != .Custom) {
-                if (index_type.base == .Union) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_MAP_KEY_TYPE,
-                        "Map keys cannot be union types. Keys must be concrete types like int, string, or enum",
-                        .{},
-                    );
-                } else {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_MAP_KEY_TYPE,
-                        "Map key must be integer, string, or enum, got {s}",
-                        .{@tagName(index_type.base)},
-                    );
-                }
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-                return type_info;
             }
 
             if (array_type.array_type) |elem_type| {
                 try helpers.unifyElement(self, elem_type, value_type, index_assign.value, .{ .location = getLocationFromBase(expr.base) });
-            }
-            // A map entry is an element store too: its key and its value fill
-            // the map's key and value slots.
-            if (array_type.base == .Map) {
-                if (array_type.map_key_type) |key_type| {
-                    try helpers.unifyElement(self, key_type, index_type, index_assign.index, .{ .location = getLocationFromBase(index_assign.index.base) });
-                }
-                if (array_type.map_value_type) |map_value_type| {
-                    try helpers.unifyElement(self, map_value_type, value_type, index_assign.value, .{ .location = getLocationFromBase(index_assign.value.base) });
-                }
             }
 
             type_info.* = .{ .base = .Nothing };
@@ -2289,131 +2189,6 @@ fn checkAliasArgument(self: *SemanticAnalyzer, arg: *ast.Expr, signature: *const
     return false;
 }
 
-const MapTypeResolution = struct {
-    key_type: ?*ast.TypeInfo,
-    value_type: ?*ast.TypeInfo,
-};
-
-fn resolveMapTypes(
-    self: *SemanticAnalyzer,
-    entries: []*ast.MapEntry,
-    explicit_key: ?*ast.TypeInfo,
-    explicit_value: ?*ast.TypeInfo,
-    expr_base: ast.Base,
-) SemanticError!MapTypeResolution {
-    var key_type = explicit_key;
-    var value_type = explicit_value;
-
-    if (entries.len > 0) {
-        if (key_type == null) {
-            key_type = try inferTypeFromExpr(self, entries[0].key);
-        }
-        if (value_type == null) {
-            value_type = try inferTypeFromExpr(self, entries[0].value);
-        }
-    }
-
-    if (key_type == null) {
-        self.reporter.reportCompileError(
-            getLocationFromBase(expr_base),
-            ErrorCode.TYPE_MISMATCH,
-            "Unable to infer map key type. Add an entry or declare an explicit ':: <Type>'",
-            .{},
-        );
-        self.fatal_error = true;
-    }
-
-    if (value_type == null) {
-        self.reporter.reportCompileError(
-            getLocationFromBase(expr_base),
-            ErrorCode.TYPE_MISMATCH,
-            "Unable to infer map value type. Add an entry or declare an explicit 'returns <Type>'",
-            .{},
-        );
-        self.fatal_error = true;
-    }
-
-    return .{
-        .key_type = key_type,
-        .value_type = value_type,
-    };
-}
-
-fn validateMapEntries(
-    self: *SemanticAnalyzer,
-    entries: []*ast.MapEntry,
-    key_type: ?*ast.TypeInfo,
-    value_type: ?*ast.TypeInfo,
-) SemanticError!void {
-    if (key_type) |expected_key| {
-        for (entries) |entry| {
-            const entry_key_type = try inferTypeFromExpr(self, entry.key);
-            try helpers.unifyTypesExpr(self, expected_key, entry_key_type, entry.key, .{ .location = getLocationFromBase(entry.key.base) });
-        }
-    }
-
-    if (value_type) |expected_value| {
-        for (entries) |entry| {
-            const entry_value_type = try inferTypeFromExpr(self, entry.value);
-            try helpers.unifyTypesExpr(self, expected_value, entry_value_type, entry.value, .{ .location = getLocationFromBase(entry.value.base) });
-        }
-    }
-}
-
-fn createNothingType(self: *SemanticAnalyzer) SemanticError!*ast.TypeInfo {
-    const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-    nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-    return nothing_type;
-}
-
-fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value_type: *ast.TypeInfo) SemanticError!void {
-    var members_len: usize = 0;
-    var has_nothing = false;
-    if (value_type.base == .Union and value_type.union_type != null) {
-        const union_members = value_type.union_type.?.types;
-        members_len = union_members.len;
-        for (union_members) |member| {
-            if (member.base == .Nothing) {
-                has_nothing = true;
-                break;
-            }
-        }
-    } else {
-        members_len = 1;
-    }
-
-    var total_members: usize = members_len;
-    if (!has_nothing) total_members += 1;
-    const member_slice = try self.allocator.alloc(*ast.TypeInfo, total_members);
-
-    var idx: usize = 0;
-    if (value_type.base == .Union and value_type.union_type != null) {
-        for (value_type.union_type.?.types) |member| {
-            member_slice[idx] = try self.deepCopyTypeInfoPtr(member);
-            idx += 1;
-        }
-    } else {
-        member_slice[idx] = try self.deepCopyTypeInfoPtr(value_type);
-        idx += 1;
-    }
-
-    if (!has_nothing) {
-        member_slice[idx] = try createNothingType(self);
-    }
-
-    const union_info = try self.allocator.create(ast.UnionType);
-    union_info.* = .{
-        .types = member_slice,
-        .current_type_index = null,
-    };
-
-    dest.* = .{
-        .base = .Union,
-        .union_type = union_info,
-        .is_mutable = value_type.is_mutable,
-    };
-}
-
 /// Whether an expression unconditionally transfers control away and therefore
 /// never produces a value (an explicit return, `@panic`, `@exit`, or
 /// unreachable). Used to accept diverging `as`/`if` fallback branches.
@@ -2728,16 +2503,6 @@ fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, 
                 ErrorCode.UNKNOWN_METHOD,
                 "{s} has no method '{s}'; compiler methods are `@`-prefixed: `.@{s}(...)`",
                 .{ if (object_type.base == .Array) "An array" else "A string", method_name, method_name },
-            );
-            self.fatal_error = true;
-            type_info.base = .Nothing;
-        },
-        .Map => {
-            self.reporter.reportCompileError(
-                getLocationFromBase(expr.base),
-                ErrorCode.UNKNOWN_METHOD,
-                "Maps do not have methods; use indexing (map[key]) or assignment (map[key] is value)",
-                .{},
             );
             self.fatal_error = true;
             type_info.base = .Nothing;

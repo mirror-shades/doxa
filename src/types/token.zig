@@ -147,14 +147,12 @@ pub const TokenType = enum {
 
     // composite types
     STRUCT, // struct
-    MAP, // map
     UNION, // union
     ARRAY, // array
     ARRAY_KEYWORD, // 'array' keyword
     STRUCT_KEYWORD, // 'struct' keyword
     STRUCT_INSTANCE, // struct instance
     GROUP_KEYWORD, // 'group' keyword
-    MAP_KEYWORD, // 'map' keyword
     UNION_KEYWORD, // 'union' keyword
 
     // type helpers
@@ -189,20 +187,6 @@ pub const Token = struct {
         };
     }
 };
-
-pub fn deinit(self: *TokenLiteral, allocator: std.mem.Allocator) void {
-    switch (self.*) {
-        .map => |*m| {
-            var iter = m.iterator();
-            while (iter.next()) |entry| {
-                var value = entry.value_ptr.*;
-                value.deinit(allocator);
-            }
-            m.deinit();
-        },
-        else => {},
-    }
-}
 
 pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
     return switch (token_type) {

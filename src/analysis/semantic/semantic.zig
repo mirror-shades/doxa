@@ -1008,11 +1008,11 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    /// An alias parameter must name a concrete type a caller can lend: maps,
+    /// An alias parameter must name a concrete type a caller can lend:
     /// functions, and anonymous structs or enums cannot be aliased.
     fn checkAliasParameterType(self: *SemanticAnalyzer, param: ast.FunctionParam, param_type: ast.TypeInfo, location: Location) ErrorList!void {
         const disallowed = switch (param_type.base) {
-            .Map, .Function, .Struct, .Enum => true,
+            .Function, .Struct, .Enum => true,
             // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
             // Unions are allowed so alias parameters can accept type-narrowed values via match
             else => false,
@@ -1350,8 +1350,6 @@ pub const SemanticAnalyzer = struct {
         copied.function_type = null;
         copied.variants = null;
         copied.union_type = null;
-        copied.map_key_type = null;
-        copied.map_value_type = null;
 
         switch (type_info.base) {
             .Array => {
@@ -1407,12 +1405,6 @@ pub const SemanticAnalyzer = struct {
                     // Duplicate outer slice only; inner strings are not owned here
                     copied.variants = try self.allocator.dupe([]const u8, v);
                 }
-            },
-            .Map => {
-                // Shallow copy key/value type pointers to avoid dereferencing
-                // potentially invalid pointers from inference.
-                copied.map_key_type = type_info.map_key_type;
-                copied.map_value_type = type_info.map_value_type;
             },
             else => {},
         }
@@ -1742,18 +1734,6 @@ pub const SemanticAnalyzer = struct {
                         for (types, union_type.types) |ut, ut_info| {
                             try self.resolveArraySizes(ut_info, ut);
                         }
-                    }
-                }
-            },
-            .Map => |*map| {
-                if (type_info.base == .Map) {
-                    if (type_info.map_key_type) |key_type_info| {
-                        if (map.key_type) |key_type_expr| {
-                            try self.resolveArraySizes(key_type_info, key_type_expr);
-                        }
-                    }
-                    if (type_info.map_value_type) |value_type_info| {
-                        try self.resolveArraySizes(value_type_info, map.value_type);
                     }
                 }
             },

@@ -122,7 +122,7 @@ fn emptyArray(l: *Lowering, ty: HIRType) Error!ValueId {
 }
 
 /// The value a declaration without an initializer holds.
-/// TODO(struct default): a struct, map or function local has none yet; what
+/// TODO(struct default): a struct or function local has none yet; what
 /// one should hold is plan/uninitialized-declarations.md.
 fn defaultValue(l: *Lowering, ty: HIRType, info: *const ast.TypeInfo) Error!ValueId {
     return switch (ty) {
@@ -143,7 +143,7 @@ fn defaultValue(l: *Lowering, ty: HIRType, info: *const ast.TypeInfo) Error!Valu
         // TODO(group default): which member a group defaults to is undecided
         // (plan/uninitialized-declarations.md).
         .Group => l.convert(try l.nothing(), .Nothing, ty),
-        .Enum, .Struct, .Map, .Function, .Unknown, .Poison => {
+        .Enum, .Struct, .Function, .Unknown, .Poison => {
             l.g.reporter.reportInternal("a {s} declaration without an initializer has no default value", .{@tagName(ty)}, @src());
             return ErrorList.TypeMismatch;
         },
@@ -235,17 +235,6 @@ fn lentIn(l: *Lowering, e: *ast.Expr) Error!void {
         .Array => |elements| for (elements) |x| try lentIn(l, x),
         .Struct => |fields| for (fields) |f| try lentIn(l, f.value),
         .StructLiteral => |x| for (x.fields) |f| try lentIn(l, f.value),
-        .Map => |x| for (x.entries) |entry| {
-            try lentIn(l, entry.key);
-            try lentIn(l, entry.value);
-        },
-        .MapLiteral => |x| {
-            for (x.entries) |entry| {
-                try lentIn(l, entry.key);
-                try lentIn(l, entry.value);
-            }
-            if (x.else_value) |v| try lentIn(l, v);
-        },
         .Exists => |q| {
             try lentIn(l, q.array);
             try lentIn(l, q.condition);

@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const MapRuntime = @import("map_runtime.zig");
 const scope_arena = @import("scope_arena.zig");
 const win32 = @import("win32.zig");
 pub const instrument = @import("instrument.zig");
@@ -468,7 +467,6 @@ fn writeValue(out: *std.Io.Writer, val: *const DoxaValue) anyerror!void {
         // discriminant the IR printer could not name shows its number.
         .Enum => if (!try writeBoxedEnum(out, val)) try out.print("<enum:{d}>", .{val.payload_bits}),
         .Function => try out.writeAll("<function>"),
-        .Map => try out.writeAll("<map>"),
     }
 }
 
@@ -538,21 +536,6 @@ pub export fn doxa_str_concat(scope: *Scope, a_ptr: ?[*]const u8, a_len: u64, b_
     out_len.* = total_len;
 }
 
-/// Recover a DoxaString from a null-terminated C-string pointer. This is the
-/// one remaining raw C-string boundary: map string values still arrive as
-/// C-strings.
-pub export fn doxa_str_from_cstr(scope: *Scope, ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    if (ptr) |p| {
-        const slice = std.mem.span(p);
-        const ds = allocDoxaString(scope, slice);
-        out_ptr.* = @constCast(ds.ptr);
-        out_len.* = ds.len;
-    } else {
-        out_ptr.* = null;
-        out_len.* = 0;
-    }
-}
-
 /// Clone a string into `scope`.
 fn strCloneInto(scope: *Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) void {
     const bytes: []const u8 = if (ptr) |p| p[0..@intCast(len)] else "";
@@ -571,19 +554,6 @@ fn strCloneInto(scope: *Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, ou
 /// owned by the caller's arena (its hidden first argument).
 pub export fn doxa_str_clone(scope: *Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strCloneInto(scope, ptr, len, out_ptr, out_len);
-}
-
-/// Clone with a null terminator, returning the raw C-string pointer. Maps are
-/// the only remaining consumer: they store string keys/values as a single i64
-/// pointer slot and recover the length via `std.mem.span`.
-pub export fn doxa_str_clone_raw(scope: *Scope, ptr: ?[*]const u8, len: u64) callconv(.c) ?[*:0]u8 {
-    if (ptr) |p| {
-        const slice: []const u8 = p[0..@intCast(len)];
-        const out = scope_arena.allocator(scope).allocSentinel(u8, slice.len, 0) catch fault.outOfMemory();
-        @memcpy(out[0..slice.len], slice);
-        return out.ptr;
-    }
-    return null;
 }
 
 pub export fn doxa_char_to_string(scope: *Scope, ch: u8, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
@@ -671,38 +641,6 @@ pub export fn doxa_find_str(h_ptr: ?[*]const u8, h_len: u64, n_ptr: ?[*]const u8
     return if (std.mem.indexOf(u8, str, ndl)) |found| @intCast(found) else -1;
 }
 
-pub export fn doxa_map_new(scope: *Scope, capacity: i64, key_tag: i64, value_tag: i64) callconv(.c) *MapRuntime.MapHeader {
-    return MapRuntime.mapNew(scope, capacity, key_tag, value_tag);
-}
-
-/// The arena that owns `map`: a string or box stored into it is placed there.
-pub export fn doxa_map_scope(map: *MapRuntime.MapHeader) callconv(.c) *Scope {
-    return map.scope;
-}
-
-pub export fn doxa_map_set_i64(map: *MapRuntime.MapHeader, key: i64, value: i64) callconv(.c) void {
-    MapRuntime.mapSetI64(map, key, value);
-}
-
-/// Set the entry for a string key, compared by content; a new key is copied
-/// into the map's arena.
-pub export fn doxa_map_set_str(map: *MapRuntime.MapHeader, key_ptr: ?[*]const u8, key_len: u64, value: i64) callconv(.c) void {
-    MapRuntime.mapSetStr(map, sliceFromDoxaString(.{ .ptr = key_ptr, .len = key_len }), value);
-}
-
-pub export fn doxa_map_set_else_i64(map: *MapRuntime.MapHeader, value: i64) callconv(.c) void {
-    MapRuntime.mapSetElseI64(map, value);
-}
-
-pub export fn doxa_map_try_get_i64(map: *MapRuntime.MapHeader, key: i64, out_value: *i64) callconv(.c) u8 {
-    return if (MapRuntime.mapTryGetI64(map, key, out_value)) 1 else 0;
-}
-
-/// Look a string key up by content, without copying it.
-pub export fn doxa_map_try_get_str(map: *MapRuntime.MapHeader, key_ptr: ?[*]const u8, key_len: u64, out_value: *i64) callconv(.c) u8 {
-    return if (MapRuntime.mapTryGetStr(map, sliceFromDoxaString(.{ .ptr = key_ptr, .len = key_len }), out_value)) 1 else 0;
-}
-
 pub const DoxaPeekInfo = extern struct {
     file: ?[*:0]const u8,
     name: ?[*:0]const u8,
@@ -730,13 +668,12 @@ pub const DoxaPeekInfo = extern struct {
 ///   7 = Tetra    (payload_bits[0..2] = u2)
 ///   8 = Nothing  (payload_bits ignored)
 ///   9 = Function (payload_bits = pointer to function closure/descriptor)
-///  10 = Map      (payload_bits = *MapHeader as bits)
 ///
 /// All non-String tags leave `payload_len = 0`; only String uses it.
 ///
 /// Boxing rules:
 ///   - Unboxed: Int, Float, Byte, Tetra, Enum discriminant
-///   - Boxed:   String, Array, Struct, Function, Map
+///   - Boxed:   String, Array, Struct, Function
 ///   - Sentinel: Nothing (tag = 8, payload_bits = 0)
 ///
 /// Box encoding (a value of a union or group type):
@@ -767,7 +704,6 @@ pub const DoxaTag = enum(u32) {
     Tetra = 7,
     Nothing = 8,
     Function = 9,
-    Map = 10,
 };
 
 /// Encoding and decoding of a box's `reserved` word. Kept in sync with the
@@ -2143,9 +2079,6 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
         },
         .Function => {
             doxaWrite("<function>");
-        },
-        .Map => {
-            doxaWrite("<map>");
         },
     }
 }

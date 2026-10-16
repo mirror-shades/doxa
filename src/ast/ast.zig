@@ -124,18 +124,6 @@ pub const StructInstanceField = struct {
     }
 };
 
-pub const MapEntry = struct {
-    key: *Expr,
-    value: *Expr,
-
-    pub fn deinit(self: *MapEntry, allocator: std.mem.Allocator) void {
-        self.key.deinit(allocator);
-        allocator.destroy(self.key);
-        self.value.deinit(allocator);
-        allocator.destroy(self.value);
-    }
-};
-
 pub const StructMethod = struct {
     name: Token,
     params: []FunctionParam,
@@ -636,18 +624,6 @@ pub const Expr = struct {
         EnumMember: Token,
         DefaultArgPlaceholder: void,
 
-        Map: struct {
-            entries: []*MapEntry,
-            key_type: ?*TypeInfo = null,
-            value_type: ?*TypeInfo = null,
-        },
-        MapLiteral: struct {
-            entries: []*MapEntry,
-            key_type: ?*TypeInfo = null,
-            value_type: ?*TypeInfo = null,
-            else_value: ?*Expr = null,
-        },
-
         InternalCall: struct {
             receiver: *Expr,
             method: Token,
@@ -894,26 +870,6 @@ pub const Expr = struct {
             .EnumMember => {},
             .DefaultArgPlaceholder => {},
 
-            .Map => |*map_expr| {
-                for (map_expr.entries) |entry| {
-                    entry.deinit(allocator);
-                    allocator.destroy(entry);
-                }
-                allocator.free(map_expr.entries);
-            },
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.key.deinit(allocator);
-                    allocator.destroy(entry.key);
-                    entry.value.deinit(allocator);
-                    allocator.destroy(entry.value);
-                }
-                allocator.free(map_literal.entries);
-                if (map_literal.else_value) |else_val| {
-                    else_val.deinit(allocator);
-                    allocator.destroy(else_val);
-                }
-            },
             .InternalCall => |*m| {
                 m.receiver.deinit(allocator);
                 allocator.destroy(m.receiver);
@@ -1010,7 +966,6 @@ pub const Type = enum {
     Struct,
     Enum,
     Custom,
-    Map,
     Nothing,
     Union,
 };
@@ -1033,9 +988,6 @@ pub const TypeInfo = struct {
     array_size: ?usize = null,
     array_storage: ArrayStorageKind = .dynamic,
     union_type: ?*UnionType = null,
-    map_key_type: ?*TypeInfo = null,
-    map_value_type: ?*TypeInfo = null,
-    map_has_else_value: bool = false,
     // Value of a comptime numeric literal (set during inference for int/byte
     // literals and unary-negated literals). Lets the type checker allow
     // literal-coerce-if-fits while requiring explicit casts for runtime narrowing.
@@ -1073,14 +1025,6 @@ pub const TypeInfo = struct {
             allocator.free(union_type.types);
             allocator.destroy(union_type);
         }
-        if (self.map_key_type) |key_type| {
-            key_type.deinit(allocator);
-            allocator.destroy(key_type);
-        }
-        if (self.map_value_type) |value_type| {
-            value_type.deinit(allocator);
-            allocator.destroy(value_type);
-        }
     }
 
     pub fn inferFrom(self: *TypeInfo, value: TokenLiteral) void {
@@ -1092,7 +1036,6 @@ pub const TypeInfo = struct {
             .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
-            .map => .Map,
         };
     }
 
@@ -1167,11 +1110,6 @@ pub const TypeExpr = struct {
         Struct: []*StructField,
         Enum: []const []const u8,
         Union: []*TypeExpr,
-        Map: struct {
-            key_type: ?*TypeExpr,
-            value_type: *TypeExpr,
-            is_mutable: bool,
-        },
     };
 
     pub fn getBase(self: *TypeExpr) *Base {
@@ -1205,14 +1143,6 @@ pub const TypeExpr = struct {
                     allocator.destroy(type_expr);
                 }
                 allocator.free(types);
-            },
-            .Map => |*map| {
-                if (map.key_type) |key_type| {
-                    key_type.deinit(allocator);
-                    allocator.destroy(key_type);
-                }
-                map.value_type.deinit(allocator);
-                allocator.destroy(map.value_type);
             },
             else => {},
         }
@@ -1448,21 +1378,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
         .GroupDecl => |g| try writer.print("Expr.GroupDecl name={s}\n", .{g.name.lexeme}),
         .EnumMember => |t| try writer.print("Expr.EnumMember {s}\n", .{t.lexeme}),
         .DefaultArgPlaceholder => try writer.print("Expr.DefaultArgPlaceholder\n", .{}),
-        .Map => |m| {
-            try writer.print("Expr.Map\n", .{});
-            for (m.entries) |entry| {
-                try dumpExpr(writer, entry.key, depth + 1);
-                try dumpExpr(writer, entry.value, depth + 1);
-            }
-        },
-        .MapLiteral => |m| {
-            try writer.print("Expr.MapLiteral\n", .{});
-            for (m.entries) |entry| {
-                try dumpExpr(writer, entry.key, depth + 1);
-                try dumpExpr(writer, entry.value, depth + 1);
-            }
-            if (m.else_value) |ev| try dumpExpr(writer, ev, depth + 1);
-        },
         .InternalCall => |c| {
             try writer.print("Expr.InternalCall .{s}\n", .{c.method.lexeme});
             try dumpExpr(writer, c.receiver, depth + 1);
@@ -1509,11 +1424,6 @@ fn dumpTypeExpr(writer: *std.Io.Writer, type_expr: *const TypeExpr, depth: u32) 
         .Union => |types| {
             try writer.print("TypeExpr.Union\n", .{});
             for (types) |t| try dumpTypeExpr(writer, t, depth + 1);
-        },
-        .Map => |m| {
-            try writer.print("TypeExpr.Map\n", .{});
-            if (m.key_type) |k| try dumpTypeExpr(writer, k, depth + 1);
-            try dumpTypeExpr(writer, m.value_type, depth + 1);
         },
     }
 }
@@ -1610,21 +1520,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
         .Custom => |custom| TypeInfo{
             .base = .Custom,
             .custom_type = if (custom.ref) |ref| .{ .ref = ref } else .{ .written = custom.name.lexeme },
-        },
-        .Map => |map| blk: {
-            const key_type_info = if (map.key_type) |key_type|
-                try typeInfoFromExpr(allocator, key_type)
-            else
-                null;
-
-            const value_type_info = try typeInfoFromExpr(allocator, map.value_type);
-
-            break :blk TypeInfo{
-                .base = .Map,
-                .map_key_type = key_type_info,
-                .map_value_type = value_type_info,
-                .is_mutable = map.is_mutable,
-            };
         },
         .Enum => TypeInfo{ .base = .Nothing },
         .Union => |types| blk: {

@@ -60,7 +60,7 @@ pub const UnionTable = struct {
     }
 
     /// The union of `members`: nested unions and groups spliced in, duplicates removed,
-    /// members in canonical order — primitives, then arrays, maps and
+    /// members in canonical order — primitives, then arrays and
     /// functions, then named types by name, then `nothing`. A set of one
     /// member is that member.
     ///
@@ -166,7 +166,6 @@ pub const UnionTable = struct {
             .String => 3,
             .Tetra => 4,
             .Array => 5,
-            .Map => 6,
             .Function => 7,
             .Struct, .Enum, .Group => 8,
             .Union => 9,
@@ -198,13 +197,6 @@ pub const UnionTable = struct {
                 try key.appendSlice(allocator, "A(");
                 try appendKey(allocator, key, array.element.*);
                 if (array.size) |size| try key.print(allocator, ";{d}", .{size});
-                try key.append(allocator, ')');
-            },
-            .Map => |map| {
-                try key.appendSlice(allocator, "M(");
-                try appendKey(allocator, key, map.key.*);
-                try key.append(allocator, ':');
-                try appendKey(allocator, key, map.value.*);
                 try key.append(allocator, ')');
             },
             .Function => |function| {

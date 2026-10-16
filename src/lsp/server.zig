@@ -1612,7 +1612,6 @@ fn completionKindFor(kind: stdlib.Kind) u32 {
         .structure => 22,
         .enumeration => 13,
         .group => 22,
-        .map => 6,
         .constant => 21,
         .variable => 6,
         .module => 9,
@@ -2557,7 +2556,6 @@ fn typeBaseLabel(base: ast.Type) []const u8 {
         .Struct => "struct",
         .Enum => "enum",
         .Custom => "custom",
-        .Map => "map",
         .Nothing => "nothing",
         .Union => "union",
     };
@@ -2596,7 +2594,6 @@ fn writeTypeExpr(writer: *std.Io.Writer, type_expr: ?*const ast.TypeExpr) !void 
                 try writeTypeExpr(writer, t);
             }
         },
-        .Map => try writer.writeAll("map"),
     }
 }
 

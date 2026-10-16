@@ -50,8 +50,6 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .Assert => |a| lower_control.assert(l, a.condition, a.message, a.location),
 
         .Array => arrayLiteral(l, e),
-        .Map => |m| mapLiteral(l, e, m.entries, null),
-        .MapLiteral => |m| mapLiteral(l, e, m.entries, m.else_value),
         .Index => index(l, e),
         .IndexAssign => |a| indexAssign(l, a.array, a.index, a.value),
         .Range => |r| range(l, e, r.start, r.end),
@@ -117,7 +115,7 @@ fn literal(l: *Lowering, e: *ast.Expr, lit: ast.TokenLiteral) Error!?ValueId {
         .string => |v| .{ .c = .{ .string = v }, .ty = .String },
         .tetra => |v| .{ .c = .{ .tetra = tetra(v) }, .ty = .Tetra },
         .nothing => .{ .c = .nothing, .ty = .Nothing },
-        .array, .map => return unexpected(l, e),
+        .array => return unexpected(l, e),
     };
     const v = try l.constant(c.c, c.ty);
     return try l.convert(v, c.ty, try l.g.typeOf(e));
@@ -141,7 +139,7 @@ pub fn literalConstant(lit: ast.TokenLiteral) ?struct { c: ir.Constant, ty: HIRT
         .string => |v| .{ .c = .{ .string = v }, .ty = .String },
         .tetra => |v| .{ .c = .{ .tetra = tetra(v) }, .ty = .Tetra },
         .nothing => .{ .c = .nothing, .ty = .Nothing },
-        .array, .map => null,
+        .array => null,
     };
 }
 
@@ -440,30 +438,11 @@ pub fn arrayLiteralAs(l: *Lowering, e: *ast.Expr, ty: HIRType) Error!?ValueId {
     return array;
 }
 
-fn mapLiteral(l: *Lowering, e: *ast.Expr, entries: []*ast.MapEntry, else_expr: ?*ast.Expr) Error!?ValueId {
-    const ty = try l.g.typeOf(e);
-    const key_type = ty.Map.key.*;
-    const value_type = ty.Map.value.*;
-    const else_value: ?ValueId = if (else_expr) |x| try l.exprAs(x, value_type) orelse return null else null;
-    const map = try l.define(.{ .map_new = .{ .arena = try l.arena(), .else_value = else_value } }, ty);
-    for (entries) |entry| {
-        const key = try l.exprAs(entry.key, key_type) orelse return null;
-        const value = try l.exprAs(entry.value, value_type) orelse return null;
-        try l.effect(.{ .map_set = .{ .map = map, .key = key, .value = value } });
-    }
-    return map;
-}
-
 fn index(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const idx = e.data.Index;
     const container_type = try l.g.typeOf(idx.array);
     const container = try expr(l, idx.array) orelse return null;
     switch (container_type) {
-        .Map => |m| {
-            const key = try l.exprAs(idx.index, m.key.*) orelse return null;
-            // A map without an `else` yields `value | nothing`.
-            return try l.define(.{ .map_get = .{ .map = container, .key = key } }, try l.g.typeOf(e));
-        },
         .Array => |a| {
             const at = try l.exprAs(idx.index, .Int) orelse return null;
             const v = try l.define(.{ .array_get = .{ .array = container, .index = at } }, a.element.*);
@@ -477,17 +456,12 @@ fn index(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     }
 }
 
-/// `a[i] is v`, `m[k] is v`: an in-place element or entry store, which the
-/// runtime re-homes into the container's arena.
+/// `a[i] is v`: an in-place element store, which the runtime re-homes into
+/// the array's arena.
 fn indexAssign(l: *Lowering, array: *ast.Expr, at: *ast.Expr, value: *ast.Expr) Error!?ValueId {
     const container_type = try l.g.typeOf(array);
     const container = try expr(l, array) orelse return null;
     switch (container_type) {
-        .Map => |m| {
-            const key = try l.exprAs(at, m.key.*) orelse return null;
-            const v = try l.exprAs(value, m.value.*) orelse return null;
-            try l.effect(.{ .map_set = .{ .map = container, .key = key, .value = v } });
-        },
         .Array => |a| {
             const i = try l.exprAs(at, .Int) orelse return null;
             // TODO(flat literal store): a struct literal stored into a flat
@@ -950,7 +924,6 @@ fn typeName(info: *const ast.TypeInfo) []const u8 {
         .Nothing => "nothing",
         .Array => "array",
         .Union => "union",
-        .Map => "map",
         .Function => "function",
         .Struct => "struct",
         .Enum => "enum",
@@ -1026,7 +999,6 @@ pub fn displayName(l: *Lowering, ty: HIRType) Error![]const u8 {
         .Byte => "byte",
         .Nothing => "nothing",
         .Array => |a| try std.fmt.allocPrint(l.g.alloc, "{s}[]", .{try displayName(l, a.element.*)}),
-        .Map => "map",
         .Struct => |id| s.struct_table.displayName(id) orelse try std.fmt.allocPrint(l.g.alloc, "(struct#{})", .{id}),
         .Enum => |id| s.enum_table.displayName(id) orelse try std.fmt.allocPrint(l.g.alloc, "(enum#{})", .{id}),
         .Group => |id| s.group_table.displayName(id) orelse try std.fmt.allocPrint(l.g.alloc, "(group#{})", .{id}),

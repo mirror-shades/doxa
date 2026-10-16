@@ -46,7 +46,6 @@ pub fn convertTypeToTokenType(base_type: ast.Type) TokenType {
         .Function => .FUNCTION,
         .Struct => .STRUCT,
         .Nothing => .NOTHING,
-        .Map => .MAP,
         .Custom => .CUSTOM,
         .Enum => .ENUM,
         .Union => .UNION,

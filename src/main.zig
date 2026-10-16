@@ -193,6 +193,12 @@ const TargetTriple = struct {
         return std.mem.eql(u8, self.os, "windows");
     }
 
+    /// A target whose binaries are ELF: neither Windows (PE) nor an Apple OS
+    /// (Mach-O).
+    fn usesElf(self: TargetTriple) bool {
+        return !self.isWindows() and !self.isDarwin();
+    }
+
     /// An Apple OS, whose ABI requires a frame record in every function.
     fn isDarwin(self: TargetTriple) bool {
         for ([_][]const u8{ "macos", "ios", "tvos", "watchos", "visionos" }) |os| {
@@ -1051,6 +1057,10 @@ fn compileToNative(
         // of the program's, and none of the runtime's or libc's, which is
         // most of an ELF binary's size.
         if (!cli_options.debug_info) try args_ln.append("-fstrip");
+        // A build ID: what gdb's `.build-id/` lookup, debuginfod and crash
+        // tooling match a binary to its debug file by. A content hash, so the
+        // same program gets the same ID.
+        if (target.usesElf()) try args_ln.append("--build-id=sha1");
         try args_ln.append("-lc");
         if (target.isWindows() and inline_zig_wrapper_paths.len > 0) {
             try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
@@ -1098,7 +1108,7 @@ fn compileToNative(
     // An ELF binary's debug information goes beside it, in `<binary>.debug`,
     // as Windows keeps a `.pdb` (`debug_split.zig`). A build without it
     // leaves no stale one.
-    if (!target.isWindows() and !target.isDarwin()) {
+    if (target.usesElf()) {
         const debug_path = try std.mem.concat(allocator, u8, &.{ exe, ".debug" });
         defer allocator.free(debug_path);
         if (cli_options.debug_info) {
@@ -1107,6 +1117,49 @@ fn compileToNative(
             try splitDebugInfo(io, allocator, reporter, exe, debug_path);
         } else try removeSideFile(io, debug_path);
     }
+
+    // An Apple binary points at the cache's objects for its DWARF. A
+    // compiled one, which leaves this machine, also gets a `.dSYM` beside it
+    // when `dsymutil` is installed; the runtime's backtrace still reads the
+    // objects (Zig's reader has no `.dSYM` support). A `doxa run` binary
+    // never leaves the cache, so it needs none.
+    if (target.isDarwin()) {
+        const dsym_path = try std.mem.concat(allocator, u8, &.{ exe, ".dSYM" });
+        defer allocator.free(dsym_path);
+        try std.Io.Dir.cwd().deleteTree(io, dsym_path);
+        if (cli_options.debug_info and cli_options.mode == .COMPILE) {
+            profiler.begin("dsym");
+            defer profiler.end();
+            _ = try makeDsym(io, reporter, cache_dir, exe, dsym_path);
+        }
+    }
+}
+
+/// Write `<exe>.dSYM` with `dsymutil`: the program's DWARF gathered from the
+/// cache's objects, which lldb, Instruments and crash reporters find by UUID
+/// away from this machine. False when `dsymutil` is not installed (it ships
+/// with Xcode's command-line tools), and the build goes on without one.
+fn makeDsym(io: std.Io, reporter: *Reporter, cache_dir: []const u8, exe: []const u8, dsym_path: []const u8) !bool {
+    var child = std.process.spawn(io, .{
+        .argv = &.{ "dsymutil", exe, "-o", dsym_path },
+        .cwd = .{ .path = cache_dir },
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    switch (try child.wait(io)) {
+        .exited => |code| if (code != 0) {
+            reportBuildStepFailure(reporter, "writing the .dSYM", code);
+            return error.Unexpected;
+        },
+        else => {
+            reportBuildStepFailure(reporter, "writing the .dSYM", null);
+            return error.Unexpected;
+        },
+    }
+    return true;
 }
 
 /// Move `exe` to `debug_path` and write the binary to ship, without its debug

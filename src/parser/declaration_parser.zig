@@ -244,90 +244,6 @@ pub fn parseGroupDecl(self: *Parser) ErrorList!ast.Stmt {
     };
 }
 
-pub fn parseMapDecl(self: *Parser, is_public: bool) ErrorList!ast.Stmt {
-    // We already know peek().type == .MAP_KEYWORD
-    self.advance();
-
-    if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
-    const map_name = self.peek();
-    self.advance();
-
-    // Parse explicit map types
-    var key_type_expr: ?*ast.TypeExpr = null;
-    var value_type_expr: ?*ast.TypeExpr = null;
-
-    if (self.peek().type == .TYPE_SYMBOL) {
-        self.advance();
-        key_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-        if (self.peek().type == .RETURNS) {
-            self.advance();
-            value_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-        }
-    } else if (self.peek().type == .RETURNS) {
-        self.advance();
-        value_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-    }
-
-    if (self.peek().type != .LEFT_BRACE) return error.ExpectedLeftBrace;
-    self.advance();
-    const map_expr = try self.parseMap() orelse return error.ExpectedExpression;
-
-    // Check for else clause
-    var else_value: ?*ast.Expr = null;
-    if (self.peek().type == .ELSE) {
-        self.advance();
-        else_value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-    }
-
-    // Create map type info from explicit types or infer from map expression
-    var map_type_info: ast.TypeInfo = undefined;
-    if (key_type_expr != null and value_type_expr != null) {
-        // Use explicit types
-        const map_type_expr = try self.allocator.create(ast.TypeExpr);
-        map_type_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(map_name),
-            },
-            .data = .{
-                .Map = .{
-                    .key_type = key_type_expr,
-                    .value_type = value_type_expr.?,
-                    .is_mutable = true, // All maps are now mutable
-                },
-            },
-        };
-
-        const resolved_type_info = try ast.typeInfoFromExpr(self.allocator, map_type_expr);
-        map_type_info = resolved_type_info.*;
-        self.allocator.destroy(resolved_type_info);
-    } else {
-        // Fallback to inference from map expression
-        map_type_info = .{ .base = .Nothing, .is_mutable = true };
-    }
-
-    if (map_type_info.map_key_type != null or map_type_info.map_value_type != null) {
-        switch (map_expr.data) {
-            .Map => |*map_data| {
-                if (map_type_info.map_key_type) |key_type| map_data.key_type = key_type;
-                if (map_type_info.map_value_type) |value_type| map_data.value_type = value_type;
-            },
-            .MapLiteral => |*map_lit| {
-                if (map_type_info.map_key_type) |key_type| map_lit.key_type = key_type;
-                if (map_type_info.map_value_type) |value_type| map_lit.value_type = value_type;
-            },
-            else => {},
-        }
-    }
-
-    if (self.peek().type == .NEWLINE) self.advance();
-
-    return ast.Stmt{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(map_name) },
-        .data = .{ .VarDecl = .{ .name = map_name, .type_info = map_type_info, .initializer = map_expr, .is_public = is_public } },
-    };
-}
-
 pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     var is_public = false;
     if (self.peek().type == .PUBLIC) {
@@ -481,81 +397,30 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             };
             try methods.append(method);
         } else {
-            // A field takes no `var` / `const`; only a map field is spelled with a keyword.
+            // A field takes no `var` / `const`.
             if (self.peek().type == .VAR or self.peek().type == .CONST) {
-                return error.MapDeclaredWithVarOrConst;
+                return error.FieldDeclaredWithVarOrConst;
             }
-            if (self.peek().type == .MAP_KEYWORD) {
-                self.advance();
-
-                // Parse map name
-                if (self.peek().type != .IDENTIFIER) {
-                    return error.ExpectedIdentifier;
-                }
-                const field_name = self.peek();
-                self.advance();
-
-                // Parse map key type (optional)
-                var key_type_expr: ?*ast.TypeExpr = null;
-                if (self.peek().type == .TYPE_SYMBOL) {
-                    self.advance();
-                    key_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-                }
-
-                // Parse map value type (required)
-                if (self.peek().type != .RETURNS) {
-                    return error.ExpectedReturnsKeyword;
-                }
-                self.advance();
-                const value_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-
-                // Create map type expression
-                const map_type_expr = try self.allocator.create(ast.TypeExpr);
-                map_type_expr.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(field_name),
-                    },
-                    .data = .{
-                        .Map = .{
-                            .key_type = key_type_expr,
-                            .value_type = value_type_expr,
-                            .is_mutable = true,
-                        },
-                    },
-                };
-
-                const field = try self.allocator.create(ast.StructField);
-                field.* = .{
-                    .name = field_name,
-                    .type_expr = map_type_expr,
-                    .is_public = is_public_method,
-                };
-                try fields.append(field);
-            } else {
-                // Regular field declaration
-                if (self.peek().type != .IDENTIFIER) {
-                    return error.ExpectedIdentifier;
-                }
-                const field_name = self.peek();
-                self.advance();
-
-                // Original simple field parsing
-                if (self.peek().type != .TYPE_SYMBOL) {
-                    return error.ExpectedTypeAnnotation;
-                }
-                self.advance();
-
-                const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-
-                const field = try self.allocator.create(ast.StructField);
-                field.* = .{
-                    .name = field_name,
-                    .type_expr = type_expr,
-                    .is_public = is_public_method,
-                };
-                try fields.append(field);
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
             }
+            const field_name = self.peek();
+            self.advance();
+
+            if (self.peek().type != .TYPE_SYMBOL) {
+                return error.ExpectedTypeAnnotation;
+            }
+            self.advance();
+
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+            const field = try self.allocator.create(ast.StructField);
+            field.* = .{
+                .name = field_name,
+                .type_expr = type_expr,
+                .is_public = is_public_method,
+            };
+            try fields.append(field);
         }
 
         if (self.peek().type == .COMMA) {
@@ -1002,8 +867,6 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             },
         };
     }
-
-    if (self.peek().type == .MAP_KEYWORD) return error.MapDeclaredWithVarOrConst;
 
     const name = if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;

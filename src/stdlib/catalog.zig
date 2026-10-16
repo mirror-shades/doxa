@@ -15,7 +15,6 @@ pub const Kind = enum {
     structure,
     enumeration,
     group,
-    map,
     constant,
     variable,
     module,
@@ -28,7 +27,6 @@ pub const Kind = enum {
             .structure => "struct",
             .enumeration => "enum",
             .group => "group",
-            .map => "map",
             .constant => "const",
             .variable => "var",
             .module => "module",
@@ -406,7 +404,6 @@ fn kindFromKeyword(keyword: []const u8) ?Kind {
         .{ .text = "struct", .kind = .structure },
         .{ .text = "enum", .kind = .enumeration },
         .{ .text = "group", .kind = .group },
-        .{ .text = "map", .kind = .map },
         .{ .text = "const", .kind = .constant },
         .{ .text = "var", .kind = .variable },
         .{ .text = "module", .kind = .module },
@@ -419,7 +416,7 @@ fn kindFromKeyword(keyword: []const u8) ?Kind {
 
 fn isBraceBodied(kind: Kind) bool {
     return switch (kind) {
-        .function, .method, .structure, .enumeration, .group, .map => true,
+        .function, .method, .structure, .enumeration, .group => true,
         .constant, .variable, .module => false,
     };
 }

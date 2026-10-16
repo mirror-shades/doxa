@@ -1415,7 +1415,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 .tetra => return .{ .base = .Tetra, .is_mutable = false },
                 .nothing => return .{ .base = .Nothing, .is_mutable = false },
                 .array => return .{ .base = .Array, .is_mutable = false },
-                .map => return .{ .base = .Map, .is_mutable = false },
             }
         },
         .Array => return .{ .base = .Array, .is_mutable = false },

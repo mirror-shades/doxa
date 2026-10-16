@@ -130,7 +130,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("struct", .STRUCT_KEYWORD);
         try self.keywords.put("enum", .ENUM_KEYWORD);
         try self.keywords.put("group", .GROUP_KEYWORD);
-        try self.keywords.put("map", .MAP_KEYWORD);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);

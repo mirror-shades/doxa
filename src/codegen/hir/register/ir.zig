@@ -126,7 +126,7 @@ pub const Type = union(enum) {
 
 pub fn isHeapType(t: HIRType) bool {
     return switch (t) {
-        .String, .Array, .Map, .Struct, .Union, .Group => true,
+        .String, .Array, .Struct, .Union, .Group => true,
         .Int, .Byte, .Float, .Tetra, .Nothing, .Enum, .Function, .Unknown, .Poison => false,
     };
 }
@@ -247,11 +247,6 @@ pub const Op = union(enum) {
     /// Copy a dynamic array's elements back into a fixed one, as many as both
     /// hold: a fixed array lent to a dynamic `^` parameter took a copy.
     array_copy_to_fixed: struct { fixed: ValueId, array: ValueId },
-
-    // ── Maps ── (entry stores re-home into the map's arena, as arrays do)
-    map_new: struct { arena: ValueId, else_value: ?ValueId },
-    map_get: struct { map: ValueId, key: ValueId },
-    map_set: struct { map: ValueId, key: ValueId, value: ValueId },
 
     // ── Structs ── (field stores re-home into the struct's arena)
     struct_new: struct { arena: ValueId, fields: []const ValueId },

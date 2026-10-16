@@ -338,23 +338,6 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .Map => |*map_expr| {
-                for (map_expr.entries) |entry| {
-                    entry.key = try self.foldExpr(entry.key);
-                    entry.value = try self.foldExpr(entry.value);
-                }
-                return expr;
-            },
-            .MapLiteral => |*map_literal| {
-                for (map_literal.entries) |entry| {
-                    entry.key = try self.foldExpr(entry.key);
-                    entry.value = try self.foldExpr(entry.value);
-                }
-                if (map_literal.else_value) |else_value| {
-                    map_literal.else_value = try self.foldExpr(else_value);
-                }
-                return expr;
-            },
             .InternalCall => |*call| {
                 call.receiver = try self.foldExpr(call.receiver);
                 for (call.arguments) |argument| {
