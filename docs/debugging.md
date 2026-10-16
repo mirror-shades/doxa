@@ -13,12 +13,25 @@ doxa compile main.doxa -o bin/main          # with debug info
 doxa compile --strip main.doxa -o bin/main  # without
 ```
 
-The binary carries a line table for every `.doxa` file it was built from:
-DWARF on Linux and macOS, and on Windows a `.pdb` written beside the binary.
+The debug information is a line table for every `.doxa` file the program was
+built from, with its functions, locals and types. Where it lives depends on
+the platform:
+
+- **Windows:** a `.pdb` beside the binary (`bin/main.pdb`).
+- **Linux:** a `.debug` file beside the binary (`bin/main.debug`), which the
+  binary names in a `.gnu_debuglink` section. gdb, lldb and perf find it
+  there; ship the binary alone, and keep the `.debug` file to debug crashes
+  from it.
+- **macOS:** in the object files in the compiler's cache, which the binary
+  points to. A binary moved to another machine, or run after its cache is
+  cleared, has no line table there. (TODO: a `.dSYM` once the runtime's
+  backtrace can read one.)
+
 It costs the program nothing: the machine code is the same with and without
-it, but for one call at start-up that turns backtraces on. Nor does it cost
-measurable compile time. `--strip` leaves the program's code without debug
-information and its faults without a backtrace.
+it, but for the start-up that turns backtraces on. Nor does it cost
+measurable compile time. `--strip` leaves no debug information at all, the
+runtime's and libc's included, and no faults' backtraces: on Linux that is
+most of a binary's size.
 
 What a debugger sees:
 
@@ -61,13 +74,15 @@ Index out of bounds at b.doxa:2:12: index 7, length 3
 Each frame is named as the program spells it, at the line and column of its
 call. The runtime's own frames are left out, and so is the call into the entry
 function. A fault while a global's initializer runs shows that initializer as
-`<globals>`. Optimized builds keep the frames that survive inlining, and
-CodeView often records no column there (`b.doxa:2:0`). The trace goes to stderr
+`<globals>`. Optimized builds keep the frames that survive inlining. On
+Windows an inlined function still shows a frame of its own, though CodeView
+often records no column there (`b.doxa:2:0`); on Linux and macOS its code is
+shown under the function it was inlined into, at its own line. The trace goes to stderr
 and doesn't change the exit status. Under `--strip` the fault prints its line
 alone.
 
-On Windows the trace currently ends with one more frame, `<globals>` at line 1:
-CodeView cannot mark the call into the entry as having no source line.
+When no frame can be shown, a line says why instead, such as
+`  (no backtrace: the stack could not be unwound to the faulting frame)`.
 
 ## Finding the source
 
