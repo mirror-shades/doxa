@@ -74,7 +74,6 @@ All heap values are allocated from the **current** scope arena:
 | Arrays | `doxa_array_new` → `doxa_scope_alloc` (header + data) |
 | Strings | `doxa_str_clone`, `doxa_str_concat`, `doxa_substring`, … |
 | Structs | `doxa_scope_alloc` (contiguous `i64` field array) |
-| Maps | `doxa_map_new` (`map_runtime.zig`) |
 
 Because a value can only be reached while its allocating scope is on the stack, values that escape a scope are **rehomed into the destination scope**:
 
@@ -149,7 +148,7 @@ the flag nothing is counted and the program is unchanged.
 
 `--instrument=memcheck` checks the memory model while the program runs. When
 an arena is reset or closed, its memory is filled with a poison byte (`0xDD`)
-and kept aside, never reused. Every read of a string, array, struct or map
+and kept aside, never reused. Every read of a string, array or struct
 first checks that it is not in such memory, and a read that is faults:
 
 ```
@@ -181,7 +180,7 @@ members (`--instrument=memcheck,memtrace`); it is a diagnostic build too.
 
 | Issue | Rationale |
 |-------|-----------|
-| **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | All buffers bulk-freed on scope exit in O(1). |
+| **Arena buffer accumulation on resize** — When an array grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | All buffers bulk-freed on scope exit in O(1). |
 | **Rehome decisions follow lifetime, not access** — Arrays preserve identity when their owner outlives the destination, while explicit snapshots remain independent. `@push` / index assignment mutate the header in place and keep it. Struct stores keep identity when the source already outlives the destination, which is what makes `each n in arr { n.field is ... }` mutate the element. Strings are immutable, so they are simply copied when they do not already outlive the destination; identity never matters. | Only an actual escape needs a copy. Globals and longer-lived containers still receive storage that survives the source scope. |
 | **A described struct carries a two-word header** — its descriptor and its owning arena, just before its fields, as an array header carries its arena. A scalar-only struct that is never reflected and never crosses a container/union/signature boundary has no descriptor and no header, and is cloned with a typed word copy (B2/B3-lite). | Needed for `@string(struct)`, descriptor-backed recursive cloning, and placing a field's string or box in the struct's own arena. 16 bytes per described struct, reclaimed with its arena; there is no global registry. |
 | **Empty array literals require an element type** — `var x is []` is a compile error (E6019); the element type must come from an annotation (`var x :: int[] is []`) or surrounding context (`x = []`, `foo([])`, `return []`). | An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime. |

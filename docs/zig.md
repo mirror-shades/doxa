@@ -156,7 +156,7 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
 
 There is no runtime ABI error channel to translate into a Doxa error — the
 shape of the call is settled at compile time. Only scalars, `string`, `enum`,
-and (nested) arrays of those cross the boundary; structs, maps, unions, and
+and (nested) arrays of those cross the boundary; structs, unions, and
 functions are rejected with `E8002` while the wrapper is generated, before Zig
 is invoked. A Zig function is not a value Doxa can hold or pass — Doxa only
 *calls* the exported functions.

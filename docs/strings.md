@@ -28,7 +28,7 @@ var x is 10
 ```
 
 Interpolation works wherever a string literal is accepted: in `@print` / `@println` calls,
-variable initialisers, function arguments, map keys, and so on.
+variable initialisers, function arguments, and so on.
 
 ## The `string` type
 

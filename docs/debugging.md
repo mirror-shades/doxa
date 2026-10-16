@@ -21,11 +21,16 @@ the platform:
 - **Linux:** a `.debug` file beside the binary (`bin/main.debug`), which the
   binary names in a `.gnu_debuglink` section. gdb, lldb and perf find it
   there; ship the binary alone, and keep the `.debug` file to debug crashes
-  from it.
+  from it. Both carry the same build ID, a hash of the program, which
+  debuginfod servers and `.build-id/` debug directories index by.
 - **macOS:** in the object files in the compiler's cache, which the binary
-  points to. A binary moved to another machine, or run after its cache is
-  cleared, has no line table there. (TODO: a `.dSYM` once the runtime's
-  backtrace can read one.)
+  points to, and, for `doxa compile` when `dsymutil` is installed (it comes
+  with Xcode's command-line tools), in a `.dSYM` beside the binary
+  (`bin/main.dSYM`), which lldb, Instruments and crash reporters find by the
+  binary's UUID on any machine. A fault's backtrace reads only the cache's
+  objects, so a binary moved to another machine, or run after its cache is
+  cleared, prints its fault line without one. (TODO: read the `.dSYM` too,
+  once Zig's reader can.)
 
 It costs the program nothing: the machine code is the same with and without
 it, but for the start-up that turns backtraces on. Nor does it cost
@@ -52,8 +57,7 @@ What a debugger sees:
   length; a struct is its fields, each at the offset the runtime lays it at; a
   union or group is its box. A fixed array expands element by element. A
   dynamic array points at its header: `len` is its length and `data` points at
-  its elements, so view `data` as an array of `len` to browse them. A map shows
-  its length, but its entries are not browsable yet. A function value is a
+  its elements, so view `data` as an array of `len` to browse them. A function value is a
   pointer to its signature, and each function's own signature is described.
 - **Optimized builds** (`--opt=1..3`) keep what survives optimization. That is
   the usual optimized-debugging experience: a statement the optimizer merged
@@ -146,7 +150,8 @@ doxa report loops
 
 The report lists each function's deepest loop nest, every allocation or heap
 store made inside a loop with the arena it lands in, calls inside loops to
-functions that themselves allocate or loop, and copies the compiler left to a
+functions that allocate or loop, in their own body or through a function they
+call (`calls load (allocates through parse)`), and copies the compiler left to a
 runtime check inside a loop. An allocation marked `!` lands where no iteration
 of its loop reclaims it, such as an element pushed into an array declared
 outside the loop. That memory grows with the loop's iterations and is held
@@ -154,4 +159,6 @@ until its arena closes. The operations are named as `--emit-hir` names them
 (`array_push`, `str_concat`). The findings are written beside the binary as
 `<binary>.complexity` and change nothing in the program. When the same build
 is also instrumented, one `doxa report` shows the counts and the findings
-together, and `--json` prints both.
+together, and `--json` prints both. With `--instrument=lines`, each section
+of findings is ordered by how often its statement ran, highest first, and
+each row says how often (`(ran 50 times)`), so what cost the run most leads.

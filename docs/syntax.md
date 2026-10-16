@@ -160,18 +160,6 @@ var copy :: int[] is literal  # copy becomes dynamic and @push-friendly
 ```
 ````
 
-### Maps
-
-String-keyed dictionaries:
-
-```doxa
-map scores {
-    "alice" is 100,
-    "bob" is 85
-}
-scores["alice"]                  # Access value
-```
-
 ## Control Flow
 
 ### Pattern Matching
@@ -192,8 +180,8 @@ Match expressions must be exhaustive or include an `else` clause.
 
 `.Variant` names a variant of the enum its position expects, and nothing else
 gives it a type. The context must be explicit: a parameter, an annotated or
-already-declared variable, a struct field, an annotated array or map key, a
-return, or the other side of a comparison.
+already-declared variable, a struct field, an annotated array, a return, or
+the other side of a comparison.
 
 ```doxa
 var status :: Status is .Pending   # annotation

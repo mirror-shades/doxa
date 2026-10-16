@@ -20,7 +20,6 @@ Doxa is a simple to write, highly readible language based on four corned logical
 - [Arrays](arrays.md) — dynamic and fixed-size arrays
 - [Control flow](control.md) — `if`, `match`, `as`, and related branching
 - [Loops](loops.md) — composable `for` / `while` / `do` loop forms
-- [Maps](maps.md) — key–value maps and typing
 - [Memory management](memory.md) — arena scopes and how allocation is tied to blocks
 - [Methods and intrinsics](methods.md) — `@` intrinsics
 - [Groups](groups.md) — named tagged unions of enums, structs, and other groups
