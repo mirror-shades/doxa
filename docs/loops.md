@@ -178,6 +178,7 @@ Loops with an int exposed while a given condition met using a given step
 ```doxa
 each item in collection { ... }
 each item at index in collection { ... }
+each item in ^collection { ... }   # the body changes the elements
 ```
 
 **Expands to**:
@@ -196,8 +197,9 @@ for i while i < @length(collection) do i += 1 {
 - The `at` variable provides an immutable copy of the current index
 - Nested loops create independent index copies
 - Over a `string`, iteration is byte-by-byte — `@length` and indexing are byte-based (see [strings.md](strings.md)) — so each item is a one-byte `string`
-- Struct (and other heap) items alias the collection element: `each n in neutrons { n.x_pos += 1 }` mutates `neutrons`. Scalar items (`int`, `float`, …) and whole arrays are copies; write `arr[i]` to persist those.
-- Modifying the collection's length during iteration may cause undefined behavior
+- `item` is a copy of the element, as every plain store is: changing it leaves the collection alone.
+- `each n in ^neutrons { n.x_pos += 1 }` lends the collection to the body, so `n` is the element itself and writing it changes `neutrons`. The collection must be a variable or a field path, and the body may not otherwise write, resize or lend it; see [alias.md](alias.md).
+- Without `^`, a body that resizes the collection changes how many iterations run: the length is read before each one.
 
 ## Control Flow
 

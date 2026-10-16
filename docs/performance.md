@@ -163,9 +163,9 @@ runtime-generic representation even though the static type is sitting right ther
   retired strings from this path: immutable, their store is decided entirely at compile time (an
   unknown string is simply cloned, which is observably identical to preserving its identity), so
   `string_scopes` and the string rehome exports are gone. A3 has started retiring the clone-on-return:
-  a struct or array literal that is the top-level value of a `return` is born in the caller's arena at
-  construction (`doxa_scope_alloc_at` / `doxa_array_new_at`) instead of being deep-copied there, with
-  only the non-direct returns still cloning.
+  a struct or array literal that is the top-level value of a `return`, or stored into a container, is
+  born in its destination arena at construction instead of being deep-copied there, with only
+  other values still cloning.
 
 - **Allocation and clone boundaries are opaque.** Heap allocation is an external `doxa_scope_alloc`;
   clones are external recursive calls; structs are written into process-global registries. None of

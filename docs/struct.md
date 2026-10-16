@@ -80,5 +80,5 @@ dog.bark() # Spot says woof!
 
 ### Performance
 
-Structs are allocated from the current scope's arena. All field values are stored in a single contiguous pool alongside field metadata, giving excellent cache locality. Structs created and assigned within the same scope benefit from same-scope move semantics — no deep copy occurs when the source and destination share an arena.
+Structs are allocated from the current scope's arena. All field values are stored in a single contiguous pool alongside field metadata, giving excellent cache locality. Assigning a struct held by another name copies it, so a write through one name is never seen through the other; a fresh struct (a `$` literal, a call's result) is moved, not copied. Sharing is written with `^` (see [alias.md](alias.md)).
 ```

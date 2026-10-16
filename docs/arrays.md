@@ -37,4 +37,4 @@ const static_arr is fixed_arr # static allocation made and refrenced
 
 ### Performance
 
-Dynamic arrays are allocated from the current scope's arena. Array elements are stored in a single contiguous allocation, and mutations that require dynamic storage conversion copy the element data in bulk. Arrays within the same scope share the same arena and benefit from same-scope move semantics — assigning one array variable to another within the same block skips the deep copy.
+Dynamic arrays are allocated from the current scope's arena. Array elements are stored in a single contiguous allocation, and mutations that require dynamic storage conversion copy the element data in bulk. Assigning one array variable to another copies it: the two never share elements (see [memory.md](memory.md)). A fresh array (a literal, a call's result) is moved, not copied. To change an array somewhere else, lend it with `^`: a `^` parameter, or `each n in ^arr` to change its elements in a loop.

@@ -15,7 +15,7 @@ modify(^x) # Caller opts-in to mutation
 ```
 Core Rules
 
-    Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
+    Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types. The one other place `^` is written is the collection of an `each` loop (below).
 
     Lvalue-only — Only full variables can be aliased no temporaries, expressions, struct fields, or array elements.
 
@@ -93,6 +93,29 @@ Lending a union parameter on to another counts as storing through it: it
 preserves its member only if the parameter it is lent to does. A call through
 a function value cannot be checked against the callee's body, so it never
 takes a member-typed variable for a union parameter.
+
+Loops: `each n in ^path`
+A plain `each n in items` binds a copy of each element, as every plain store
+does. Written on the collection, `^` lends it to the loop body, which then
+changes the elements through `n`:
+
+```
+each p in ^game.players {
+    p.score is p.score + 1   # writes game.players[i]
+}
+```
+
+- The collection is a path: a variable, or `this`, followed by struct fields
+  (`^items`, `^game.players`, `^this.items`). A call, an index, or a view is
+  not one (E3005); bind it to a variable first.
+- While the loop runs, the body may not write, resize, lend, or borrow again
+  the path, anything that holds it, or anything under it (E3006). Changes go
+  through `n`, which may itself be written, lent (`f(^n)`), or borrowed by an
+  inner loop (`each c in ^n.cells`).
+- `n` is the element, read afresh on every use: a change to the collection
+  the check cannot see, such as a callee that empties a borrowed global,
+  meets a bounds check, never a stale element.
+- Storing or returning `n` copies it.
 
 Design Intent
 This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.
