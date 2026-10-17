@@ -5,12 +5,10 @@ const Reporting = @import("reporting.zig");
 const Location = Reporting.Location;
 const TokenImport = @import("../types/token.zig");
 const Token = TokenImport.Token;
-const TokenType = TokenImport.TokenType;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 
 pub const ValueStorage = struct {
-    type: TokenType,
     type_info: *TypeInfo,
     constant: bool,
     /// The value of a `const` whose initializer is a constant expression
@@ -21,7 +19,6 @@ pub const ValueStorage = struct {
 
 pub const Variable = struct {
     name: []const u8,
-    type: TokenType,
     storage_id: u32,
     id: u32,
     is_alias: bool,
@@ -108,7 +105,6 @@ pub const Scope = struct {
     pub fn createValueBinding(
         self: *Scope,
         name: []const u8,
-        vtype: TokenType,
         type_info: *TypeInfo,
         constant: bool,
     ) !*Variable {
@@ -122,12 +118,11 @@ pub const Scope = struct {
         self.manager.variable_counter += 1;
 
         const storage = try self.allocator.create(ValueStorage);
-        storage.* = .{ .type = vtype, .type_info = type_info, .constant = constant };
+        storage.* = .{ .type_info = type_info, .constant = constant };
 
         const variable = try self.allocator.create(Variable);
         variable.* = .{
             .name = name,
-            .type = vtype,
             .storage_id = storage_id,
             .id = variable_id,
             .is_alias = false,
@@ -147,12 +142,11 @@ pub const Scope = struct {
     pub fn createValueBindingAt(
         self: *Scope,
         name: []const u8,
-        vtype: TokenType,
         type_info: *TypeInfo,
         constant: bool,
         decl_token: Token,
     ) !*Variable {
-        const variable = try self.createValueBinding(name, vtype, type_info, constant);
+        const variable = try self.createValueBinding(name, type_info, constant);
         variable.decl_line = decl_token.line;
         variable.decl_column = decl_token.column;
         variable.recordDeclLocation(decl_token);
@@ -245,9 +239,9 @@ pub const ScopeManager = struct {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
                 if (self.getVariableScope(value)) |var_scope| {
-                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', type={}, storage={d}, scope={d}, is_alias={}", .{ key, value.name, value.type, value.storage_id, var_scope.id, value.is_alias });
+                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', storage={d}, scope={d}, is_alias={}", .{ key, value.name, value.storage_id, var_scope.id, value.is_alias });
                 } else {
-                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', type={}, storage={d}, scope=?, is_alias={}", .{ key, value.name, value.type, value.storage_id, value.is_alias });
+                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', storage={d}, scope=?, is_alias={}", .{ key, value.name, value.storage_id, value.is_alias });
                 }
             }
         } else {
@@ -260,7 +254,7 @@ pub const ScopeManager = struct {
             while (storage_it.next()) |entry| {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
-                reporter.debugMemory(null, null, "  [{d}]: type={}, constant={}", .{ key, value.type, value.constant });
+                reporter.debugMemory(null, null, "  [{d}]: type={s}, constant={}", .{ key, @tagName(value.type_info.base), value.constant });
             }
         }
     }

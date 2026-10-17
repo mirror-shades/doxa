@@ -286,7 +286,9 @@ fn requireType(self: *SemanticAnalyzer, name: []const u8, module: ModuleId, loca
 /// Record what `expr` denotes. A node is resolved once; a second, different
 /// resolution of the same node is a compiler bug.
 pub fn annotate(self: *SemanticAnalyzer, expr: *const ast.Expr, resolution: Resolution) ErrorList!void {
-    try self.resolutions.put(expr.base.id, resolution);
+    const entry = try self.resolutions.getOrPut(expr.base.id);
+    if (entry.found_existing) std.debug.assert(entry.value_ptr.eql(resolution));
+    entry.value_ptr.* = resolution;
 }
 
 /// A binding of `module` was referenced: it is not an unused import, and a

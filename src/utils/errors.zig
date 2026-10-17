@@ -94,6 +94,7 @@ pub const ErrorList = error{
     IndexOutOfBounds,
     UnterminatedArray,
     UnterminatedString,
+    UnclosedPlaceholder,
     UnterminatedZigBlock,
     UnterminatedParenthesis,
     ExpectedComma,
@@ -366,6 +367,7 @@ pub const ErrorCode = struct {
     pub const SHADOWED_NAME = "E1035";
     pub const CONSTANT_DIVISION_BY_ZERO = "E1036";
     pub const UNPARSABLE_CONVERSION = "E1037";
+    pub const IF_VALUE_REQUIRES_ELSE = "E1038";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";
@@ -377,12 +379,11 @@ pub const ErrorCode = struct {
     pub const UNUSED_IMPORT = "W2009";
     pub const UNREACHABLE_CODE = "W2010";
     pub const CONDITION_ALWAYS_TRUE = "W2011";
+    pub const EXPRESSION_HAS_NO_EFFECT = "W2012";
     pub const EXPECTED_EXPRESSION = "E2006";
     pub const EXPECTED_TYPE = "E2008";
     pub const EXPECTED_CLOSING_PARENTHESIS = "E2009";
     pub const EXPECTED_CLOSING_BRACE = "E2011";
-    pub const EXPECTED_FUNCTION_NAME = "E2012";
-    pub const EXPECTED_FUNCTION_PARAMS = "E2013";
     pub const UNSUPPORTED_OPERATOR = "E2017";
     pub const CONTINUE_USED_OUTSIDE_OF_LOOP = "E2018";
     pub const BREAK_USED_OUTSIDE_OF_LOOP = "E2019";
@@ -393,6 +394,7 @@ pub const ErrorCode = struct {
     pub const NESTED_DECLARATION = "E2029";
     pub const INVALID_THIS = "E2030";
     pub const NESTING_TOO_DEEP = "E2031";
+    pub const KEYWORD_AS_NAME = "E2032";
 
     // 3xxx - Memory & Ownership
     pub const INVALID_BORROW_SOURCE = "E3005";

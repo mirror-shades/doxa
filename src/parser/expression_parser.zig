@@ -477,11 +477,7 @@ pub fn forExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
     var step_expr: ?*ast.Expr = null;
     var body: *ast.Expr = undefined;
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const var_name = self.peek();
-    self.advance();
+    const var_name = try self.bindableName("a loop variable");
 
     if (self.peek().type == .ASSIGN) {
         self.advance();
@@ -874,6 +870,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     }
 
     var else_expr: ?*ast.Expr = null;
+    var implicit_else = false;
 
     if (self.peek().type == .NEWLINE and self.peekAhead(1).type == .ELSE) {
         self.advance();
@@ -899,6 +896,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             return error.ExpectedExpression;
         }
     } else {
+        implicit_else = true;
         else_expr = try self.allocator.create(ast.Expr);
         else_expr.?.* = .{
             .base = .{
@@ -922,6 +920,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
                 .condition = condition,
                 .then_branch = then_expr,
                 .else_branch = else_expr,
+                .implicit_else = implicit_else,
             },
         },
     };
@@ -1010,9 +1009,7 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
         },
         .STRING => blk: {
             self.advance();
-            const interpolated = true;
-            const new_expr = try string_interpolation.buildStringLiteralExpr(self, current.literal.string, current, interpolated);
-            break :blk new_expr;
+            break :blk try string_interpolation.buildStringLiteralExpr(self, current);
         },
         else => {
             return null;
@@ -1103,8 +1100,10 @@ pub fn grouping(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 }
 
 pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    const operator = self.peek();
+    var operator = self.peek();
     self.advance();
+    // `!x` is spelling sugar for `not x`: one operator past the parser.
+    if (operator.type == .BANG) operator.type = .NOT;
 
     const right = try precedence.parsePrecedence(self, .UNARY) orelse return error.ExpectedExpression;
 
@@ -1390,6 +1389,7 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 .tetra => return .{ .base = .Tetra, .is_mutable = false },
                 .nothing => return .{ .base = .Nothing, .is_mutable = false },
                 .array => return .{ .base = .Array, .is_mutable = false },
+                .template => unreachable, // the parser makes it an InterpolatedString
             }
         },
         .Array => return .{ .base = .Array, .is_mutable = false },
@@ -1434,6 +1434,11 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
         },
         .STRING, .FLOAT, .BYTE, .TETRA, .LOGIC => {
             const lit_token = self.peek();
+            // A pattern is a constant: a string pattern holds no placeholder.
+            if (lit_token.literal == .template) {
+                self.reporter.reportCompileError(self.locationOf(lit_token), ErrorCode.INVALID_PLACEHOLDER_EXPRESSION, "a match pattern is a constant string, so it cannot hold a placeholder; write \\{{ for a literal brace", .{});
+                return error.InvalidExpression;
+            }
             self.advance();
             return lit_token;
         },
@@ -1500,11 +1505,7 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
                 while (self.peek().type != .RIGHT_BRACE) {
                     while (self.peek().type == .NEWLINE or self.peek().type == .COMMA) self.advance();
                     if (self.peek().type == .RIGHT_BRACE) break;
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    try fields.append(self.allocator, self.peek());
-                    self.advance();
+                    try fields.append(self.allocator, try self.bindableName("a destructured field"));
                     if (self.peek().type == .COMMA) self.advance();
                 }
                 self.advance(); // consume '}'

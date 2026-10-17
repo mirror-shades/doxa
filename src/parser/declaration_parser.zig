@@ -23,11 +23,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
     const zig_token = self.peek();
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const module_name = self.peek();
-    self.advance();
+    const module_name = try self.bindableName("a zig module");
 
     if (self.peek().type != .ZIG_BLOCK) {
         return error.ExpectedLeftBrace;
@@ -81,12 +77,7 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
 
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const name = self.peek();
-
-    self.advance();
+    const name = try self.bindableName("an enum");
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
@@ -100,13 +91,7 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
             self.advance();
             continue;
         }
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
-        }
-        const variant_token = self.peek();
-        try variants.append(variant_token);
-
-        self.advance();
+        try variants.append(try self.bindableName("an enum variant"));
 
         if (self.peek().type == .COMMA) {
             self.advance();
@@ -153,12 +138,7 @@ pub fn parseGroupDecl(self: *Parser) ErrorList!ast.Stmt {
 
     self.advance(); // consume `group`
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const name = self.peek();
-
-    self.advance();
+    const name = try self.bindableName("a group");
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
     }
@@ -253,12 +233,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
 
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const name = self.peek();
-
-    self.advance();
+    const name = try self.bindableName("a struct");
 
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
@@ -293,11 +268,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             const is_function = self.peek().type == .FUNCTION;
             self.advance();
 
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
-            }
-            const method_name = self.peek();
-            self.advance();
+            const method_name = try self.bindableName("a method");
 
             const method_is_static: bool = is_function;
 
@@ -315,11 +286,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 while (self.peek().type != .RIGHT_PAREN) {
                     while (self.peek().type == .NEWLINE) self.advance();
 
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    const param_name = self.peek();
-                    self.advance();
+                    const param_name = try self.bindableName("a parameter");
 
                     var param_type: ?*ast.TypeExpr = null;
                     if (self.peek().type == .TYPE_SYMBOL) {
@@ -401,11 +368,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             if (self.peek().type == .VAR or self.peek().type == .CONST) {
                 return error.FieldDeclaredWithVarOrConst;
             }
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
-            }
-            const field_name = self.peek();
-            self.advance();
+            const field_name = try self.bindableName("a field");
 
             if (self.peek().type != .TYPE_SYMBOL) {
                 return error.ExpectedTypeAnnotation;
@@ -462,53 +425,6 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     return struct_expr;
 }
 
-fn isValidFunctionName(token_type: token.TokenType) bool {
-    return switch (token_type) {
-        .IDENTIFIER,
-        .VAR,
-        .CONST,
-        .IMPORT,
-        .MODULE,
-        .PUBLIC,
-        .RETURN,
-        .BREAK,
-        .FUNCTION,
-        .METHOD,
-        .CONTINUE,
-        .MATCH,
-        .WHILE,
-        .DO,
-        .FOR,
-        .EACH,
-        .IN,
-        .AT,
-        .XOR,
-        .EXISTS,
-        .FORALL,
-        .FROM,
-        .AS,
-        .TO,
-        .NOT,
-        .IMPLIES,
-        .ASYNC,
-        .AWAIT,
-        .ENTRY,
-        .RANGE,
-        .RETURNS,
-        .THIS,
-        .UNREACHABLE,
-        .AND,
-        .OR,
-        .WHERE,
-        .IF,
-        .IFF,
-        .THEN,
-        .ELSE,
-        => true,
-        else => false,
-    };
-}
-
 pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_entry = false;
     var is_public = false;
@@ -558,23 +474,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    if (!isValidFunctionName(self.peek().type)) {
-        const current_token = self.peek();
-        const location = Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = current_token.line,
-                .start_col = current_token.column,
-                .end_line = current_token.line,
-                .end_col = current_token.column,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_NAME, "expected function name after 'function' keyword, got '{s}'", .{current_token.lexeme});
-        return error.ExpectedIdentifier;
-    }
-    const function_name = self.peek();
-    self.advance();
+    const function_name = try self.bindableName("a function");
 
     if (is_entry) {
         self.entry_point_name = function_name.lexeme;
@@ -607,23 +507,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                 self.advance();
                 is_alias = true;
             }
-            if (!isValidFunctionName(self.peek().type)) {
-                const current_token = self.peek();
-                const location = Location{
-                    .file = self.current_file,
-                    .file_uri = self.current_file_uri,
-                    .range = .{
-                        .start_line = current_token.line,
-                        .start_col = current_token.column,
-                        .end_line = current_token.line,
-                        .end_col = current_token.column,
-                    },
-                };
-                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_PARAMS, "expected parameter name", .{});
-                return error.ExpectedIdentifier;
-            }
-            const param_name = self.peek();
-            self.advance();
+            const param_name = try self.bindableName("a parameter");
 
             if (self.peek().type != .TYPE_SYMBOL) {
                 const current_token = self.peek();
@@ -820,61 +704,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.is_mutable = !is_const;
     }
 
-    if (self.peek().type == .ARRAY_KEYWORD) {
-        type_info.base = .Array;
-        self.advance();
-
-        const name = token.Token.init(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file, self.current_file_uri);
-
-        var initializer: ?*ast.Expr = null;
-        if (self.peek().type == .ASSIGN) {
-            self.advance();
-
-            initializer = try expression_parser.parseExpression(self);
-            if (initializer == null) {
-                const location = Reporting.Location{
-                    .file = self.current_file,
-                    .file_uri = self.current_file_uri,
-                    .range = .{
-                        .start_line = self.peek().line,
-                        .start_col = self.peek().column,
-                        .end_line = self.peek().line,
-                        .end_col = self.peek().column,
-                    },
-                };
-                self.reporter.reportCompileError(location, null, "Expected expression", .{});
-                return error.ExpectedExpression;
-            }
-        }
-
-        if (self.peek().type != .NEWLINE) {
-            return error.ExpectedNewline;
-        }
-        self.advance();
-
-        return ast.Stmt{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(name),
-            },
-            .data = .{
-                .VarDecl = .{
-                    .name = name,
-                    .type_info = type_info,
-                    .initializer = initializer,
-                    .is_public = is_public,
-                },
-            },
-        };
-    }
-
-    const name = if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    } else blk: {
-        const n = self.peek();
-        self.advance();
-        break :blk n;
-    };
+    const name = try self.bindableName("a variable");
 
     if (self.peek().type == .WHERE) {
         const location = Location{
@@ -939,9 +769,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ConstMustHaveInitializer;
     }
 
-    if (self.peek().type == .NEWLINE) {
-        self.advance();
-    }
+    try self.expectEnd("the declaration", &Parser.statement_end);
 
     if (type_info.base == .Nothing and initializer == null) {
         const location = Location{

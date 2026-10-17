@@ -15,6 +15,20 @@ const SemanticError = infer_type.SemanticError;
 /// The type of a builtin's subject argument. Expression inference can miss a
 /// variable's type (e.g. a global or an imported binding) even though its
 /// declaration is in scope, so fall back to the stored declaration type.
+/// `@remove` or `@slice` of an array nothing gave an element type: there
+/// is no element type for the result to have.
+fn uninferredElement(self: *SemanticAnalyzer, subject: *ast.Expr, type_info: *ast.TypeInfo) *ast.TypeInfo {
+    self.reporter.reportCompileError(
+        getLocationFromBase(subject.base),
+        ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+        "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+        .{},
+    );
+    self.fatal_error = true;
+    type_info.* = .{ .base = .Error };
+    return type_info;
+}
+
 pub fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) SemanticError!*ast.TypeInfo {
     const subject_type = try infer_type.inferTypeFromExpr(self, subject);
     // An empty literal takes its element type from its context, and a
@@ -137,6 +151,7 @@ pub fn inferBuiltinCallInner(
     if (std.mem.eql(u8, fname, "length")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const t0 = try inferBuiltinSubjectType(self, args[0]);
+        if (t0.base == .Error) return type_info;
         if (t0.base != .Array and t0.base != .String) {
             self.reporter.reportCompileError(
                 getLocationFromBase(args[0].base),
@@ -152,10 +167,12 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "push")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         const val_t = if (coll_t.base == .Array and coll_t.array_type != null)
             try infer_type.inferTypeIn(self, args[1], coll_t.array_type.?)
         else
             try infer_type.inferTypeFromExpr(self, args[1]);
+        if (val_t.base == .Error) return type_info;
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@push")) return type_info;
             if (coll_t.array_type) |elem| {
@@ -189,17 +206,7 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "pop")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
-        if (args[0].data == .Variable and std.mem.eql(u8, args[0].data.Variable.lexeme, "list")) {
-            if (coll_t.base == .Array) {
-                if (coll_t.array_type) |elem| type_info.* = elem.*;
-            } else if (coll_t.base == .String) {
-                type_info.* = .{ .base = .String };
-            } else {
-                self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
-                self.fatal_error = true;
-                return type_info;
-            }
-        }
+        if (coll_t.base == .Error) return type_info;
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@pop")) return type_info;
             if (coll_t.array_type) |elem| type_info.* = elem.*;
@@ -215,7 +222,9 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "insert")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         const idx_t = try infer_type.inferTypeFromExpr(self, args[1]);
+        if (idx_t.base == .Error) return type_info;
         if (idx_t.base != .Int) {
             self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@insert index must be int, got {s}", .{@tagName(idx_t.base)});
             self.fatal_error = true;
@@ -224,6 +233,7 @@ pub fn inferBuiltinCallInner(
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@insert")) return type_info;
             const val_t = if (coll_t.array_type) |elem| try infer_type.inferTypeIn(self, args[2], elem) else try infer_type.inferTypeFromExpr(self, args[2]);
+            if (val_t.base == .Error) return type_info;
             if (coll_t.array_type) |elem| {
                 try helpers.unifyElement(self, elem, val_t, args[2], .{ .location = getLocationFromBase(args[2].base) });
             }
@@ -231,6 +241,7 @@ pub fn inferBuiltinCallInner(
             // A string is not a byte array: only a string can be inserted.
             // `byte[]` crosses with `@pack`.
             const val_t = try infer_type.inferTypeFromExpr(self, args[2]);
+            if (val_t.base == .Error) return type_info;
             if (val_t.base != .String) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(args[2].base),
@@ -249,7 +260,9 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "remove")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         const idx_t = try infer_type.inferTypeFromExpr(self, args[1]);
+        if (idx_t.base == .Error) return type_info;
         if (idx_t.base != .Int) {
             self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@remove index must be int, got {s}", .{@tagName(idx_t.base)});
             self.fatal_error = true;
@@ -257,11 +270,8 @@ pub fn inferBuiltinCallInner(
         }
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@remove")) return type_info;
-            if (coll_t.array_type) |elem| {
-                type_info.* = elem.*;
-            } else {
-                type_info.* = .{ .base = .Nothing };
-            }
+            const elem = coll_t.array_type orelse return uninferredElement(self, args[0], type_info);
+            type_info.* = elem.*;
             return type_info;
         } else if (coll_t.base == .String) {
             type_info.* = .{ .base = .String };
@@ -273,8 +283,11 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "slice")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         const start_t = try infer_type.inferTypeFromExpr(self, args[1]);
+        if (start_t.base == .Error) return type_info;
         const len_t = try infer_type.inferTypeFromExpr(self, args[2]);
+        if (len_t.base == .Error) return type_info;
         if (start_t.base != .Int or len_t.base != .Int) {
             self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice start/length must be ints", .{});
             self.fatal_error = true;
@@ -284,13 +297,10 @@ pub fn inferBuiltinCallInner(
             type_info.* = .{ .base = .String };
         } else if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@slice")) return type_info;
-            if (coll_t.array_type) |elem| {
-                const new_elem = try ast.TypeInfo.createDefault(self.allocator);
-                new_elem.* = elem.*;
-                type_info.* = .{ .base = .Array, .array_type = new_elem };
-            } else {
-                type_info.* = .{ .base = .Array };
-            }
+            const elem = coll_t.array_type orelse return uninferredElement(self, args[0], type_info);
+            const new_elem = try ast.TypeInfo.createDefault(self.allocator);
+            new_elem.* = elem.*;
+            type_info.* = .{ .base = .Array, .array_type = new_elem };
         } else {
             self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice requires array or string, got {s}", .{@tagName(coll_t.base)});
             self.fatal_error = true;
@@ -313,6 +323,7 @@ pub fn inferBuiltinCallInner(
         // literal unresolved in HIR, where it lowers to field loads on a bogus
         // pointer instead of a constant.
         const operand_type = try infer_type.inferTypeFromExpr(self, args[0]);
+        if (operand_type.base == .Error) return type_info;
         if (builtin_methods.getMethodInfoByName(fname)) |info| {
             // `@pack` consumes a `byte[]`: the bridge from byte data into a
             // string is one-way and explicit. The element goes through the same
@@ -334,9 +345,7 @@ pub fn inferBuiltinCallInner(
                 const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
                 byte_elem.* = .{ .base = .Byte };
                 var expected: ast.TypeInfo = .{ .base = .Array, .array_type = byte_elem };
-                const start = self.reporter.diagnostics.items.len;
                 try helpers.unifyTypesExpr(self, &expected, operand_type, args[0], .{ .location = getLocationFromBase(args[0].base) });
-                if (self.reporter.firstErrorSince(start) != null) return type_info;
             }
             type_info.* = .{ .base = info.return_type };
             if (info.return_element_type) |elem_base| {
@@ -354,6 +363,7 @@ pub fn inferBuiltinCallInner(
         // Validate argument type (int | byte)
         if (args.len > 0) {
             const arg_type = try infer_type.inferTypeFromExpr(self, args[0]);
+            if (arg_type.base == .Error) return type_info;
             if (arg_type.base != .Int and arg_type.base != .Byte) {
                 self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
                 self.fatal_error = true;
@@ -372,6 +382,7 @@ pub fn inferBuiltinCallInner(
         // Validate argument type (string)
         if (args.len > 0) {
             const arg_type = try infer_type.inferTypeFromExpr(self, args[0]);
+            if (arg_type.base == .Error) return type_info;
             if (arg_type.base != .String) {
                 self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@panic: argument must be a string", .{});
                 self.fatal_error = true;
@@ -387,6 +398,7 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "clear")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         if (coll_t.base != .Array and coll_t.base != .String) {
             self.reporter.reportCompileError(
                 getLocationFromBase(args[0].base),
@@ -403,6 +415,7 @@ pub fn inferBuiltinCallInner(
     } else if (std.mem.eql(u8, fname, "find")) {
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base == .Error) return type_info;
         if (coll_t.base != .Array and coll_t.base != .String) {
             self.reporter.reportCompileError(
                 getLocationFromBase(args[0].base),
@@ -419,6 +432,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         if (args.len >= 1) {
             const cond_t = try infer_type.inferTypeFromExpr(self, args[0]);
+            if (cond_t.base == .Error) return type_info;
             if (cond_t.base != .Tetra) {
                 self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@assert condition must be tetra", .{});
                 self.fatal_error = true;
@@ -426,6 +440,7 @@ pub fn inferBuiltinCallInner(
         }
         if (args.len >= 2) {
             const msg_t = try infer_type.inferTypeFromExpr(self, args[1]);
+            if (msg_t.base == .Error) return type_info;
             if (msg_t.base != .String) {
                 self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.TYPE_MISMATCH, "@assert message must be string", .{});
                 self.fatal_error = true;
@@ -443,6 +458,7 @@ pub fn inferBuiltinCallInner(
         // (ptr, len) pair it can. A value is rendered with `"{}"` in a format
         // string, which is the path that knows the operand's declared type.
         const t0 = try infer_type.inferTypeFromExpr(self, args[0]);
+        if (t0.base == .Error) return type_info;
         if (t0.base != .String) {
             self.reporter.reportCompileError(
                 getLocationFromBase(args[0].base),

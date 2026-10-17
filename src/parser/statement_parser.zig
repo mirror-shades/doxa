@@ -33,19 +33,13 @@ fn parseExpressionStmtBody(self: *Parser) ErrorList!ast.Stmt {
     } else false;
 
     if (!is_block_like) {
-        const next_type = self.peek().type;
-        if (next_type == .NEWLINE) {
-            // `;` and newlines are interchangeable separators (peek/advance skip
-            // semicolons); consume the trailing separator(s) so a `stmt;` doesn't
-            // leave a newline behind that parses as a spurious empty statement.
-            while (self.peek().type == .NEWLINE) self.advance();
-        } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {} else {
+        self.expectEnd("the statement", &Parser.statement_end) catch |err| {
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);
             }
-            return error.ExpectedNewline;
-        }
+            return err;
+        };
     }
 
     return ast.Stmt{
@@ -106,28 +100,8 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
         value = try expression_parser.parseExpression(self);
     }
 
-    const next_type = self.peek().type;
-    if (next_type == .NEWLINE) {
-        // `;` and newlines are interchangeable statement separators, and
-        // peek()/advance() treat semicolons as transparent. Consume the
-        // trailing separator(s) in a loop so a `return x;` doesn't leave the
-        // newline behind (which would parse as a spurious empty statement and
-        // trip the unreachable-code check).
-        while (self.peek().type == .NEWLINE) self.advance();
-    } else if (next_type != .ELSE and next_type != .COMMA and next_type != .RIGHT_BRACE and next_type != .EOF) {
-        const location = Reporting.Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = @intCast(self.peek().line),
-                .start_col = self.peek().column,
-                .end_line = @intCast(self.peek().line),
-                .end_col = self.peek().column + self.peek().lexeme.len,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline or closing brace after return", .{});
-        return error.ExpectedNewline;
-    }
+    // A bare `return` may end a branch or a `match` arm.
+    try self.expectEnd("the return", &(Parser.statement_end ++ [_]token.TokenType{ .ELSE, .COMMA }));
 
     return ast.Stmt{
         .base = .{
@@ -151,26 +125,7 @@ pub fn parseLiftStmt(self: *Parser) ErrorList!ast.Stmt {
 
     const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-    if (self.peek().type == .SEMICOLON) {
-        self.advance();
-    }
-    const next_type = self.peek().type;
-    if (next_type == .NEWLINE) {
-        self.advance();
-    } else if (next_type != .RIGHT_BRACE and next_type != .EOF) {
-        const location = Reporting.Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = @intCast(self.peek().line),
-                .start_col = self.peek().column,
-                .end_line = @intCast(self.peek().line),
-                .end_col = self.peek().column + self.peek().lexeme.len,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline or closing brace after lift", .{});
-        return error.ExpectedNewline;
-    }
+    try self.expectEnd("the lift", &Parser.statement_end);
 
     return ast.Stmt{
         .base = .{
@@ -217,17 +172,11 @@ fn parseStatementBody(self: *Parser) ErrorList!ast.Stmt {
                     else => false,
                 };
                 if (!is_block_like) {
-                    if (self.peek().type == .SEMICOLON) {
-                        self.advance();
-                    }
-                    const next_type = self.peek().type;
-                    if (next_type == .NEWLINE) {
-                        self.advance();
-                    } else if (next_type != .EOF and next_type != .RIGHT_BRACE) {
+                    self.expectEnd("the defer", &Parser.statement_end) catch |err| {
                         e.deinit(self.allocator);
                         self.allocator.destroy(e);
-                        return error.ExpectedNewline;
-                    }
+                        return err;
+                    };
                 }
 
                 break :blk ast.Stmt{
@@ -397,24 +346,22 @@ fn parseJumpStmt(self: *Parser, comptime kind: token.TokenType) ErrorList!ast.St
     };
 }
 
+/// A read of the value the loop `loop_id` holds, spanning `of`, its source.
+fn held(self: *Parser, loop_id: ast.NodeId, of: *const ast.Expr) ErrorList!*ast.Expr {
+    const e = try self.allocator.create(ast.Expr);
+    e.* = .{ .base = .{ .id = ast.generateNodeId(), .span = of.base.span }, .data = .{ .Held = loop_id } };
+    return e;
+}
+
 pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const item_name = self.peek();
-    self.advance();
+    const item_name = try self.bindableName("an element");
 
     var index_name: ?token.Token = null;
     if (self.peek().type == .AT) {
         self.advance();
-
-        if (self.peek().type != .IDENTIFIER) {
-            return error.ExpectedIdentifier;
-        }
-        index_name = self.peek();
-        self.advance();
+        index_name = try self.bindableName("an index");
     }
 
     if (self.peek().type != .IN) {
@@ -453,6 +400,9 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedLeftBrace;
     }
     const body = try parseBlockStmt(self);
+    // The loop evaluates what it iterates once (`Loop.over`); its header and
+    // body read that value through a `Held` of the loop.
+    const loop_id = ast.generateNodeId();
 
     if (array_expr.?.data == .Range and !lent) {
         const range = array_expr.?.data.Range;
@@ -462,7 +412,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         const load_item = try self.allocator.create(ast.Expr);
         load_item.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Variable = item_name } };
         const cond_expr = try self.allocator.create(ast.Expr);
-        cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = load_item, .operator = token.Token.init(.LESS_EQUAL, "<=", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = range.end } } };
+        cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Binary = .{ .left = load_item, .operator = token.Token.init(.LESS_EQUAL, "<=", .{ .nothing = {} }, item_name.line, item_name.column, self.current_file, self.current_file_uri), .right = try held(self, loop_id, range.end) } } };
         const one_expr = try self.allocator.create(ast.Expr);
         one_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Literal = .{ .int = 1 } } };
         const left_item = try self.allocator.create(ast.Expr);
@@ -472,7 +422,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         const step_expr = try self.allocator.create(ast.Expr);
         step_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Assignment = .{ .name = item_name, .value = add_expr } } };
         const loop_expr = try self.allocator.create(ast.Expr);
-        loop_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .body = try self.allocator.create(ast.Expr), .step = step_expr } } };
+        loop_expr.* = .{ .base = .{ .id = loop_id, .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .body = try self.allocator.create(ast.Expr), .step = step_expr, .over = range.end } } };
         loop_expr.data.Loop.body.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Block = .{ .statements = body, .value = null } } };
         return ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Expression = loop_expr } };
     }
@@ -497,7 +447,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
 
     const length_method = token.Token.init(.LENGTH, "length", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri);
     const len_expr = try self.allocator.create(ast.Expr);
-    len_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .InternalCall = .{ .receiver = array_expr.?, .method = length_method, .arguments = &[_]*ast.Expr{} } } };
+    len_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .InternalCall = .{ .receiver = try held(self, loop_id, array_expr.?), .method = length_method, .arguments = &[_]*ast.Expr{} } } };
 
     const cond_expr = try self.allocator.create(ast.Expr);
     cond_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Binary = .{ .left = load_idx, .operator = token.Token.init(.LESS, "<", .{ .nothing = {} }, idx_name.line, idx_name.column, self.current_file, self.current_file_uri), .right = len_expr } } };
@@ -511,8 +461,10 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     const step_expr = try self.allocator.create(ast.Expr);
     step_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Assignment = .{ .name = idx_name, .value = add_expr } } };
 
+    const element_idx = try self.allocator.create(ast.Expr);
+    element_idx.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(idx_name) }, .data = .{ .Variable = idx_name } };
     const arr_index_left = try self.allocator.create(ast.Expr);
-    arr_index_left.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Index = .{ .array = array_expr.?, .index = load_idx } } };
+    arr_index_left.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Index = .{ .array = try held(self, loop_id, array_expr.?), .index = element_idx } } };
     const item_assign = try self.allocator.create(ast.Stmt);
 
     const item_type = ast.TypeInfo{ .base = .Nothing, .is_mutable = true };
@@ -527,7 +479,7 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
     block_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Block = .{ .statements = new_body, .value = null } } };
 
     const loop_expr = try self.allocator.create(ast.Expr);
-    loop_expr.* = .{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .step = step_expr, .body = block_expr, .borrow = if (lent) array_expr.? else null } } };
+    loop_expr.* = .{ .base = .{ .id = loop_id, .span = ast.SourceSpan.fromToken(item_name) }, .data = .{ .Loop = .{ .var_decl = init_stmt, .condition = cond_expr, .step = step_expr, .body = block_expr, .over = array_expr.?, .lent = lent } } };
 
     return ast.Stmt{
         .base = .{

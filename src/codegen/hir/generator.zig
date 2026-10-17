@@ -20,6 +20,7 @@ const Reporter = Reporting.Reporter;
 const Location = Reporting.Location;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
 const semantic_module = @import("../../analysis/semantic/semantic.zig");
 const SemanticAnalyzer = semantic_module.SemanticAnalyzer;
 const StoreTarget = semantic_module.StoreTarget;
@@ -794,6 +795,9 @@ pub const Lowering = struct {
     locals: std.AutoHashMapUnmanaged(u32, Local) = .empty,
     arenas: std.ArrayListUnmanaged(ArenaFrame) = .empty,
     loops: std.ArrayListUnmanaged(LoopContext) = .empty,
+    /// What each owner of a `Held` computed once, by owner node id: a
+    /// `CompoundAssign`'s current target value, a `Loop`'s `over`.
+    held: std.AutoHashMapUnmanaged(ast.NodeId, ValueId) = .empty,
     defers: std.ArrayListUnmanaged(std.ArrayListUnmanaged(*ast.Expr)) = .empty,
     /// The node being lowered, for diagnostics; its span is the builder's.
     location: ?Location = null,
@@ -1074,7 +1078,9 @@ pub const Lowering = struct {
     /// a group is boxed, a box of another box type is re-packed, a box a check
     /// proved is read as its member, a number is converted, and a fixed array
     /// admitted as a dynamic one is copied into a header (`array.from_fixed`).
-    /// Anything else reaching here is a compiler bug.
+    /// `nothing` becoming a value is the program's error (a value with no
+    /// value on some path), reported as one. Anything else reaching here is
+    /// a compiler bug.
     pub fn convert(self: *Lowering, value: ValueId, from: HIRType, to: HIRType) Error!ValueId {
         if (from.eql(to)) return value;
         if (to.isBoxed()) {
@@ -1086,6 +1092,14 @@ pub const Lowering = struct {
         if (from == .Array and to == .Array and from.Array.size != null and to.Array.size == null) {
             const element = try self.convertElements(from.Array.element.*, to.Array.element.*);
             if (element) return self.define(.{ .array_from_fixed = .{ .arena = try self.arena(), .operand = value } }, to);
+        }
+        if (from == .Nothing and to != .Nothing) {
+            const no_names = ir.Program{ .functions = &.{}, .function_names = &.{}, .zig_functions = &.{}, .zig_function_names = &.{}, .globals = &.{}, .struct_fields = &.{}, .group_members = &.{} };
+            var to_text = std.Io.Writer.Allocating.init(self.g.alloc);
+            hir_print.writeHIRType(&to_text.writer, &no_names, to) catch {};
+            const at = self.location orelse Location{ .file = "?", .file_uri = null, .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } };
+            self.g.report(at, ErrorCode.TYPE_MISMATCH, "a `nothing` value cannot be used as a {s}", .{to_text.written()});
+            return ErrorList.TypeMismatch;
         }
         const no_names = ir.Program{ .functions = &.{}, .function_names = &.{}, .zig_functions = &.{}, .zig_function_names = &.{}, .globals = &.{}, .struct_fields = &.{}, .group_members = &.{} };
         var from_text = std.Io.Writer.Allocating.init(self.g.alloc);

@@ -16,7 +16,7 @@ const fields = @import("fields.zig");
 
 const GroupCast = enum { not_a_group, valid, not_a_member };
 
-pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const cast = expr.data.Cast;
     if (cast.else_branch == null) {
         self.reporter.reportCompileError(
@@ -34,13 +34,14 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
     expr.data.Cast.target = target_type_info;
 
     const value_type = try infer_type.inferTypeFromExpr(self, cast.value);
+    if (value_type.base == .Error) return;
     const group_cast = classifyGroupCast(self, value_type, target_type_info);
     if (value_type.base != .Union and group_cast != .valid) {
         if (group_cast == .not_a_member) {
             self.reporter.reportCompileError(
                 getLocationFromBase(expr.base),
                 ErrorCode.INVALID_OPERAND_TYPE,
-                "'{s}' is not a member of group '{s}'",
+                "'{s}' is not a member of group '{s}', so a value of the group never holds one",
                 try helpers.typeLabels(self, target_type_info, value_type),
             );
         } else {
@@ -51,6 +52,17 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
                 .{@tagName(value_type.base)},
             );
         }
+        self.fatal_error = true;
+        type_info.base = .Nothing;
+        return;
+    }
+    if (value_type.base == .Union and !unionMayHold(self, value_type, target_type_info)) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr.base),
+            ErrorCode.INVALID_OPERAND_TYPE,
+            "'{s}' is not a member of '{s}', so the union never holds one",
+            try helpers.typeLabels(self, target_type_info, value_type),
+        );
         self.fatal_error = true;
         type_info.base = .Nothing;
         return;
@@ -84,6 +96,8 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
             );
         }
 
+        // A branch's value is the `as`'s: discarded when the `as`'s is.
+        self.discarded_grant = discarded;
         const inferred_then = try infer_type.inferTypeFromExpr(self, then_expr);
         if (then_expr.data != .Block) {
             then_type = inferred_then;
@@ -107,6 +121,7 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         try bindNarrowedCastType(self, else_scope, cast.value, remainder_type);
         if (cast_decl_name) |name| expr.data.Cast.decl_else = try bindCastDeclName(else_scope, name, remainder_type);
 
+        self.discarded_grant = discarded;
         else_type = try infer_type.inferTypeFromExpr(self, else_expr);
         if (expressionDiverges(else_expr)) {
             else_diverges = true;
@@ -166,6 +181,23 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
     }
 }
 
+/// Whether a value of the union `union_type` may be a `target`: a member
+/// is the target, or a group member holds it. A union target needs one of
+/// its own members held.
+fn unionMayHold(self: *SemanticAnalyzer, union_type: *ast.TypeInfo, target: *ast.TypeInfo) bool {
+    if (target.base == .Union) {
+        for ((target.union_type orelse return true).types) |member| {
+            if (unionMayHold(self, union_type, member)) return true;
+        }
+        return false;
+    }
+    for ((union_type.union_type orelse return true).types) |member| {
+        if (helpers.typesEqual(self, member, target)) return true;
+        if (classifyGroupCast(self, member, target) == .valid) return true;
+    }
+    return false;
+}
+
 pub fn classifyGroupCast(self: *SemanticAnalyzer, value_type: *ast.TypeInfo, target_type: *ast.TypeInfo) GroupCast {
     const group = helpers.matchSubjectGroup(self, value_type) orelse return .not_a_group;
     if (target_type.base != .Custom) return .not_a_member;
@@ -190,10 +222,8 @@ pub fn castValueBindingName(cast_value: *ast.Expr) ?[]const u8 {
 }
 
 pub fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !void {
-    const token_type = eval.convertTypeToTokenType(narrowed_type.base);
     const view = scope.createValueBinding(
         name,
-        token_type,
         narrowed_type,
         false,
     ) catch return;
@@ -206,7 +236,6 @@ pub fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.Typ
 pub fn bindCastDeclName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !?ast.CastBinding {
     const binding = scope.createValueBinding(
         name,
-        eval.convertTypeToTokenType(narrowed_type.base),
         narrowed_type,
         false,
     ) catch |err| switch (err) {
@@ -248,7 +277,6 @@ pub fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: 
                         narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
                         const view = scope.createValueBinding(
                             obj_name,
-                            .STRUCT,
                             narrowed_struct,
                             false,
                         ) catch return;

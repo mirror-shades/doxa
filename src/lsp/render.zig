@@ -26,6 +26,7 @@ pub fn typeBaseLabel(base: ast.Type) []const u8 {
         .Custom => "custom",
         .Nothing => "nothing",
         .Union => "union",
+        .Error => "error",
     };
 }
 

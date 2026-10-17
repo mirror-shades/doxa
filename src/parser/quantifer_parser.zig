@@ -22,11 +22,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
 fn parseQuantifier(self: *Parser, kind: QuantifierKind) ErrorList!?*ast.Expr {
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    const bound_variable = self.peek();
-    self.advance();
+    const bound_variable = try self.bindableName("a quantified variable");
 
     if (self.peek().type != .IN) {
         return error.ExpectedInKeyword;

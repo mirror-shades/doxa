@@ -23,6 +23,7 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
     }
 
     const object_type = try infer_type.inferTypeFromExpr(self, field.object);
+    if (object_type.base == .Error) return;
     switch (object_type.base) {
         .Union => {
             self.reporter.reportCompileError(
@@ -198,18 +199,21 @@ pub fn structLiteral(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.T
     const decl_fields = try structFieldTypes(self, custom.struct_fields orelse &.{});
     type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = decl_fields, .is_mutable = false };
 
-    if (decl_fields.len != struct_lit.fields.len) {
-        self.reporter.reportCompileError(
-            ast.SourceSpan.fromToken(struct_lit.name).location,
-            ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
-            "struct '{s}' expects {d} field{s}, but this literal provides {d}",
-            .{ ref.name, decl_fields.len, if (decl_fields.len == 1) "" else "s", struct_lit.fields.len },
-        );
-        self.fatal_error = true;
-    }
-
-    for (struct_lit.fields) |lit_field| {
-        for (decl_fields) |decl_field| {
+    var unknown: usize = 0;
+    for (struct_lit.fields, 0..) |lit_field, index| {
+        // A literal sets each field once.
+        for (struct_lit.fields[0..index]) |earlier| {
+            if (!std.mem.eql(u8, earlier.name.lexeme, lit_field.name.lexeme)) continue;
+            self.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(lit_field.name).location,
+                ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
+                "struct '{s}' literal sets field '{s}' twice",
+                .{ ref.name, lit_field.name.lexeme },
+            );
+            self.fatal_error = true;
+            unknown += 1;
+            break;
+        } else for (decl_fields) |decl_field| {
             if (!std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) continue;
             // A private field is set only by the struct itself.
             const inside = if (self.enclosing) |enclosing| enclosing.ref.eql(ref) else false;
@@ -235,7 +239,18 @@ pub fn structLiteral(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.T
                 .{ ref.name, lit_field.name.lexeme, declared_list },
             );
             self.fatal_error = true;
+            unknown += 1;
         }
+    }
+    // A field the literal misnames already explains a wrong count.
+    if (unknown == 0 and decl_fields.len != struct_lit.fields.len) {
+        self.reporter.reportCompileError(
+            ast.SourceSpan.fromToken(struct_lit.name).location,
+            ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
+            "struct '{s}' expects {d} field{s}, but this literal provides {d}",
+            .{ ref.name, decl_fields.len, if (decl_fields.len == 1) "" else "s", struct_lit.fields.len },
+        );
+        self.fatal_error = true;
     }
 }
 

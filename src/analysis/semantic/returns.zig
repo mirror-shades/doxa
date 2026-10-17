@@ -39,7 +39,6 @@ pub fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, fu
         self.checkFreshName(func_scope, param.name);
         const param_var = func_scope.createValueBinding(
             param.name.lexeme,
-            eval.convertTypeToTokenType(param_type_info.base),
             param_type_info,
             false, // Parameters are mutable
         ) catch |err| {
@@ -264,6 +263,8 @@ pub fn namedMemberAccepts(self: *SemanticAnalyzer, expected: *const ast.TypeInfo
 }
 
 pub fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
+    // A failed expression already has its error.
+    if (actual.base == .Error) return;
     // `nothing` is returned only where the declared type admits it.
     if (actual.base == .Nothing or (actual.base == .Union and unionHasNothing(actual))) {
         if (!admitsNothing(expected)) {

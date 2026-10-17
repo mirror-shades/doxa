@@ -30,10 +30,15 @@ fn parseModuleSource(self: *Parser) ErrorList![]const u8 {
     }
 
     if (self.peek().type == .STRING) {
-        var module_path = self.peek().lexeme;
-        if (module_path.len >= 2) {
-            module_path = module_path[1 .. module_path.len - 1];
-        }
+        const path_token = self.peek();
+        // A module path is a constant: its text as the lexer decoded it.
+        const module_path = switch (path_token.literal) {
+            .string => |text| text,
+            else => {
+                self.reporter.reportCompileError(self.locationOf(path_token), ErrorCode.EXPECTED_MODULE_PATH, "a module path is a constant string, so it cannot hold a placeholder", .{});
+                return error.ExpectedModulePath;
+            },
+        };
         self.advance();
         return module_path;
     }

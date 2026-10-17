@@ -219,7 +219,7 @@ zig File {
         file.writePositionalAll(io(), content, size) catch |err| return ioError(err);
     }
 
-    pub fn exists(path: []const u8) bool {
+    pub fn isPresent(path: []const u8) bool {
         std.Io.Dir.cwd().access(io(), path, .{}) catch return false;
         return true;
     }
@@ -317,8 +317,8 @@ public function append(path :: string, content :: string) returns nothing | erro
     return File.append(path, content)
 }
 
-public function exists(path :: string) returns tetra {
-    return File.exists(path)
+public function isPresent(path :: string) returns tetra {
+    return File.isPresent(path)
 }
 
 public function isFile(path :: string) returns tetra {

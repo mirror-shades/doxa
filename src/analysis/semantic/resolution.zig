@@ -32,7 +32,28 @@ pub const Resolution = union(enum) {
     pub const Method = struct {
         owner: ast.TypeRef,
         name: []const u8,
+
+        pub fn eql(a: Method, b: Method) bool {
+            return a.owner.eql(b.owner) and std.mem.eql(u8, a.name, b.name);
+        }
     };
+
+    pub fn eql(a: Resolution, b: Resolution) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .namespace => |m| m == b.namespace,
+            .function => |s| symbolEql(s, b.function),
+            .zig_function => |s| symbolEql(s, b.zig_function),
+            .global => |s| symbolEql(s, b.global),
+            .type => |t| t.eql(b.type),
+            .static_method => |m| m.eql(b.static_method),
+            .method => |m| m.eql(b.method),
+        };
+    }
+
+    fn symbolEql(a: ids.SymbolRef, b: ids.SymbolRef) bool {
+        return a.module == b.module and a.kind == b.kind and std.mem.eql(u8, a.name, b.name);
+    }
 };
 
 pub const ResolutionMap = std.AutoHashMap(ast.NodeId, Resolution);

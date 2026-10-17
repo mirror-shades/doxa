@@ -39,7 +39,7 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
 
         .If => lower_control.ifExpr(l, e, true),
         .Match => lower_control.matchExpr(l, e, true),
-        .Loop => |loop| lower_control.loop(l, loop),
+        .Loop => lower_control.loop(l, e),
         .Block => lower_control.blockExpr(l, e, true),
         .ReturnExpr => |r| lower_control.returnFrom(l, r.value),
         .Unreachable => lower_control.unreachableAt(l),
@@ -64,6 +64,8 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .StructDecl, .EnumDecl, .GroupDecl => try l.nothing(),
 
         .Assignment => assignment(l, e),
+        .CompoundAssign => compoundAssign(l, e),
+        .Held => |owner| l.held.get(owner).?,
         .Peek => |p| peek(l, p.expr, p.location),
         // A default argument is replaced at its call; type-position
         // expressions never reach a value context the analyzer accepts.
@@ -130,6 +132,7 @@ pub fn literalConstant(lit: ast.TokenLiteral) ?struct { c: ir.Constant, ty: HIRT
         .tetra => |v| .{ .c = .{ .tetra = tetra(v) }, .ty = .Tetra },
         .nothing => .{ .c = .nothing, .ty = .Nothing },
         .array => null,
+        .template => unreachable, // the parser makes it an InterpolatedString
     };
 }
 
@@ -383,6 +386,43 @@ fn assignment(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const v = try l.exprAs(assign.value.?, slot_type) orelse return null;
     try l.writeStorage(target, assign.name.lexeme, v, l.mustCopy(assign.value.?, slot_type));
     return try result(l, e, v, slot_type);
+}
+
+/// `target op= value`: the target's place is evaluated once, its current
+/// value is what the operation's `Held` reads, and the result is stored back
+/// into the same place.
+fn compoundAssign(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    const compound = e.data.CompoundAssign;
+    const target = compound.target;
+    const current_type = try l.g.typeOf(target);
+    switch (target.data) {
+        .Variable => |name| {
+            const store = try l.g.storeTarget(&target.base);
+            try l.held.put(l.g.alloc, e.base.id, try readName(l, target) orelse return null);
+            const slot_type = try l.g.lowerType(store.slot);
+            const v = try l.exprAs(compound.operation, slot_type) orelse return null;
+            try l.writeStorage(store, name.lexeme, v, false);
+        },
+        .Index => |idx| {
+            const element = (try l.g.typeOf(idx.array)).Array.element.*;
+            const container = try expr(l, idx.array) orelse return null;
+            const i = try l.exprAs(idx.index, .Int) orelse return null;
+            const current = try l.define(.{ .array_get = .{ .array = container, .index = i } }, element);
+            try l.held.put(l.g.alloc, e.base.id, try l.convert(current, element, current_type));
+            const v = try l.exprAs(compound.operation, element) orelse return null;
+            try l.effect(.{ .array_set = .{ .array = container, .index = i, .value = try l.placeIn(container, v, element, false) } });
+        },
+        .FieldAccess => |fa| {
+            const field = try fieldSlot(l, fa.object, fa.field);
+            const object = try objectOf(l, fa.object, field.struct_id) orelse return null;
+            const current = try l.define(.{ .field_get = .{ .object = object, .index = field.index } }, field.ty);
+            try l.held.put(l.g.alloc, e.base.id, try l.convert(current, field.ty, current_type));
+            const v = try l.exprAs(compound.operation, field.ty) orelse return null;
+            try l.effect(.{ .field_set = .{ .object = object, .index = field.index, .value = try l.placeIn(object, v, field.ty, false) } });
+        },
+        else => unreachable, // the parser admits only these targets
+    }
+    return try l.nothing();
 }
 
 /// Store `value`, of `ty`, back into what `target` names: a name, or a field.
@@ -935,6 +975,7 @@ fn typeName(info: *const ast.TypeInfo) []const u8 {
         .Struct => "struct",
         .Enum => "enum",
         .Custom => "custom",
+        .Error => unreachable, // a program with an error is never lowered
     };
 }
 

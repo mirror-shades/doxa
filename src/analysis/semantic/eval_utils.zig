@@ -35,23 +35,6 @@ pub fn updateBestSuggestion(name: []const u8, candidate: []const u8, best: *?[]c
     }
 }
 
-pub fn convertTypeToTokenType(base_type: ast.Type) TokenType {
-    return switch (base_type) {
-        .Int => .INT,
-        .Float => .FLOAT,
-        .String => .STRING,
-        .Tetra => .TETRA,
-        .Byte => .BYTE,
-        .Array => .ARRAY,
-        .Function => .FUNCTION,
-        .Struct => .STRUCT,
-        .Nothing => .NOTHING,
-        .Custom => .CUSTOM,
-        .Enum => .ENUM,
-        .Union => .UNION,
-    };
-}
-
 pub fn isEnumTypeRequiringInitializer(type_info: *const TypeInfo, analyzer: anytype) bool {
     if (type_info.base == .Enum) return true;
     if (type_info.base == .Custom and type_info.custom_type != null) {

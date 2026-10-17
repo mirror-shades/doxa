@@ -164,9 +164,37 @@ pub fn analysisStage(ctx: *anyopaque, record: *ModuleRecord) anyerror!void {
     defer leaveModule(self, saved);
     self.analyzing = true;
     defer self.analyzing = false;
+    const start = self.reporter.diagnostics.items.len;
     const result = self.validateStatements(record.statements());
     reportUntypedVariants(self);
+    reportIncompleteTypes(self, start);
     return result;
+}
+
+/// Every recorded type is complete: codegen lowers what analysis recorded
+/// and never completes a type itself. An expression whose type stayed
+/// incomplete (`[] + []`, nothing ever saying what it holds) is an error
+/// where it is written, unless the record already failed: an incomplete
+/// type under a reported error is that error's cascade.
+pub fn reportIncompleteTypes(self: *SemanticAnalyzer, start: usize) void {
+    defer self.incomplete.clearRetainingCapacity();
+    if (self.reporter.firstErrorSince(start) != null) return;
+    for (self.incomplete.items) |expr| {
+        const location = helpers.getLocationFromBase(expr.base);
+        switch (helpers.incompleteness(self.type_cache.get(expr.base.id).?)) {
+            .complete => continue,
+            .array_element => self.reporter.reportCompileError(
+                location,
+                ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+                .{},
+            ),
+            .named => self.reporter.reportCompileError(location, ErrorCode.UNKNOWN_TYPE, "the type of this expression names no declared type", .{}),
+            .union_members => self.reporter.reportCompileError(location, ErrorCode.UNKNOWN_TYPE, "the type of this expression is a union with no members", .{}),
+        }
+        self.fatal_error = true;
+        return;
+    }
 }
 
 /// A `.Variant` shorthand is typed only by an explicit context: a
@@ -228,16 +256,36 @@ pub fn ensureModuleScope(self: *SemanticAnalyzer, id: ModuleId) ErrorList!*Scope
     return scope;
 }
 
+/// The unused declarations of every scope still alive once the program is
+/// analyzed: the module and function scopes. A block reports its own as it
+/// closes (`closeBlockScope`), since it is gone by then.
 pub fn reportUnused(self: *SemanticAnalyzer, scope: *Scope) ErrorList!void {
     if (scope.is_deinited) return;
+    reportUnusedIn(self, scope);
+    for (scope.children.items) |child| {
+        try reportUnused(self, child);
+    }
+}
 
+/// Close a block's scope, reporting the declarations nothing used. Every use
+/// in the block, its nested scopes included, is recorded by now.
+pub fn closeBlockScope(self: *SemanticAnalyzer, scope: *Scope) void {
+    reportUnusedIn(self, scope);
+    scope.deinit();
+}
+
+fn reportUnusedIn(self: *SemanticAnalyzer, scope: *Scope) void {
+    if (scope.is_deinited) return;
     var it = scope.variables.valueIterator();
     while (it.next()) |variable_ptr| {
         const variable = variable_ptr.*;
         if (variable.used) continue;
         if (variable.is_alias) continue;
+        // A narrowing view declares nothing: it is the variable it narrows.
+        if (variable.is_view) continue;
 
-        if (variable.type == .FUNCTION) {
+        const storage = self.memory.scope_manager.value_storage.get(variable.storage_id).?;
+        if (storage.type_info.base == .Function) {
             if (self.entry_point_name) |entry| if (std.mem.eql(u8, variable.name, entry)) continue;
             self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_FUNCTION, "unused function '{s}'", .{variable.name});
         } else if (variable.is_param) {
@@ -245,10 +293,6 @@ pub fn reportUnused(self: *SemanticAnalyzer, scope: *Scope) ErrorList!void {
         } else {
             self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_VARIABLE, "unused variable '{s}'", .{variable.name});
         }
-    }
-
-    for (scope.children.items) |child| {
-        try reportUnused(self, child);
     }
 }
 

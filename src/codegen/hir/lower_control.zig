@@ -350,7 +350,8 @@ pub fn ifExpr(l: *Lowering, e: *ast.Expr, want: bool) Error!?ValueId {
 /// A loop opens an arena for its own state and, inside it, one for its body,
 /// reset at the start of every iteration and again before the step. The
 /// condition-false exit and every `break` close both.
-pub fn loop(l: *Lowering, lp: ast.Loop) Error!?ValueId {
+pub fn loop(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    const lp = e.data.Loop;
     const outer_depth = l.arenas.items.len;
     const state = try l.b.define(.{ .scope_enter = .{ .parent = try l.arena() } }, .arena);
     try l.pushArena(state, .owned);
@@ -359,6 +360,8 @@ pub fn loop(l: *Lowering, lp: ast.Loop) Error!?ValueId {
     if (lp.var_decl) |init| {
         if (!try statement(l, init.*)) return null;
     }
+    // What the loop iterates, once, in its own arena.
+    if (lp.over) |over| try l.held.put(l.g.alloc, e.base.id, try l.expr(over) orelse return null);
     const body_arena = try l.b.define(.{ .scope_enter = .{ .parent = state } }, .arena);
     try l.pushArena(body_arena, .owned);
     const body_var = l.innermostArenaVar();

@@ -44,7 +44,7 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
     if (a.base != b.base) return false;
 
     switch (a.base) {
-        .Int, .Byte, .Float, .String, .Tetra, .Nothing => return true,
+        .Int, .Byte, .Float, .String, .Tetra, .Nothing, .Error => return true,
 
         .Enum, .Struct, .Custom => unreachable,
 
@@ -406,9 +406,41 @@ fn isMemberCovered(member_coverage: MemberCoverage) bool {
 }
 
 /// Order two named types deterministically: by defining record, then name.
-fn refLessThan(a: TypeRef, b: TypeRef) bool {
-    if (a.module != b.module) return a.module < b.module;
-    return std.mem.lessThan(u8, a.name, b.name);
+fn refOrder(a: TypeRef, b: TypeRef) std.math.Order {
+    if (a.module != b.module) return std.math.order(a.module, b.module);
+    return std.mem.order(u8, a.name, b.name);
+}
+
+/// The canonical order of union members: by base, then by what tells two
+/// members of one base apart — a named type's identity, an array's element
+/// and size. A part that is missing (an untyped `.Variant`, an array with
+/// no element yet) orders first. Members it calls equal are equal types or
+/// ones it cannot tell apart (functions), and a stable sort keeps those in
+/// written order, so the result is a function of the program alone.
+pub fn unionMemberOrder(a: *const ast.TypeInfo, b: *const ast.TypeInfo) std.math.Order {
+    const by_base = std.math.order(@intFromEnum(a.base), @intFromEnum(b.base));
+    if (by_base != .eq) return by_base;
+    switch (a.base) {
+        .Enum, .Struct, .Custom => {
+            const ra = refOf(a);
+            const rb = refOf(b);
+            if (ra == null or rb == null) return std.math.order(@intFromBool(ra != null), @intFromBool(rb != null));
+            return refOrder(ra.?, rb.?);
+        },
+        .Array => {
+            const ea = a.array_type;
+            const eb = b.array_type;
+            if (ea == null or eb == null) return std.math.order(@intFromBool(ea != null), @intFromBool(eb != null));
+            const by_element = unionMemberOrder(ea.?, eb.?);
+            if (by_element != .eq) return by_element;
+            // A dynamic array orders before every fixed size.
+            const sa = a.array_size;
+            const sb = b.array_size;
+            if (sa == null or sb == null) return std.math.order(@intFromBool(sa != null), @intFromBool(sb != null));
+            return std.math.order(sa.?, sb.?);
+        },
+        else => return .eq,
+    }
 }
 
 /// Canonicalize a slice of *TypeInfo (dedup + stable order).
@@ -425,25 +457,9 @@ fn canonicalizeUnion(
         try list.append(allocator, m);
     }
 
-    std.sort.pdq(*ast.TypeInfo, list.items, {}, struct {
+    std.sort.block(*ast.TypeInfo, list.items, {}, struct {
         fn lessThan(_: void, a: *ast.TypeInfo, b: *ast.TypeInfo) bool {
-            const ba = @intFromEnum(a.base);
-            const bb = @intFromEnum(b.base);
-            if (ba != bb) return ba < bb;
-
-            switch (a.base) {
-                .Enum, .Custom => {
-                    const ra = refOf(a) orelse return false;
-                    const rb = refOf(b) orelse return false;
-                    return refLessThan(ra, rb);
-                },
-                .Array => {
-                    if (a.array_type == null or b.array_type == null) return false;
-                    // Keeps it deterministic: compare base of element.
-                    return @intFromEnum(a.array_type.?.base) < @intFromEnum(b.array_type.?.base);
-                },
-                else => return false,
-            }
+            return unionMemberOrder(a, b) == .lt;
         }
     }.lessThan);
 
@@ -473,6 +489,26 @@ pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !?
 
 /// Whether an array in `t` still lacks the element type an empty literal takes
 /// from its context: `[]`, or `[[]]` at any depth.
+/// What, if anything, keeps `t` from being a type codegen can lower.
+pub const Incompleteness = enum { complete, array_element, named, union_members };
+
+pub fn incompleteness(t: *const ast.TypeInfo) Incompleteness {
+    return switch (t.base) {
+        .Array => incompleteness(t.array_type orelse return .array_element),
+        .Custom, .Enum => if (t.custom_type == null) .named else .complete,
+        .Union => {
+            const u = t.union_type orelse return .union_members;
+            if (u.types.len == 0) return .union_members;
+            for (u.types) |member| {
+                const member_state = incompleteness(member);
+                if (member_state != .complete) return member_state;
+            }
+            return .complete;
+        },
+        else => .complete,
+    };
+}
+
 pub fn hasUninferredElement(t: *const ast.TypeInfo) bool {
     if (t.base != .Array) return false;
     return hasUninferredElement(t.array_type orelse return true);
@@ -604,6 +640,8 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
 }
 
 pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
+    // A failed expression already has its error.
+    if (expected.base == .Error or actual.base == .Error) return;
     if (actual_expr) |expr| contextualizeEnumMember(self, expr, actual, expected);
 
     // Two shorthands with no context yet agree; their context types both.
@@ -887,10 +925,11 @@ pub fn registerEnumType(self: *SemanticAnalyzer, ref: TypeRef, variants: []const
     _ = try self.enum_table.registerEnum(ref, variants);
 }
 
-/// Register the group `ref`: each member path resolves, against the current
-/// record, to the type it names, and nested groups are flattened into the
-/// table's member list.
-pub fn registerGroupType(self: *SemanticAnalyzer, ref: TypeRef, members: []const ast.GroupMember) !void {
+/// Declare the group `ref`: each member path resolves, against the current
+/// record, to the type it names. Every group of a record is declared before
+/// any is flattened (`flattenGroupType`), so a group may include one
+/// declared after it.
+pub fn declareGroupType(self: *SemanticAnalyzer, ref: TypeRef, members: []const ast.GroupMember) !void {
     if (members.len == 0) {
         self.reporter.reportCompileError(null, ErrorCode.EXPECTED_EXPRESSION, "Group '{s}' must have at least one member", .{ref.name});
         self.fatal_error = true;
@@ -909,7 +948,12 @@ pub fn registerGroupType(self: *SemanticAnalyzer, ref: TypeRef, members: []const
         source.* = .{ .qualifier = member.qualifier, .ref = member_ref };
     }
     try self.custom_types.put(ref, .{ .ref = ref, .kind = .Group, .group_members = sources });
+}
 
+/// Register the declared group `ref` in the group table, its nested groups
+/// flattened into its member list.
+pub fn flattenGroupType(self: *SemanticAnalyzer, ref: TypeRef) !void {
+    const sources = (self.custom_types.get(ref) orelse return).group_members orelse return;
     var flat: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
     defer flat.deinit(self.allocator);
     var visited: std.ArrayListUnmanaged(TypeRef) = .empty;
@@ -933,6 +977,9 @@ fn flattenGroupMembers(
     self: *SemanticAnalyzer,
     sources: []const Types.GroupMemberSource,
     flat: *std.ArrayListUnmanaged(GroupTable.Member),
+    /// The groups being flattened, outermost first: a group found among
+    /// them includes itself. A group reached twice by two paths (a diamond)
+    /// is not a cycle.
     visited: *std.ArrayListUnmanaged(TypeRef),
 ) !void {
     for (sources) |source| {
@@ -947,9 +994,15 @@ fn flattenGroupMembers(
                     self.fatal_error = true;
                     break;
                 } else {
+                    const nested_members = if (try self.customType(source.ref)) |nested| nested.group_members else null;
+                    const members = nested_members orelse {
+                        self.reporter.reportCompileError(null, ErrorCode.UNKNOWN_TYPE, "Group member '{s}' is a group with no registered members", .{source.ref.name});
+                        self.fatal_error = true;
+                        continue;
+                    };
                     try visited.append(self.allocator, source.ref);
-                    const nested = (try self.customType(source.ref)) orelse continue;
-                    try flattenGroupMembers(self, nested.group_members orelse &.{}, flat, visited);
+                    defer _ = visited.pop();
+                    try flattenGroupMembers(self, members, flat, visited);
                 }
                 continue;
             },
@@ -976,4 +1029,31 @@ fn qualifiedName(allocator: std.mem.Allocator, path: []const ast.Token) ![]const
 
 pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
     return base.location();
+}
+
+test "union members order totally, whatever order they are written in" {
+    var int_t = ast.TypeInfo{ .base = .Int };
+    var float_t = ast.TypeInfo{ .base = .Float };
+    var string_t = ast.TypeInfo{ .base = .String };
+    var ints = ast.TypeInfo{ .base = .Array, .array_type = &int_t };
+    var floats = ast.TypeInfo{ .base = .Array, .array_type = &float_t };
+    var strings = ast.TypeInfo{ .base = .Array, .array_type = &string_t };
+    var fixed_ints = ast.TypeInfo{ .base = .Array, .array_type = &int_t, .array_size = 3 };
+    var no_element = ast.TypeInfo{ .base = .Array };
+    const expected = [_]*ast.TypeInfo{ &no_element, &ints, &fixed_ints, &floats, &strings };
+
+    // Every rotation of the members sorts to one order.
+    var members = [_]*ast.TypeInfo{ &strings, &fixed_ints, &no_element, &floats, &ints };
+    for (0..members.len) |_| {
+        std.mem.rotate(*ast.TypeInfo, &members, 1);
+        var sorted = members;
+        std.sort.block(*ast.TypeInfo, &sorted, {}, struct {
+            fn lessThan(_: void, a: *ast.TypeInfo, b: *ast.TypeInfo) bool {
+                return unionMemberOrder(a, b) == .lt;
+            }
+        }.lessThan);
+        try std.testing.expectEqualSlices(*ast.TypeInfo, &expected, &sorted);
+    }
+    try std.testing.expectEqual(std.math.Order.lt, unionMemberOrder(&string_t, &ints));
+    try std.testing.expectEqual(std.math.Order.gt, unionMemberOrder(&float_t, &int_t));
 }

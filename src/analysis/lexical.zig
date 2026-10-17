@@ -14,6 +14,7 @@ const TokenType = TokenImport.TokenType;
 const TypesImport = @import("../types/types.zig");
 const Tetra = TypesImport.Tetra;
 const TokenLiteral = TypesImport.TokenLiteral;
+const StringSegment = TypesImport.StringSegment;
 
 const ident = @import("../common/ident.zig");
 const isAlpha = ident.isStart;
@@ -28,6 +29,9 @@ pub const LexicalAnalyzer = struct {
     column: usize,
     allocator: std.mem.Allocator,
     allocated_strings: std.array_list.Managed([]const u8),
+    /// The segment lists of interpolated string literals, owned like
+    /// `allocated_strings`.
+    allocated_segments: std.array_list.Managed([]const StringSegment),
     line_start: usize,
     file_path: []const u8,
     file_uri: []const u8,
@@ -50,6 +54,7 @@ pub const LexicalAnalyzer = struct {
             .tokens = std.array_list.Managed(Token).init(allocator),
             .keywords = std.StringHashMap(TokenType).init(allocator),
             .allocated_strings = std.array_list.Managed([]const u8).init(allocator),
+            .allocated_segments = std.array_list.Managed([]const StringSegment).init(allocator),
             .file_path = file_path,
             .file_uri = file_uri,
             .token_line = 1,
@@ -63,6 +68,8 @@ pub const LexicalAnalyzer = struct {
             self.allocator.free(str);
         }
         self.allocated_strings.deinit();
+        for (self.allocated_segments.items) |segments| self.allocator.free(segments);
+        self.allocated_segments.deinit();
 
         self.tokens.deinit();
         self.keywords.deinit();
@@ -75,6 +82,7 @@ pub const LexicalAnalyzer = struct {
     /// them at program end.
     pub fn takeOwnershipOfStrings(self: *LexicalAnalyzer) void {
         self.allocated_strings.clearRetainingCapacity();
+        self.allocated_segments.clearRetainingCapacity();
     }
 
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
@@ -153,6 +161,14 @@ pub const LexicalAnalyzer = struct {
     }
 
     pub fn lexTokens(self: *LexicalAnalyzer) !std.array_list.Managed(Token) {
+        // A UTF-8 byte order mark at the start of a source says nothing a
+        // UTF-8 source needs; editors that write one show nothing for it, so
+        // columns count from after it. Anywhere else it is an error.
+        const bom = "\xEF\xBB\xBF";
+        if (self.current == 0 and std.mem.startsWith(u8, self.source, bom)) {
+            self.current = bom.len;
+            self.line_start = bom.len;
+        }
         while (!self.isAtEnd()) {
             self.getNextToken() catch |err| {
                 // Report a located diagnostic unless a specific site already did
@@ -482,7 +498,8 @@ pub const LexicalAnalyzer = struct {
             error.LeadingZeros => "numeric literal cannot have leading zeros",
             error.MultipleExponents => "numeric literal cannot have multiple exponents",
             error.InvalidExponent => "exponent has no digits",
-            error.InvalidEscapeSequence => "invalid escape sequence in string literal",
+            error.InvalidEscapeSequence => "invalid escape sequence in string literal; the escapes are \\\" \\\\ \\n \\r \\t \\{ \\} and \\u{...}",
+            error.UnclosedPlaceholder => "a placeholder's '{' is never closed on its line; write \\{ for a literal brace",
             error.InvalidUnicodeEscape => "invalid unicode escape; expected \\u{...} with 1-6 hex digits",
             error.CodepointTooLarge => "unicode escape is out of range (maximum U+10FFFF)",
             error.ByteValueTooLarge => "byte literal must be in the range 0..255 (two hex digits, e.g. 0xFF)",
@@ -638,174 +655,167 @@ pub const LexicalAnalyzer = struct {
         }
     }
 
+    /// A string literal, from just past its opening quote. Its pieces are
+    /// decided here, once: literal text with its escapes decoded, and each
+    /// placeholder's source as written, with where it begins. A literal with
+    /// no placeholder is a `.string`; one with any is a `.template`. Nothing
+    /// after the lexer scans a literal again.
     fn string(self: *LexicalAnalyzer) !void {
-        var result = std.array_list.Managed(u8).init(self.allocator);
-        errdefer result.deinit();
+        var segments = std.array_list.Managed(StringSegment).init(self.allocator);
+        defer segments.deinit();
+        var text = std.array_list.Managed(u8).init(self.allocator);
+        defer text.deinit();
 
-        var brace_depth: usize = 0;
-
-        while (!self.isAtEnd()) {
+        while (true) {
+            if (self.isAtEnd()) return error.UnterminatedString;
             const c = self.peekAt(0);
-
-            // End of outer string only when not inside interpolation
-            if (brace_depth == 0 and c == '"') {
-                break;
-            }
-
-            // In interpolation mode, " starts an inner double-quoted string
-            if (brace_depth > 0 and c == '"') {
-                try self.scanInnerDoubleQuotedString(&result);
-                continue;
-            }
-
-            // Enter or nest interpolation
-            if (c == '{') {
-                if (brace_depth > 0) {
-                    brace_depth += 1;
-                } else {
-                    brace_depth = 1;
-                }
-                self.advance();
-                try result.append(c);
-                continue;
-            }
-
-            // Exit interpolation level
-            if (brace_depth > 0 and c == '}') {
-                brace_depth -= 1;
-                self.advance();
-                try result.append(c);
-                continue;
-            }
-
-            // Inside interpolation: raw passthrough, no escape processing
-            if (brace_depth > 0) {
-                self.advance();
-                try result.append(c);
-                continue;
-            }
-
-            // Outside interpolation: normal string processing
-            if (c == '\n' or c == '\r') {
-                // Look ahead to see if there's an ellipsis continuation
-                var lookahead_pos = self.current + 1; // Skip the newline/carriage return
-                var found_ellipsis = false;
-
-                // Skip whitespace and any remaining carriage returns/newlines
-                while (lookahead_pos < self.source.len and
-                    (self.source[lookahead_pos] == ' ' or
-                        self.source[lookahead_pos] == '\t' or
-                        self.source[lookahead_pos] == '\r' or
-                        self.source[lookahead_pos] == '\n'))
-                {
-                    lookahead_pos += 1;
-                }
-
-                // Check for ellipsis
-                if (lookahead_pos + 2 < self.source.len and
-                    self.source[lookahead_pos] == '.' and
-                    self.source[lookahead_pos + 1] == '.' and
-                    self.source[lookahead_pos + 2] == '.')
-                {
-                    found_ellipsis = true;
-                    // Skip the ellipsis
-                    lookahead_pos += 3;
-                }
-
-                if (found_ellipsis) {
-                    // Skip the newline/carriage return and ellipsis, continue processing
-                    self.current = lookahead_pos;
-                    // Don't update line tracking - self.start points to the token start
-                    continue; // Don't add the newline/carriage return to the result
-                } else {
-                    // Add the newline/carriage return as a literal character
-                    self.advance(); // Advance past the newline/carriage return
-                    try result.append(c);
-                }
-            } else {
-                self.advance();
-            }
-
-            if (c == '\\') {
-                if (self.isAtEnd()) {
-                    return error.UnterminatedString;
-                }
-
-                const escaped = self.peekAt(0);
-                self.advance();
-                switch (escaped) {
-                    '"' => try result.append('"'),
-                    '\\' => try result.append('\\'),
-                    'n' => try result.append('\n'),
-                    't' => try result.append('\t'),
-                    'u' => {
-                        if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
-                        self.advance();
-                        var codepoint: u21 = 0;
-                        var digit_count: u8 = 0;
-                        while (!self.isAtEnd() and self.peekAt(0) != '}' and digit_count < 6) {
-                            const digit = switch (self.peekAt(0)) {
-                                '0'...'9' => self.peekAt(0) - '0',
-                                'a'...'f' => self.peekAt(0) - 'a' + 10,
-                                'A'...'F' => self.peekAt(0) - 'A' + 10,
-                                else => return error.InvalidUnicodeEscape,
-                            };
-                            codepoint = (codepoint << 4) | digit;
-                            digit_count += 1;
-                            self.advance();
-                        }
-
-                        if (self.peekAt(0) != '}') return error.InvalidUnicodeEscape;
-                        self.advance();
-                        if (codepoint > 0x10FFFF) return error.CodepointTooLarge;
-
-                        var buf: [4]u8 = undefined;
-                        const len = try std.unicode.utf8Encode(codepoint, &buf);
-                        try result.appendSlice(buf[0..len]);
-                        continue;
-                    },
-                    else => return error.InvalidEscapeSequence,
-                }
-            } else {
-                try result.append(c);
+            switch (c) {
+                '"' => break,
+                '\\' => {
+                    self.advance();
+                    try self.escape(&text);
+                },
+                '{' => {
+                    self.advance();
+                    if (text.items.len > 0) {
+                        try segments.append(.{ .text = try self.addString(text.items) });
+                        text.clearRetainingCapacity();
+                    }
+                    const line = self.line;
+                    const column = self.current - self.line_start + 1;
+                    const begin = self.current;
+                    try self.skipPlaceholder();
+                    try segments.append(.{ .placeholder = .{ .source = self.source[begin..self.current], .line = line, .column = column } });
+                    self.advance(); // the closing `}`
+                },
+                '\n', '\r' => if (!self.continuation()) {
+                    self.advance();
+                    try text.append(c);
+                },
+                else => {
+                    self.advance();
+                    try text.append(c);
+                },
             }
         }
-
-        if (self.isAtEnd()) {
-            return error.UnterminatedString;
-        }
-
-        self.advance();
+        self.advance(); // the closing quote
 
         const lexeme = self.source[self.start..self.current];
-        const string_content = try result.toOwnedSlice();
-
-        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+        if (segments.items.len == 0) return self.addLongToken(.STRING, .{ .string = text.items }, lexeme);
+        if (text.items.len > 0) try segments.append(.{ .text = try self.addString(text.items) });
+        const owned = try self.allocator.dupe(StringSegment, segments.items);
+        try self.allocated_segments.append(owned);
+        try self.addLongToken(.STRING, .{ .template = owned }, lexeme);
     }
 
-    fn scanInnerDoubleQuotedString(self: *LexicalAnalyzer, result: *std.array_list.Managed(u8)) !void {
-        self.advance(); // consume opening "
-        try result.append('"');
+    /// Decode the escape after a `\` into `text`: the one escape table.
+    fn escape(self: *LexicalAnalyzer, text: *std.array_list.Managed(u8)) !void {
+        if (self.isAtEnd()) return error.UnterminatedString;
+        const c = self.peekAt(0);
+        self.advance();
+        const byte: u8 = switch (c) {
+            '"' => '"',
+            '\\' => '\\',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '{' => '{',
+            '}' => '}',
+            'u' => return self.unicodeEscape(text),
+            else => return error.InvalidEscapeSequence,
+        };
+        try text.append(byte);
+    }
 
-        while (!self.isAtEnd()) {
-            const c = self.peekAt(0);
+    /// `\u{...}`, from just past the `u`: one to six hex digits naming a
+    /// code point, appended as UTF-8.
+    fn unicodeEscape(self: *LexicalAnalyzer, text: *std.array_list.Managed(u8)) !void {
+        if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
+        self.advance();
+        var codepoint: u21 = 0;
+        var digit_count: u8 = 0;
+        while (!self.isAtEnd() and self.peekAt(0) != '}' and digit_count < 6) {
+            const digit = switch (self.peekAt(0)) {
+                '0'...'9' => self.peekAt(0) - '0',
+                'a'...'f' => self.peekAt(0) - 'a' + 10,
+                'A'...'F' => self.peekAt(0) - 'A' + 10,
+                else => return error.InvalidUnicodeEscape,
+            };
+            codepoint = (codepoint << 4) | digit;
+            digit_count += 1;
             self.advance();
-
-            if (c == '\\') {
-                try result.append('\\');
-                if (self.isAtEnd()) return error.UnterminatedString;
-                const next = self.peekAt(0);
-                try result.append(next);
-                self.advance();
-            } else if (c == '"') {
-                try result.append('"');
-                return;
-            } else {
-                try result.append(c);
-            }
         }
+        if (digit_count == 0 or self.peekAt(0) != '}') return error.InvalidUnicodeEscape;
+        self.advance();
+        if (codepoint > 0x10FFFF) return error.CodepointTooLarge;
 
-        return error.UnterminatedString;
+        var buf: [4]u8 = undefined;
+        const len = try std.unicode.utf8Encode(codepoint, &buf);
+        try text.appendSlice(buf[0..len]);
+    }
+
+    /// At a line break inside a string: when the next line begins with
+    /// `...`, skip the break, the indentation and the `...`, so the literal
+    /// continues there. False, consuming nothing, otherwise.
+    fn continuation(self: *LexicalAnalyzer) bool {
+        var ahead = self.current;
+        while (ahead < self.source.len and std.mem.indexOfScalar(u8, " \t\r\n", self.source[ahead]) != null) ahead += 1;
+        if (!std.mem.startsWith(u8, self.source[ahead..], "...")) return false;
+        // Advance, not jump: the lines stepped over still count.
+        while (self.current < ahead + 3) self.advance();
+        return true;
+    }
+
+    /// Past a placeholder's source, from just past its `{` to its closing
+    /// `}`, which is left unconsumed. The source is lexed as code later, so
+    /// here only its extent matters: nested braces, and strings nested in it,
+    /// whose own escapes and placeholders are skipped whole. A line break ends
+    /// it unless the next line continues it with `...`.
+    fn skipPlaceholder(self: *LexicalAnalyzer) error{UnclosedPlaceholder}!void {
+        var depth: usize = 0;
+        while (!self.isAtEnd()) {
+            switch (self.peekAt(0)) {
+                '}' => {
+                    if (depth == 0) return;
+                    depth -= 1;
+                },
+                '{' => depth += 1,
+                '"' => {
+                    self.advance();
+                    try self.skipNestedString();
+                    continue;
+                },
+                '\n', '\r' => if (!self.continuation()) return error.UnclosedPlaceholder else continue,
+                else => {},
+            }
+            self.advance();
+        }
+        return error.UnclosedPlaceholder;
+    }
+
+    /// Past a string nested in a placeholder, from just past its opening
+    /// quote to just past its closing one. It ends on its own line.
+    fn skipNestedString(self: *LexicalAnalyzer) error{UnclosedPlaceholder}!void {
+        while (!self.isAtEnd()) {
+            switch (self.peekAt(0)) {
+                '"' => {
+                    self.advance();
+                    return;
+                },
+                '\\' => {
+                    self.advance();
+                    if (self.isAtEnd()) break;
+                },
+                '{' => {
+                    self.advance();
+                    try self.skipPlaceholder();
+                },
+                '\n', '\r' => return error.UnclosedPlaceholder,
+                else => {},
+            }
+            self.advance();
+        }
+        return error.UnclosedPlaceholder;
     }
 
     fn addZigBlock(self: *LexicalAnalyzer) !void {

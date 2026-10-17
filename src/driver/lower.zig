@@ -28,7 +28,7 @@ pub fn lowerProgram(memoryManager: *MemoryManager, semantic_analyzer: *SemanticA
     var faulted = false;
     for (semantic_analyzer.graph.records.items) |record| {
         if (record.kind != .doxa or !record.status.atLeast(.Analyzed)) continue;
-        var constant_folder = ConstantFolder.init(allocator, reporter);
+        var constant_folder = ConstantFolder.init(allocator, reporter, &semantic_analyzer.type_cache);
         defer constant_folder.deinit();
         for (record.statements()) |*stmt| _ = try constant_folder.foldStmt(stmt);
         faulted = faulted or constant_folder.faulted;

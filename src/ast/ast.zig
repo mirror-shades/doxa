@@ -380,6 +380,9 @@ pub const If = struct {
     condition: ?*Expr,
     then_branch: ?*Expr,
     else_branch: ?*Expr,
+    /// The source wrote no `else`: the parser supplied a `nothing` branch.
+    /// Legal only where the `if`'s value is discarded (a statement).
+    implicit_else: bool = false,
 };
 
 pub const Assignment = struct {
@@ -408,9 +411,24 @@ pub const Loop = struct {
     condition: ?*Expr = null,
     step: ?*Expr = null,
     body: *Expr,
-    /// What `each n in ^path` lends the body: `path`. Nothing else in the
-    /// body may write or lend it (`analysis/semantic/borrows.zig`).
-    borrow: ?*Expr = null,
+    /// What the loop iterates, evaluated once: an `each` collection, or a
+    /// range's end. It runs after `var_decl` (a range's start comes first)
+    /// but belongs to the scope around the loop; the header and the body
+    /// read it as a `Held` of the loop.
+    over: ?*Expr = null,
+    /// `each n in ^path`: `over` is `path`, lent to the body. Nothing else in
+    /// the body may write or lend it (`analysis/semantic/borrows.zig`).
+    lent: bool = false,
+};
+
+/// `target op= value`: the target (a name, an element or a field) is
+/// evaluated once as a place, read, combined with the value, and written
+/// back. `operation` is a `Binary` whose left operand is a `Held` of this
+/// node, the target's current value, so it is typed and lowered as the
+/// operation it spells.
+pub const CompoundAssign = struct {
+    target: *Expr,
+    operation: *Expr,
 };
 
 pub const PeekExpr = struct {
@@ -624,6 +642,12 @@ pub const Expr = struct {
             start: *Expr,
             end: *Expr,
         },
+        CompoundAssign: CompoundAssign,
+        /// A value its owner, the node with this id, computed once and is
+        /// read again here: a `CompoundAssign`'s current target value, or a
+        /// `Loop`'s `over`. How a desugaring uses one value twice while the
+        /// AST stays a tree (`tree.zig`).
+        Held: NodeId,
     };
 
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
@@ -877,6 +901,10 @@ pub const Expr = struct {
                     step_expr.deinit(allocator);
                     allocator.destroy(step_expr);
                 }
+                if (l.over) |over| {
+                    over.deinit(allocator);
+                    allocator.destroy(over);
+                }
                 l.body.deinit(allocator);
                 allocator.destroy(l.body);
             },
@@ -887,6 +915,13 @@ pub const Expr = struct {
                 r.end.deinit(allocator);
                 allocator.destroy(r.end);
             },
+            .CompoundAssign => |*c| {
+                c.target.deinit(allocator);
+                allocator.destroy(c.target);
+                c.operation.deinit(allocator);
+                allocator.destroy(c.operation);
+            },
+            .Held => {},
         }
     }
 };
@@ -904,6 +939,10 @@ pub const Type = enum {
     Custom,
     Nothing,
     Union,
+    /// The type of an expression whose analysis reported an error: not a
+    /// value, so no later check reports on it. A program with an error never
+    /// reaches codegen, so lowering never meets it.
+    Error,
 };
 
 pub const ArrayStorageKind = enum {
@@ -972,6 +1011,7 @@ pub const TypeInfo = struct {
             .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
+            .template => unreachable, // the parser makes it an InterpolatedString
         };
     }
 
@@ -1219,6 +1259,7 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
         },
         .Loop => |l| {
             try writer.print("Expr.Loop\n", .{});
+            if (l.over) |o| try dumpExpr(writer, o, depth + 1);
             if (l.condition) |c| try dumpExpr(writer, c, depth + 1);
             try dumpExpr(writer, l.body, depth + 1);
         },
@@ -1294,6 +1335,12 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
         .Unreachable => try writer.print("Expr.Unreachable\n", .{}),
         .Break => try writer.print("Expr.Break\n", .{}),
         .This => try writer.print("Expr.This\n", .{}),
+        .CompoundAssign => |c| {
+            try writer.print("Expr.CompoundAssign\n", .{});
+            try dumpExpr(writer, c.target, depth + 1);
+            try dumpExpr(writer, c.operation, depth + 1);
+        },
+        .Held => |owner| try writer.print("Expr.Held of {d}\n", .{owner}),
     }
 }
 

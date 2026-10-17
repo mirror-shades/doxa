@@ -32,6 +32,26 @@ pub const TokenLiteral = union(enum) {
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
+    /// A string literal with placeholders, as the lexer split it. Only a
+    /// `STRING` token carries one; the parser turns it into an
+    /// `InterpolatedString`, so no AST literal ever holds it.
+    template: []const StringSegment,
+};
+
+/// A piece of an interpolated string literal. The lexer decides a literal's
+/// pieces once, and nothing re-scans them.
+pub const StringSegment = union(enum) {
+    /// Literal text, its escapes decoded.
+    text: []const u8,
+    /// A placeholder: its source between the braces, as written, and where
+    /// that source begins.
+    placeholder: Placeholder,
+
+    pub const Placeholder = struct {
+        source: []const u8,
+        line: usize,
+        column: usize,
+    };
 };
 
 pub const CustomTypeKind = enum {

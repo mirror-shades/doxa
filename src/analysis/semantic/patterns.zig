@@ -74,7 +74,7 @@ pub fn checkDestructure(self: *SemanticAnalyzer, path: ast.MatchCase.PathPattern
 
 /// Narrow the matched variable within one match arm, then infer the arm's
 /// body. The arm's patterns were resolved by `resolveMatchPatterns`.
-pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, subject_type: *const ast.TypeInfo, matched_var_name: ?[]const u8) ErrorList!*ast.TypeInfo {
+pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, subject_type: *const ast.TypeInfo, matched_var_name: ?[]const u8, discarded: bool) ErrorList!*ast.TypeInfo {
     // A per-case scope keeps narrowing from leaking out of the arm.
     const case_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
     defer case_scope.deinit();
@@ -108,16 +108,18 @@ pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase
                     if (member) |ref| if (self.struct_table.idOf(ref)) |sid| {
                         const fields = self.struct_table.fields(sid) orelse &.{};
                         const storages = try self.allocator.alloc(u32, path.field_names.len);
-                        for (path.field_names, storages) |field_token, *storage| {
-                            // An undeclared field is `checkDestructure`'s
-                            // error, which stops the compile before codegen.
+                        // Every name binds, or none is attached: an
+                        // undeclared field is `checkDestructure`'s error,
+                        // which stops the compile before codegen, and no
+                        // storage of the arm is left unset.
+                        const bound = for (path.field_names, storages) |field_token, *storage| {
                             const field = for (fields) |f| {
                                 if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
-                            } else continue;
+                            } else break false;
                             self.checkFreshName(case_scope, field_token);
                             storage.* = (try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator)).storage_id;
-                        }
-                        case.path_patterns[0].field_storages = storages;
+                        } else true;
+                        if (bound) case.path_patterns[0].field_storages = storages else self.allocator.free(storages);
                     };
                 }
             }
@@ -128,6 +130,8 @@ pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase
         }
     }
 
+    // An arm's value is the match's: discarded when the match's is.
+    self.discarded_grant = discarded;
     const case_body_type = try infer_type.inferTypeFromExpr(self, case.body);
     if (matched_var_name) |name| case_scope.propagateUsedToParent(name);
     return case_body_type;
@@ -136,7 +140,7 @@ pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase
 pub fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, allocator: std.mem.Allocator) ErrorList!*Variable {
     const type_info = try ast.TypeInfo.createDefault(allocator);
     type_info.* = narrowed;
-    return scope.createValueBinding(name, eval.convertTypeToTokenType(type_info.base), type_info, false);
+    return scope.createValueBinding(name, type_info, false);
 }
 
 /// What a match path denotes. Against a group subject the path names a

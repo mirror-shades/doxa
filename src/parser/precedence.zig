@@ -306,11 +306,11 @@ pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*
     return left;
 }
 
-/// `target op= value` is sugar for `target is target op value`: a name becomes
-/// an `Assignment`, an element an `IndexAssign`, a field a `FieldAssignment`,
-/// each storing a `Binary` whose left operand is the target read. Nothing downstream
-/// knows compound assignment exists, so it is typed, lowered and checked as
-/// the operation it spells.
+/// `target op= value`: a `CompoundAssign` that evaluates the target's place
+/// once, then stores `target op value` into it. The operation's left operand
+/// is a `Held` of the node, the target's current value, so a target with an
+/// effect (`a[k()] += 1`) runs it once, and the operation is typed and lowered
+/// as the `Binary` it spells.
 fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const target = left orelse return error.InvalidAssignmentTarget;
     switch (target.data) {
@@ -323,10 +323,14 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     // `parsePrecedence` gives both operands their spans: the operation, and
     // the store of it, run from the target to the value.
     const span = ast.SourceSpan.merge(target.base.span.?, value.base.span.?);
+    const id = ast.generateNodeId();
+
+    const current = try self.allocator.create(ast.Expr);
+    current.* = .{ .base = .{ .id = ast.generateNodeId(), .span = target.base.span }, .data = .{ .Held = id } };
 
     const operation = try self.allocator.create(ast.Expr);
     operation.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = .{ .Binary = .{
-        .left = target,
+        .left = current,
         .operator = .{
             .type = switch (operator.type) {
                 .PLUS_EQUAL => .PLUS,
@@ -352,12 +356,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     } } };
 
     const store = try self.allocator.create(ast.Expr);
-    store.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = switch (target.data) {
-        .Variable => |name| .{ .Assignment = .{ .name = name, .value = operation } },
-        .Index => |idx| .{ .IndexAssign = .{ .array = idx.array, .index = idx.index, .value = operation } },
-        .FieldAccess => |fa| .{ .FieldAssignment = .{ .object = fa.object, .field = fa.field, .value = operation } },
-        else => unreachable, // checked above
-    } };
+    store.* = .{ .base = .{ .id = id, .span = span }, .data = .{ .CompoundAssign = .{ .target = target, .operation = operation } } };
     return store;
 }
 

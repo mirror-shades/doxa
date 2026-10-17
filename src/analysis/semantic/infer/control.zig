@@ -15,7 +15,7 @@ const infer_type = @import("../infer_type.zig");
 const SemanticError = infer_type.SemanticError;
 const calls = @import("calls.zig");
 
-pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const if_expr = expr.data.If;
     var condition_type = try infer_type.inferTypeFromExpr(self, if_expr.condition.?);
 
@@ -52,18 +52,30 @@ pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
         );
     }
 
+    // A discarded `if` discards its branches' values too.
+    self.discarded_grant = discarded;
     const then_type = try infer_type.inferTypeFromExpr(self, if_expr.then_branch.?);
-    if (if_expr.else_branch) |else_branch| {
-        const else_type = try infer_type.inferTypeFromExpr(self, else_branch);
-
-        // If the parser produced an implicit else that is a Nothing literal,
-        // treat this as if there is no else-branch to avoid forcing unification
-        // of a concrete then-type with Nothing in statement contexts.
-        const else_is_implicit_nothing = (else_branch.data == .Literal and else_type.base == .Nothing);
-        if (else_is_implicit_nothing) {
-            type_info.* = then_type.*;
+    if (if_expr.implicit_else) {
+        // Without an `else` there is no value on the false path: legal only
+        // where nothing reads the `if`'s value.
+        if (!discarded) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.IF_VALUE_REQUIRES_ELSE,
+                "an `if` used as a value requires an `else` branch",
+                .{},
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
             return;
         }
+        _ = try infer_type.inferTypeFromExpr(self, if_expr.else_branch.?);
+        type_info.* = then_type.*;
+        return;
+    }
+    if (if_expr.else_branch) |else_branch| {
+        self.discarded_grant = discarded;
+        const else_type = try infer_type.inferTypeFromExpr(self, else_branch);
 
         // Special handling for peek expressions - allow different types
         // since peek is used for output/printing and the actual return value
@@ -93,7 +105,7 @@ pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
     }
 }
 
-pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const match_expr = expr.data.Match;
     const subject_type = try infer_type.inferTypeFromExpr(self, match_expr.value);
     try helpers.checkGroupMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
@@ -115,7 +127,7 @@ pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
 
         for (match_expr.cases) |*case| {
             try self.resolveMatchPatterns(case, group, subject_enum);
-            const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, matched_var_name);
+            const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, matched_var_name, discarded);
             try union_types.append(case_type);
         }
 
@@ -132,9 +144,10 @@ pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
     }
 }
 
-pub fn grouping(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+pub fn grouping(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const grouped_expr = expr.data.Grouping;
     if (grouped_expr) |expr_in_parens| {
+        self.discarded_grant = discarded;
         type_info.* = (try infer_type.inferTypeFromExpr(self, expr_in_parens)).*;
     } else {
         type_info.* = .{ .base = .Nothing };
@@ -206,7 +219,6 @@ fn checkQuantifier(
     self.checkFreshName(quantifier_scope, variable);
     const bound = quantifier_scope.createValueBinding(
         variable.lexeme,
-        eval.convertTypeToTokenType(bound_var_type.base),
         bound_var_type,
         true,
     ) catch |err| {
@@ -283,7 +295,7 @@ pub fn assertExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Type
     type_info.* = .{ .base = .Nothing };
 }
 
-pub fn blockExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+pub fn blockExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const block = expr.data.Block;
     // Ensure statements inside a block expression are validated so that
     // statement-level transformations (e.g., @push lowering) occur within blocks
@@ -292,13 +304,15 @@ pub fn blockExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
     self.current_scope = block_scope;
     defer {
         self.current_scope = prev_scope;
-        block_scope.deinit();
+        self.closeBlockScope(block_scope);
     }
 
     try self.validateStatements(block.statements);
 
     var value_type_ptr: ?*ast.TypeInfo = null;
     if (block.value) |value_expr| {
+        // A block's value is its tail's: discarded when the block's is.
+        self.discarded_grant = discarded;
         value_type_ptr = try infer_type.inferTypeFromExpr(self, value_expr);
     }
 
@@ -319,11 +333,14 @@ pub fn loopExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
     const loop = expr.data.Loop;
     // `each n in ^path`: the body borrows the path. Its source is
     // checked first, before the loop's own reads of it.
-    const borrowed = if (loop.borrow) |source| try calls.borrowSource(self, source) else false;
+    const borrowed = if (loop.lent) try calls.borrowSource(self, loop.over.?) else false;
     defer if (borrowed) {
         const live = self.borrows.pop().?;
         self.allocator.free(live.path);
     };
+    // What the loop iterates belongs to the scope around it; the header and
+    // the body read it as a `Held` of the loop.
+    if (loop.over) |over| try self.held.put(expr.base.id, try infer_type.inferTypeFromExpr(self, over));
     const outer_loop_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
     const prev_scope = self.current_scope;
     self.current_scope = outer_loop_scope;
@@ -356,8 +373,7 @@ pub fn loopExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
     }
 
     // The body writes the borrowed path through its element binding.
-    // The condition (`@length` of it) is where the path is analyzed.
-    if (borrowed) try effects.write(self, loop.borrow.?);
+    if (borrowed) try effects.write(self, loop.over.?);
 
     // Create iteration scope for loop body
     const iteration_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -369,10 +385,13 @@ pub fn loopExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         self.current_scope = iteration_scope;
         defer self.current_scope = saved_scope;
 
+        // A loop has no value: every iteration discards its body's.
+        self.discarded_grant = true;
         _ = try infer_type.inferTypeFromExpr(self, loop.body);
     }
 
     if (loop.step) |stp| {
+        self.discarded_grant = true;
         _ = try infer_type.inferTypeFromExpr(self, stp);
     }
 

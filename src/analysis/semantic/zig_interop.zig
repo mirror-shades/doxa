@@ -60,7 +60,7 @@ pub fn registerZigFunctions(self: *SemanticAnalyzer, record: *ModuleRecord) Erro
         function_type.* = .{ .params = sig.param_types, .return_type = return_type };
         const type_info = try ast.TypeInfo.createDefault(self.allocator);
         type_info.* = .{ .base = .Function, .function_type = function_type, .is_mutable = false };
-        const variable = try scope.createValueBinding(sig.name, .FUNCTION, type_info, true);
+        const variable = try scope.createValueBinding(sig.name, type_info, true);
         variable.used = true;
     }
     if (error_sets.items.len > 0) unit.error_sets = try error_sets.toOwnedSlice();

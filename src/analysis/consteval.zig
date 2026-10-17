@@ -151,7 +151,7 @@ pub fn unary(op: TokenType, v: TokenLiteral) Outcome {
             else => .not_constant,
         },
         // `false` and `true` swap; `both` and `neither` are their own negation.
-        .NOT, .BANG => switch (v) {
+        .NOT => switch (v) {
             .tetra => |t| .{ .value = .{ .tetra = switch (t) {
                 .true => .false,
                 .false => .true,

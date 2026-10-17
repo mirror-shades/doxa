@@ -119,11 +119,19 @@ pub const SemanticAnalyzer = struct {
     reporter: *Reporter,
     memory: *MemoryManager,
     fatal_error: bool,
+    /// Granted by a statement immediately before it infers the expression
+    /// whose value it discards; `inferTypeFromExpr` consumes it at entry, so
+    /// every nested inference is a value position unless re-granted (an `if`
+    /// re-grants its branches when it is itself discarded).
+    discarded_grant: bool = false,
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
     /// What a store through a name writes and what the name reads there, per
     /// `Variable` expression, assignment and variable declaration.
     store_targets: std.AutoHashMap(NodeId, StoreTarget),
+    /// The type of the value each owner holds for its `Held` reads: a
+    /// `CompoundAssign`'s target, a `Loop`'s `over`. Keyed by owner id.
+    held: std.AutoHashMap(NodeId, *ast.TypeInfo),
     /// Member-preserving `^` parameters. A union `^` parameter preserves its
     /// member when every store into it goes through a narrowing of it (an
     /// `as` or a match arm), so it stores the member the narrowing proved.
@@ -175,6 +183,10 @@ pub const SemanticAnalyzer = struct {
     /// ended. A shorthand names no enum itself; its context types it
     /// (`helpers.contextualizeEnumMember`), and one left untyped is an error.
     bare_variants: std.ArrayListUnmanaged(*const ast.Expr) = .empty,
+    /// Expressions whose type was incomplete when inferred (an array with no
+    /// element type, say). A later context may still complete one in place;
+    /// `reportIncompleteTypes` rejects the first that none did.
+    incomplete: std.ArrayListUnmanaged(*const ast.Expr) = .empty,
     /// The function whose body is being validated. Every `return` in it is
     /// checked against its declared return type where the return is analyzed.
     returning: ?Returning = null,
@@ -195,6 +207,7 @@ pub const SemanticAnalyzer = struct {
     pub const analyzeProgram = program.analyzeProgram;
     pub const finalizeLinkIdentities = program.finalizeLinkIdentities;
     pub const ensureTypes = program.ensureTypes;
+    pub const closeBlockScope = program.closeBlockScope;
     pub const validateStatements = statements.validateStatements;
     pub const ensureDynamicArrayStorage = type_ops.ensureDynamicArrayStorage;
     pub const typeExprToTypeInfo = type_ops.typeExprToTypeInfo;
@@ -221,6 +234,7 @@ pub const SemanticAnalyzer = struct {
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .store_targets = std.AutoHashMap(NodeId, StoreTarget).init(allocator),
+            .held = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .member_mutators = std.AutoHashMap(ParamRef, void).init(allocator),
             .union_alias_params = std.AutoHashMap(u32, ParamRef).init(allocator),
             .checked_signatures = std.AutoHashMap(*const ast.FunctionType, void).init(allocator),
@@ -246,6 +260,7 @@ pub const SemanticAnalyzer = struct {
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
         self.store_targets.deinit();
+        self.held.deinit();
         self.member_mutators.deinit();
         self.member_relays.deinit(self.allocator);
         self.member_loans.deinit(self.allocator);
@@ -254,6 +269,7 @@ pub const SemanticAnalyzer = struct {
         self.checked_signatures.deinit();
         self.effects.deinit(self.allocator);
         self.bare_variants.deinit(self.allocator);
+        self.incomplete.deinit(self.allocator);
         self.custom_types.deinit();
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();

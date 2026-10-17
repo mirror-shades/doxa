@@ -87,10 +87,8 @@ pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) Error
                             .{},
                         );
                         self.fatal_error = true;
-                        continue;
+                        type_info.* = .{ .base = .Error, .is_mutable = decl.type_info.is_mutable };
                     }
-
-                    const token_type = eval.convertTypeToTokenType(type_info.base);
 
                     if (decl.initializer != null) {
                         if (helpers.hasUninferredElement(type_info)) {
@@ -101,7 +99,8 @@ pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) Error
                                 .{},
                             );
                             self.fatal_error = true;
-                            continue;
+                            // Still declared, as poison, so its uses report nothing more.
+                            type_info.* = .{ .base = .Error, .is_mutable = decl.type_info.is_mutable };
                         }
                     }
 
@@ -119,9 +118,9 @@ pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) Error
 
                     self.checkFreshName(scope, decl.name);
                     const binding = if (decl.type_expr == null)
-                        scope.createValueBindingAt(decl.name.lexeme, token_type, type_info, !type_info.is_mutable, decl.name)
+                        scope.createValueBindingAt(decl.name.lexeme, type_info, !type_info.is_mutable, decl.name)
                     else
-                        scope.createValueBinding(decl.name.lexeme, token_type, type_info, !type_info.is_mutable);
+                        scope.createValueBinding(decl.name.lexeme, type_info, !type_info.is_mutable);
                     if (binding) |declared| {
                         declared.recordDeclLocation(decl.name);
                         self.memory.scope_manager.value_storage.get(declared.storage_id).?.comptime_value = comptime_value;
@@ -180,8 +179,17 @@ pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) Error
                             try declarations.reportNestedDeclaration(self, "Type", decl.name);
                         },
                         else => {
+                            self.discarded_grant = true;
                             _ = try infer_type.inferTypeFromExpr(self, expression);
                             if (expression.data == .Unreachable) prev_was_terminator = true;
+                            if (hasNoEffect(expression)) {
+                                self.reporter.reportWarning(
+                                    getLocationFromBase(expression.base),
+                                    ErrorCode.EXPRESSION_HAS_NO_EFFECT,
+                                    "this expression has no effect, and its value is unused",
+                                    .{},
+                                );
+                            }
                         },
                     }
                 }
@@ -228,4 +236,30 @@ pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) Error
             .ZigDecl, .Import => {},
         }
     }
+}
+
+/// Whether evaluating `e` does nothing but compute its value: no call, store,
+/// output or transfer of control. As a statement it is dropped work (W2012).
+fn hasNoEffect(e: *const ast.Expr) bool {
+    return switch (e.data) {
+        .Literal, .Variable, .EnumMember, .This, .Held => true,
+        .Grouping => |inner| if (inner) |x| hasNoEffect(x) else true,
+        .Unary => |u| if (u.right) |x| hasNoEffect(x) else true,
+        .Binary => |b| (if (b.left) |x| hasNoEffect(x) else true) and (if (b.right) |x| hasNoEffect(x) else true),
+        .Logical => |l| hasNoEffect(l.left) and hasNoEffect(l.right),
+        .Index => |i| hasNoEffect(i.array) and hasNoEffect(i.index),
+        .FieldAccess => |f| hasNoEffect(f.object),
+        .Range => |r| hasNoEffect(r.start) and hasNoEffect(r.end),
+        .Array => |elements| for (elements) |x| {
+            if (!hasNoEffect(x)) break false;
+        } else true,
+        .StructLiteral => |l| for (l.fields) |field| {
+            if (!hasNoEffect(field.value)) break false;
+        } else true,
+        .InterpolatedString => |template| for (template.parts) |part| switch (part) {
+            .String => {},
+            .Expression => |x| if (!hasNoEffect(x)) break false,
+        } else true,
+        else => false,
+    };
 }

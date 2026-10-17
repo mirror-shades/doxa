@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const token = @import("../types/token.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const expression_parser = @import("expression_parser.zig");
@@ -10,6 +11,7 @@ const import_parser = @import("import_parser.zig");
 const internal_call_parser = @import("internal_call_parser.zig");
 
 const ast = @import("../ast/ast.zig");
+const tree = @import("../ast/tree.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -59,6 +61,15 @@ fn parserErrorHint(err: anyerror) []const u8 {
         error.InternalParserError => "internal parser error",
         else => "",
     };
+}
+
+/// Whether `text` is spelled as a word (a keyword or an identifier).
+fn isWord(text: []const u8) bool {
+    if (text.len == 0 or !(std.ascii.isAlphabetic(text[0]) or text[0] == '_')) return false;
+    for (text) |byte| {
+        if (!(std.ascii.isAlphanumeric(byte) or byte == '_')) return false;
+    }
+    return true;
 }
 
 fn isPrintableAscii(text: []const u8) bool {
@@ -324,6 +335,67 @@ pub const Parser = struct {
         return block_expr;
     }
 
+    /// The location of `tok`, for a diagnostic at it.
+    pub fn locationOf(self: *const Parser, tok: token.Token) Location {
+        return .{
+            .file = if (tok.file.len > 0) tok.file else self.current_file,
+            .file_uri = if (tok.file_uri.len > 0) tok.file_uri else self.current_file_uri,
+            .range = .{
+                .start_line = tok.line,
+                .start_col = tok.column,
+                .end_line = tok.line,
+                .end_col = tok.column + tok.lexeme.len,
+            },
+        };
+    }
+
+    /// Whether a token may name a declaration: only an identifier. The
+    /// expression parser reads only an identifier as a name, so whatever may
+    /// be declared may be referred to.
+    pub fn isBindableName(token_type: token.TokenType) bool {
+        return token_type == .IDENTIFIER;
+    }
+
+    /// The name a declaration binds, consumed. `what` names the declaration
+    /// (`"a parameter"`). A keyword is refused by name (E2032), the same way
+    /// at every declaration site.
+    pub fn bindableName(self: *Parser, comptime what: []const u8) ErrorList!token.Token {
+        const name = self.peek();
+        if (isBindableName(name.type)) {
+            self.advance();
+            return name;
+        }
+        if (isWord(name.lexeme)) {
+            self.reporter.reportCompileError(self.locationOf(name), ErrorCode.KEYWORD_AS_NAME, "'{s}' is a keyword, so it cannot name " ++ what, .{name.lexeme});
+        }
+        return error.ExpectedIdentifier;
+    }
+
+    /// The statement-ending tokens: a newline (consumed with any that follow),
+    /// a closing brace, or the end of input.
+    pub const statement_end = [_]token.TokenType{ .NEWLINE, .RIGHT_BRACE, .EOF };
+
+    /// After the one expression `what` holds: the next token must be one of
+    /// `ends`, or the parse stopped short of its terminator and what follows
+    /// would be silently dropped or misread. Reports E2023 at the first extra
+    /// token. A newline in `ends` is consumed, with any newlines after it.
+    /// A statement nested at the end of the expression (`as T else continue`)
+    /// already ended the line, which ends this too.
+    pub fn expectEnd(self: *Parser, comptime what: []const u8, ends: []const token.TokenType) ErrorList!void {
+        const next = self.peek();
+        for (ends) |end| {
+            if (next.type != end) continue;
+            if (end == .NEWLINE) {
+                while (self.peek().type == .NEWLINE) self.advance();
+            }
+            return;
+        }
+        const line_ended = self.current > 0 and self.previous().type == .NEWLINE;
+        if (line_ended and std.mem.indexOfScalar(token.TokenType, ends, .NEWLINE) != null) return;
+        self.reporter.reportCompileError(self.locationOf(next), ErrorCode.EXPECTED_NEWLINE, "Expected the end of " ++ what ++ ", found '{s}'", .{next.lexeme});
+        return error.ExpectedNewline;
+    }
+
     /// Report a parser-phase failure at the token the parser stopped on.
     /// `execute` returns errors without emitting a diagnostic — the caller owns
     /// presentation — so every caller must route through here: the root file in
@@ -562,7 +634,15 @@ pub const Parser = struct {
             return error.MissingEntryPointFunction;
         }
 
-        return statements.toOwnedSlice();
+        const parsed = try statements.toOwnedSlice();
+        // A debug build checks that what it parsed is a tree (`ast/tree.zig`).
+        if (builtin.mode == .Debug) {
+            if (try tree.check(self.allocator, parsed)) |violation| {
+                const at = violation.location orelse Location{ .file = self.current_file, .file_uri = null, .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } };
+                std.debug.panic("the parser built a node graph that is not a tree: {s} at {s}:{d}:{d}", .{ violation.what, at.file, at.range.start_line, at.range.start_col });
+            }
+        }
+        return parsed;
     }
 
     pub fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

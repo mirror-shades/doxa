@@ -45,6 +45,8 @@ pub const TypeLowering = struct {
             .String => .String,
             .Tetra => .Tetra,
             .Nothing => .Nothing,
+            // A failed expression has no type to lower.
+            .Error => error.IncompleteType,
             .Array => .{ .Array = .{
                 .element = try self.lowered(ti.array_type orelse return error.IncompleteType),
                 // Only a fixed array is sized; a `const` bound to a literal

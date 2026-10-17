@@ -92,6 +92,18 @@ pub fn methodSignature(self: *SemanticAnalyzer, m: *ast.StructMethod, return_typ
 /// globals in order. A nested block registers its locals the same way. A
 /// type is declared only at file scope: elsewhere it would have no binding,
 /// and two blocks declaring the same name would share one identity.
+/// The group `stmt` declares, if it declares one.
+fn groupDecl(stmt: *ast.Stmt) ?*ast.GroupDecl {
+    return switch (stmt.data) {
+        .GroupDecl => |*decl| decl,
+        .Expression => |maybe_expr| {
+            const expr = maybe_expr orelse return null;
+            return if (expr.data == .GroupDecl) &expr.data.GroupDecl else null;
+        },
+        else => null,
+    };
+}
+
 pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
     const at_file_scope = scope == self.moduleScope(self.current_module);
 
@@ -108,22 +120,21 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
             else => {},
         }
     }
+    // Every group is declared before any is flattened, so a group may
+    // include one declared below it; flattening keeps declaration order, so
+    // group ids do too.
     for (statements) |*stmt| {
-        const decl = switch (stmt.data) {
-            .GroupDecl => |*decl| decl,
-            .Expression => |maybe_expr| blk: {
-                const expr = maybe_expr orelse continue;
-                if (expr.data != .GroupDecl) continue;
-                break :blk &expr.data.GroupDecl;
-            },
-            else => continue,
-        };
+        const decl = groupDecl(stmt) orelse continue;
         if (!at_file_scope) {
             try reportNestedDeclaration(self, "Type", decl.name);
             continue;
         }
-        try helpers.registerGroupType(self, .{ .module = self.current_module, .name = decl.name.lexeme }, decl.members);
+        try helpers.declareGroupType(self, .{ .module = self.current_module, .name = decl.name.lexeme }, decl.members);
     }
+    if (at_file_scope) for (statements) |*stmt| {
+        const decl = groupDecl(stmt) orelse continue;
+        try helpers.flattenGroupType(self, .{ .module = self.current_module, .name = decl.name.lexeme });
+    };
 
     // Functions, with resolved signatures, before any body or initializer
     // can call them.
@@ -171,7 +182,6 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
         // declaration, which codegen reads from the AST.
         if (scope.createValueBinding(
             func.name.lexeme,
-            .FUNCTION,
             func_type_info,
             true,
         )) |func_var| {
@@ -236,7 +246,7 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
                         .{},
                     );
                     self.fatal_error = true;
-                    continue;
+                    type_info.* = .{ .base = .Error, .is_mutable = decl.type_info.is_mutable };
                 }
 
                 if (decl.initializer) |init_expr| {
@@ -248,12 +258,11 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
                             .{},
                         );
                         self.fatal_error = true;
-                        continue;
+                        // Still declared, as poison, so its uses report nothing more.
+                        type_info.* = .{ .base = .Error, .is_mutable = decl.type_info.is_mutable };
                     }
                     type_ops.tryTagConstLiteralArray(self, type_info, init_expr);
                 }
-
-                const token_type = eval.convertTypeToTokenType(type_info.base);
 
                 var comptime_value: ?TokenLiteral = null;
                 if (decl.initializer) |init_expr| {
@@ -275,9 +284,9 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
 
                 self.checkFreshName(scope, decl.name);
                 const binding = if (decl.type_expr == null)
-                    scope.createValueBindingAt(decl.name.lexeme, token_type, type_info, !type_info.is_mutable, decl.name)
+                    scope.createValueBindingAt(decl.name.lexeme, type_info, !type_info.is_mutable, decl.name)
                 else
-                    scope.createValueBinding(decl.name.lexeme, token_type, type_info, !type_info.is_mutable);
+                    scope.createValueBinding(decl.name.lexeme, type_info, !type_info.is_mutable);
                 if (binding) |declared| {
                     declared.recordDeclLocation(decl.name);
                     self.memory.scope_manager.value_storage.get(declared.storage_id).?.comptime_value = comptime_value;
@@ -306,7 +315,10 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
                 // ArrayPush) even when their values are not used.
                 switch (expr.data) {
                     .StructDecl, .EnumDecl, .GroupDecl => {},
-                    else => _ = try infer_type.inferTypeFromExpr(self, expr),
+                    else => {
+                        self.discarded_grant = true;
+                        _ = try infer_type.inferTypeFromExpr(self, expr);
+                    },
                 }
             },
             .FunctionDecl, .EnumDecl, .GroupDecl, .Import, .ZigDecl => {},
@@ -390,7 +402,7 @@ pub fn declareStruct(self: *SemanticAnalyzer, decl: *ast.StructDecl, scope: *Sco
 
     const type_info = try ast.TypeInfo.createDefault(self.allocator);
     type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = fields, .is_mutable = false };
-    try bindTypeName(self, scope, decl.name, .STRUCT, type_info, base);
+    try bindTypeName(self, scope, decl.name, type_info, base);
     try checkStructMemberNames(self, decl);
     try registerStructMethods(self, decl, ref);
 }
@@ -443,11 +455,11 @@ pub fn declareEnum(self: *SemanticAnalyzer, decl: *ast.EnumDecl, scope: *Scope, 
 
     const type_info = try ast.TypeInfo.createDefault(self.allocator);
     type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false };
-    try bindTypeName(self, scope, decl.name, .ENUM, type_info, base);
+    try bindTypeName(self, scope, decl.name, type_info, base);
 }
 
-pub fn bindTypeName(self: *SemanticAnalyzer, scope: *Scope, name: Token, kind: TokenType, type_info: *ast.TypeInfo, base: ast.Base) ErrorList!void {
-    const variable = scope.createValueBinding(name.lexeme, kind, type_info, true) catch |err| {
+pub fn bindTypeName(self: *SemanticAnalyzer, scope: *Scope, name: Token, type_info: *ast.TypeInfo, base: ast.Base) ErrorList!void {
+    const variable = scope.createValueBinding(name.lexeme, type_info, true) catch |err| {
         if (err != error.DuplicateVariableName) return err;
         self.reporter.reportCompileError(getLocationFromBase(base), ErrorCode.DUPLICATE_VARIABLE, "Duplicate type name '{s}' in current scope", .{name.lexeme});
         self.fatal_error = true;
