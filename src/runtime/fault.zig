@@ -93,7 +93,6 @@ pub const DoxaFaultSite = extern struct {
     file: [*:0]const u8,
 };
 
-
 /// Set by a program built with debug information: only then do its frames
 /// carry lines. The runtime's own frames always do, so their presence cannot
 /// decide it.
@@ -104,7 +103,6 @@ pub var backtrace_enabled = false;
 /// stops there, as every frame past it is the compiler's. Null until the
 /// entry runs, and in a program built without debug information.
 export var doxa_entry_return: ?*const anyopaque = null;
-
 
 /// The program's frames, innermost first, from the one that faulted at
 /// `first`: `  in <name> at <file>:<line>:<column>`. A frame whose source is
@@ -217,4 +215,15 @@ pub fn report(kind: FaultKind, site: ?*const DoxaFaultSite, text: []const u8, au
 /// An allocation failed: the out-of-memory fault, from the caller's frame.
 pub fn outOfMemory() noreturn {
     report(.out_of_memory, null, "", 0, 0, @returnAddress());
+}
+
+/// Report the fault at `site` and terminate (`fault.report`).
+pub export fn doxa_fault(site: *const DoxaFaultSite, text_ptr: ?[*]const u8, text_len: u64, aux0: i64, aux1: i64) callconv(.c) noreturn {
+    const text: []const u8 = if (text_ptr) |p| p[0..@intCast(text_len)] else "";
+    report(@enumFromInt(site.kind), site, text, aux0, aux1, @returnAddress());
+}
+
+/// Set by a program built with `-g`: only then do its frames carry lines.
+pub export fn doxa_enable_backtrace() callconv(.c) void {
+    backtrace_enabled = true;
 }

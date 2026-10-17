@@ -318,7 +318,7 @@ pub const Debug = struct {
 
     /// A union or group value is the `%DoxaValue` box the runtime passes:
     /// `{ tag: DoxaTag, reserved, payload_bits, payload_len }`, exactly as
-    /// `doxa_rt.zig` lays it out.
+    /// `runtime/abi.zig` lays it out.
     fn boxType(self: *Debug) Error!u32 {
         if (self.box_type) |n| return n;
         const tag = try self.tagType();
@@ -335,8 +335,8 @@ pub const Debug = struct {
         return type_node;
     }
 
-    /// `DoxaTag` (`doxa_rt.zig`): the kind of value a box holds, read from
-    /// the runtime's own enum so the two cannot drift apart.
+    /// `DoxaTag` (`runtime/abi.zig`): the kind of value a box holds, read
+    /// from the runtime's own enum so the two cannot drift apart.
     fn tagType(self: *Debug) Error!u32 {
         if (self.tag_type) |n| return n;
         const tags = std.meta.fields(rt.DoxaTag);

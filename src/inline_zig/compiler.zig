@@ -59,7 +59,7 @@ pub fn programZigUnits(allocator: std.mem.Allocator, graph: *const ModuleGraph) 
 /// Compile-time description of an inline-Zig array: its innermost Zig type, how
 /// many `[]const` levels wrap it, and the runtime tag/size of the innermost
 /// element. Mirrors `arrayElementTag` / `arrayElementSize` in the LLVM backend
-/// and the tags in `src/runtime/doxa_rt.zig` — they must stay in sync.
+/// and the tags in `src/runtime/abi.zig` — they must stay in sync.
 const ArrayInfo = struct {
     zig_type: []const u8,
     depth: usize,
@@ -183,8 +183,7 @@ fn appendErrorIndexFn(buf: *std.array_list.Managed(u8), path: []const u8) !void 
 /// elements into the call arena); `__doxa_build` copies a returned slice into a
 /// fresh `ArrayHeader` in the call-site arena.
 fn appendArrayAdapters(buf: *std.array_list.Managed(u8)) !void {
-    try buf.appendSlice(
-        "fn __DoxaArrayType(comptime __T: type, comptime __depth: usize) type {\n" ++
+    try buf.appendSlice("fn __DoxaArrayType(comptime __T: type, comptime __depth: usize) type {\n" ++
         "    if (__depth == 0) return __T;\n" ++
         "    return []const __DoxaArrayType(__T, __depth - 1);\n" ++
         "}\n\n" ++
@@ -313,8 +312,7 @@ fn generateWrapperZigFile(
     // arena ownership rules in docs/memory.md with no free hook.
     // `DoxaByte` is the marker a signature uses to spell `byte[]`: a bare
     // `[]const u8` is unambiguously a `string`, so bytes need their own name.
-    try file_buf.appendSlice(
-        "const __doxa_std = @import(\"std\");\n\n" ++
+    try file_buf.appendSlice("const __doxa_std = @import(\"std\");\n\n" ++
         "const DoxaByte = u8;\n\n" ++
         "const __DoxaArrayHeader = opaque {};\n\n" ++
         "const __DoxaScope = opaque {};\n\n" ++
