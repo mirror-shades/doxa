@@ -8,6 +8,7 @@ test {
     _ = @import("test/test_lazy_modules.zig");
     _ = @import("test/test_hashing.zig");
     _ = @import("test/test_lexer.zig");
+    _ = @import("test/test_parser.zig");
     _ = @import("test/test_profiler.zig");
     _ = @import("test/test_artifact_cache.zig");
     _ = @import("test/test_native_cpu_cache.zig");
@@ -19,6 +20,7 @@ test {
     _ = @import("src/lsp/internal_methods.zig");
     _ = @import("test/test_lsp_server.zig");
     _ = @import("src/analysis/consteval.zig");
+    _ = @import("src/analysis/semantic/helpers.zig");
     _ = @import("src/runtime/scope_arena.zig");
     _ = @import("src/instrument/report.zig");
 }
