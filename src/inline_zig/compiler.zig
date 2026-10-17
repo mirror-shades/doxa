@@ -695,7 +695,7 @@ pub fn compileInlineZigObjects(
                 try args_list.append(try std.fmt.allocPrint(dir_arena.allocator(), "-I{s}", .{dir}));
             }
             // Every object linked into a Doxa program must be compiled with the
-            // same libc-ness as the runtime root object (`src/main.zig`, which
+            // same libc-ness as the runtime root object (`src/build/native.zig`, which
             // passes `-lc`) and the final link (also `-lc`). Without this, an
             // inline shim's `builtin.link_libc` is false while the program still
             // links libc: `std.Thread` then selects `LinuxThreadImpl` and reads

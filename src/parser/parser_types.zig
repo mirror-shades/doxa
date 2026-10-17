@@ -333,7 +333,8 @@ pub const Parser = struct {
     /// Report a parser-phase failure at the token the parser stopped on.
     /// `execute` returns errors without emitting a diagnostic — the caller owns
     /// presentation — so every caller must route through here: the root file in
-    /// `main.zig` and each lazily parsed imported module in `module/loader.zig`.
+    /// `driver/pipeline.zig` and each lazily parsed imported module in
+    /// `module/loader.zig`.
     /// Otherwise a parse failure in an imported module surfaces as an unlocated
     /// internal compiler error instead of a syntax error at the offending line.
     pub fn reportParseError(self: *Parser, err: anyerror) void {

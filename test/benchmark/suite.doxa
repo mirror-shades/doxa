@@ -81,7 +81,7 @@ function doxaCompile(src :: string, out :: string) returns string {
 }
 
 # Compile C with `zig cc` — the exact toolchain Doxa uses internally for
-# .ll -> .o (see main.zig). Both sides are given the host CPU explicitly
+# .ll -> .o (see src/build/program.zig). Both sides are given the host CPU explicitly
 # (`-mcpu=native`): Doxa's native path passes an explicit `-target`, which
 # makes `zig cc` stop auto-detecting the host CPU, so the compiler adds
 # `-mcpu=native` for native builds itself. Naming it on the C side too keeps

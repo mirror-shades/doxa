@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const inline_zig = @import("../src/inline_zig/compiler.zig");
-const doxa = @import("../src/main.zig");
+const toolchain = @import("../src/build/toolchain.zig");
 
 fn baseInputs() inline_zig.ShimKeyInputs {
     return .{
@@ -60,8 +60,8 @@ test "native cpu cache: the resolved host key is stable and not the constant" {
     // running it. What must hold everywhere is that it is deterministic within
     // a process (so the cache still works) and is not the literal string
     // "native", which is the value that made every host share one key.
-    const first = doxa.resolveNativeCpuKey(testing.io);
-    const second = doxa.resolveNativeCpuKey(testing.io);
+    const first = toolchain.resolveNativeCpuKey(testing.io);
+    const second = toolchain.resolveNativeCpuKey(testing.io);
 
     try testing.expectEqual(first.digest, second.digest);
     try testing.expect(!std.mem.eql(u8, first.bytes(), "native"));

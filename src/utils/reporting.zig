@@ -303,6 +303,27 @@ pub const Reporter = struct {
         self.report(.Runtime, .Error, loc, code, fmt, args);
     }
 
+    /// Surfaces a failed build step (a `zig` subprocess) as a diagnostic. The
+    /// subprocess's own stderr is inherited, so this adds the step and exit
+    /// status.
+    pub fn reportBuildStepFailure(self: *Reporter, step: []const u8, exit_code: ?u8) void {
+        if (exit_code) |code| {
+            self.reportCompileError(
+                null,
+                Errors.ErrorCode.INTERNAL_ERROR,
+                "{s} failed: zig exited with code {d}",
+                .{ step, code },
+            );
+        } else {
+            self.reportCompileError(
+                null,
+                Errors.ErrorCode.INTERNAL_ERROR,
+                "{s} failed: zig terminated unexpectedly",
+                .{step},
+            );
+        }
+    }
+
     pub fn reportWarning(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         self.report(.CompileTime, .Warning, loc, code, fmt, args);
     }
