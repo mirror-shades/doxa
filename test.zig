@@ -16,8 +16,8 @@ test {
     _ = @import("test/test_register_hir.zig");
     _ = @import("test/test_stdlib_catalog.zig");
     _ = @import("test/test_module_graph.zig");
-    _ = @import("src/lsp/server.zig");
     _ = @import("src/lsp/internal_methods.zig");
+    _ = @import("test/test_lsp_server.zig");
     _ = @import("src/analysis/consteval.zig");
     _ = @import("src/runtime/scope_arena.zig");
     _ = @import("src/instrument/report.zig");

@@ -11,6 +11,7 @@ const Profiler = @import("../utils/profiler.zig").Profiler;
 const CountingAllocator = @import("../utils/profiler.zig").CountingAllocator;
 const source_cache = @import("../utils/source_cache.zig");
 const LspServer = @import("../lsp/server.zig");
+const LspHarness = @import("../lsp/harness.zig");
 const report = @import("../instrument/report.zig");
 const cli = @import("../cli/parse.zig");
 const cli_init = @import("../cli/init.zig");
@@ -35,7 +36,7 @@ pub fn run(init: std.process.Init) !void {
             .reporter_options = opts.reporter_options,
             .trace_io = opts.trace_io,
         })),
-        .lsp_harness => |opts| return LspServer.runDebugHarness(init.io, init.gpa, .{
+        .lsp_harness => |opts| return LspHarness.run(init.io, init.gpa, .{
             .reporter_options = opts.reporter_options,
             .script_path = opts.script_path,
         }),
