@@ -2,6 +2,9 @@
 
 ## Core Language Features
 
+A source file is UTF-8. A byte order mark at its very start is ignored; one
+anywhere else is an error.
+
 ### Primitive Types
 
 Doxa has two general categories of types, scalar and composite:
@@ -51,6 +54,10 @@ overloading:
 - Functions and types are declared at file scope only (E2029), so a function
   never hides another inside a body.
 - Expressions, blocks and type expressions nest at most 256 deep (E2031).
+- Only an identifier names a declaration: a function, parameter, method,
+  variable, field, type, enum variant or loop variable. A keyword (`to`, `at`,
+  `exists`, …) is refused where it is declared (E2032), since no expression
+  could refer to it.
 
 A binding that is not visible does not conflict, so sibling blocks may each
 declare the same name:
@@ -71,7 +78,10 @@ holding the subject narrowed to that branch's type.
 
 ### Line Continuation
 
-A newline ends a statement. To continue one expression across lines, begin the
+A newline ends a statement. A statement, a declaration or a `return` holds one
+expression, and must end where that expression does: `const y is 5 6` is an
+error at the `6` (E2023). A statement that computes a value and drops it, such
+as a bare `x + 1`, does nothing and is a warning (W2012). To continue one expression across lines, begin the
 next line with `...`, which joins it to the line above:
 
 ```doxa
@@ -104,6 +114,8 @@ Arithmetic follows Python-like semantics. See the [Arithmetic](math.md) page for
 
 Compound assignment is supported for all arithmetic operators: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`.
 
+`target op= value` computes its target's place once: in `a[k()] += 1`, `k()` runs once, and the element it reads is the one it writes.
+
 `//=` and `%=` are integer-only, matching their binary forms: both operands must be `int` or `byte`.
 
 `/=` is the exception that looks like the others but is not. Doxa's `/` is *float* division, so `/=` computes a `float` whatever the operands are — assigning that back into an `int` is a narrowing, which Doxa rejects everywhere else. Use `//=` for integer division:
@@ -119,6 +131,14 @@ f /= 4      # f is now 2.5
 
 Dividing or taking a remainder by zero is a runtime fault (`Division by zero at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)) rather than undefined behaviour. Float division is unaffected and follows IEEE 754, so `5 / 0` is `inf`.
 
+### Comparison Operators
+
+`==`, `!=`, `<`, `<=`, `>` and `>=` compare two numbers or two strings.
+Two tetras, two values of the same enum, or two `nothing`s compare with `==`
+and `!=` only; a union or group value compares through the member it holds.
+Anything else — structs, arrays, functions, values of two different enums, or
+an ordering of tetras or enums — is a compile error (`E1016`).
+
 ### Strings
 
 Double-quoted strings interpolate expressions in `{...}` anywhere a string expression is accepted:
@@ -128,6 +148,9 @@ var name is "Doxa"
 var greeting is "Hello {name}"
 @print("{greeting}\n")
 ```
+
+A literal brace is written `\{` or `\}`. The escapes are `\"`, `\\`, `\n`, `\r`, `\t`,
+`\{`, `\}` and `\u{...}`; see [strings.md](strings.md#escapes).
 
 The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
 
@@ -366,7 +389,7 @@ This unicode support is paired with plaintext keywords which act in an identical
 ∀ - forall
 ∈ - in
 : - where
-¬ - not
+¬ - not (`!` is also accepted)
 ↔ - iff
 ⊕ - xor
 ∧ - and

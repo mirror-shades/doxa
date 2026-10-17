@@ -28,7 +28,10 @@ arm.
 
 ### if / then / else
 
-- **then required**, **else optional**.
+- **then required**, **else optional** for a statement `if`.
+- An `if` whose value is used (a declaration's initializer, an argument, an
+  operand) needs an `else`: without one the false path has no value, and the
+  compiler rejects it (`E1038`).
 
 Examples:
 

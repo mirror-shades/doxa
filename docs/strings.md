@@ -27,8 +27,35 @@ var x is 10
 @print("{x} squared is {x ** 2}\n")
 ```
 
+A placeholder holds exactly one expression: `"{x y}"` is an error at the `y` (E2023), never
+`"{x}"` with the rest dropped.
+
 Interpolation works wherever a string literal is accepted: in `@print` / `@println` calls,
-variable initialisers, function arguments, and so on.
+variable initialisers, function arguments, and so on. A module path and a `match` pattern
+are constants, so a string there holds no placeholder.
+
+## Escapes
+
+A backslash starts an escape. These are all of them:
+
+| Escape | Means |
+| --- | --- |
+| `\"` | a double quote |
+| `\\` | a backslash |
+| `\n` | a line feed |
+| `\r` | a carriage return |
+| `\t` | a tab |
+| `\{`, `\}` | a literal brace, never a placeholder |
+| `\u{...}` | the code point with 1–6 hex digits, as UTF-8 |
+
+Any other escape is an error. A brace an escape produces is text: `"\u{7b}"` is `{`. An
+unescaped `{` always opens a placeholder, which closes on its line (or on a line it
+continues with `...`), so `"a{b"` is an error that says to write `"a\{b"`. A placeholder's
+source is code: a string inside it has its own escapes and placeholders
+(`"{"q\"}"}"` is `q"}`).
+
+A raw line break inside a literal is one byte of the string, unless the next line begins
+with `...`, which continues the literal without it.
 
 ## The `string` type
 

@@ -607,18 +607,18 @@ public function append(path :: string, content :: string) returns nothing | erro
 
 </details>
 
-### `exists`
+### `isPresent`
 
 ```doxa
-public function exists(path :: string) returns tetra
+public function isPresent(path :: string) returns tetra
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function exists(path :: string) returns tetra {
-    return File.exists(path)
+public function isPresent(path :: string) returns tetra {
+    return File.isPresent(path)
 }
 ```
 

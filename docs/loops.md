@@ -181,7 +181,7 @@ each item at index in collection { ... }
 each item in ^collection { ... }   # the body changes the elements
 ```
 
-**Expands to**:
+**Expands to**, except that `collection` is evaluated once, before the first iteration (as is a range's end):
 
 ```doxa
 for i while i < @length(collection) do i += 1 {
