@@ -90,7 +90,7 @@ Because a value can only be reached while its allocating scope is on the stack, 
 
 - **Copy or rehome on store.** A store of a value a binding already holds is a copy (a `clone` into the destination's arena), as the language requires. A fresh value is re-homed instead: kept where it is when its arena outlives the destination, copied when it could be destroyed first. The arena pass settles every re-home whose arenas are static; the rest check at runtime (`scope_arena.isEqualOrDescendant`).
   - **Globals** live in the program-root arena. Storing a new value into a global places it there. In-place mutations (`@push`, `arr[i] is x`, `n.field is …`) write through the existing root-owned object — they do not snapshot it.
-  - **By-value parameters** a callee changes are copied on entry, so the caller's value is untouched.
+  - **By-value parameters** a callee changes are copied on entry, so the caller's value is untouched. A change is any write through the parameter: a field or element store, an in-place intrinsic, `each … in ^p`, a method that writes its receiver, or lending it to a `^` parameter the callee writes through. Rebinding the parameter (`p is other`) is not a change. A parameter the body only reads is not copied.
   - **Strings** are immutable, so a copy is observationally identical to keeping the original: the compiler decides every string store statically, with no runtime check.
 
 - **Clone on return.** A function frees its body scope on `return`; a heap
