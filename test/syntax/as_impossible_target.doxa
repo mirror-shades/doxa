@@ -1,0 +1,6 @@
+# `int | string` never holds a float.
+entry function main() {
+    var u :: int | string is 3
+    const f is u as float else 0.0
+    @print("{f}\n")
+}

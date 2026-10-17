@@ -1,0 +1,8 @@
+# B042: a function named with a keyword is accepted, and every call to it fails.
+function to() returns int {
+    return 1
+}
+
+entry function main() {
+    @print("{to()}\n")
+}

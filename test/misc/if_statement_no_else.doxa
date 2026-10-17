@@ -1,0 +1,8 @@
+# A statement `if` needs no `else`; a value `if` with one is a value.
+entry function main() {
+    var c is 1 > 0
+    if c then @print("then\n")
+    if c then if c then @print("nested\n")
+    var x is if c then 1 else 2
+    @print("{x}\n")
+}

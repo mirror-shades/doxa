@@ -1,0 +1,7 @@
+# Struct values have no comparison.
+struct Point { public x :: int }
+entry function main() {
+    var p is $Point { x is 1 }
+    var y is p == p
+    @print("{y}\n")
+}

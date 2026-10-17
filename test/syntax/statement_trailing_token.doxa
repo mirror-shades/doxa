@@ -1,0 +1,6 @@
+# A statement ends at its expression (B041 sibling).
+entry function main() {
+    var x is 1
+    x is 2 3
+    @print("{x}\n")
+}

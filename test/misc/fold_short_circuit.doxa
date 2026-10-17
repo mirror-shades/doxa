@@ -1,0 +1,8 @@
+# `and`/`or` short-circuit when folded too: the skipped side would divide
+# by zero, and is never evaluated.
+entry function main() {
+    var a is false and (7 // 0 > 1)
+    var b is true or (7 // 0 > 1)
+    var c is true and (2 > 1)
+    @print("{a} {b} {c}\n")
+}

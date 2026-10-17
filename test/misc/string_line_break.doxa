@@ -1,0 +1,7 @@
+# A raw line break inside a string literal is one byte of the string (B040).
+
+entry function main() {
+    const s is "a
+b"
+    @print("{@length(s)}\n")
+}

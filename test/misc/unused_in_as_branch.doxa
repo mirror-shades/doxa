@@ -1,0 +1,6 @@
+# A declaration nothing reads warns where its an as branch closes, too.
+entry function main() {
+    var u :: int | string is 3
+    u as int then { var c is 3 } else { }
+    @print("done\n")
+}

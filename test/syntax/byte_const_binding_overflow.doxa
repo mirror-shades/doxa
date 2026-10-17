@@ -1,0 +1,6 @@
+# `b` and `c` are bytes, so `b + c` overflows a byte (`+%` would wrap).
+entry function main() {
+    const b :: byte is 200
+    const c :: byte is 100
+    const sum is b + c
+}

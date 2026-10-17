@@ -1,0 +1,4 @@
+# Nothing says what `[] + []` holds.
+entry function main() {
+    @print("{[] + []}\n")
+}

@@ -1,0 +1,5 @@
+# A declaration ends at its expression: a trailing token is an error (B041).
+entry function main() {
+    const y is 5 6
+    @print("{y}\n")
+}

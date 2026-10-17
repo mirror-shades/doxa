@@ -1,0 +1,7 @@
+# A declaration nothing reads warns where its a loop body closes, too.
+entry function main() {
+    each i in 0 to 2 {
+        var d is i
+    }
+    @print("done\n")
+}

@@ -1,0 +1,6 @@
+# Unary minus takes a number.
+entry function main() {
+    var s is "abc"
+    var y is -s
+    @print("{y}\n")
+}

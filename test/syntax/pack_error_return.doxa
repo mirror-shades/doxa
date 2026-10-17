@@ -1,0 +1,10 @@
+# B032: one wrong @pack operand reports two errors. The second blames the
+# return for admitting `nothing`, a consequence of the first, not a new fault.
+function f() returns string {
+    const b is [65, 66, 67]
+    return @pack(b)
+}
+
+entry function main() {
+    @print("{f()}\n")
+}

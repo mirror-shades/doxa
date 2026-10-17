@@ -1,0 +1,5 @@
+# Array values have no comparison.
+entry function main() {
+    var y is [1] == [2]
+    @print("{y}\n")
+}

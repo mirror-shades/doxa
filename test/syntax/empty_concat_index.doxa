@@ -1,0 +1,5 @@
+# Nothing says what `[] + []` holds, so it has no element to read.
+entry function main() {
+    var y is ([] + [])[0]
+    @print("{y}\n")
+}

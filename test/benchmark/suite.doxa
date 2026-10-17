@@ -310,7 +310,7 @@ function writeStats(^results :: Result[]) returns tetra {
     const path is "test/benchmark/stats.csv"
     const header is "test, runs, c_compute, d_compute, c_overhead, d_overhead, compute_pct, compute_delta, date, commit, host, opt, match\n"
 
-    if not std.file.exists(path) then {
+    if not std.file.isPresent(path) then {
         std.file.write(path, header)
     }
     const log is std.file.read(path) as string else {

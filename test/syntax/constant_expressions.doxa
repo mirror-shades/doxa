@@ -17,7 +17,7 @@ entry function main() {
 
     const b :: byte is 200
     const c :: byte is 100
-    const wrapped is b + c
+    const wrapped is b +% c
     @print("{wrapped}\n")
 
     const folded is both and true

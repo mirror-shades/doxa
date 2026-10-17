@@ -26,9 +26,15 @@ pub const Mode = enum {
     /// `expect_stderr` (when given) to stderr. A compile error never satisfies
     /// it, whatever its exit status or text.
     terminate,
-    /// The compiler rejects the program: one compile error carries
-    /// `expect_error` as its code and `expect_stderr` in its text.
+    /// The compiler rejects the program with exactly `expect_errors` compile
+    /// errors, one of which carries `expect_error` as its code and
+    /// `expect_stderr` in its text.
     reject,
+};
+
+pub const Warning = struct {
+    code: []const u8,
+    text: []const u8,
 };
 
 pub const Case = struct {
@@ -51,6 +57,12 @@ pub const Case = struct {
     expect_stderr: ?[]const u8 = null,
     /// `.reject`: the expected compile error's code, e.g. `E1003`.
     expect_error: ?[]const u8 = null,
+    /// `.reject`: how many compile errors the program earns. One unless the
+    /// case says otherwise, so a cascade from the first error fails the case.
+    expect_errors: u8 = 1,
+    /// A compile warning the program must earn, judged in every mode that
+    /// compiles: its code (`W2012`) and a piece of its text.
+    expect_warning: ?Warning = null,
 
     pub fn runsOn(self: Case, pipeline: Pipeline) bool {
         for (self.pipelines) |candidate| {
@@ -75,8 +87,8 @@ pub const Case = struct {
                 "a terminate case needs a non-zero expect_code"
             else
                 null,
-            .reject => if (prints or peeks or runs or self.expect_code != null)
-                "a reject case never runs, so it has no output, input, or exit code"
+            .reject => if (prints or peeks or runs or self.expect_code != null or self.expect_warning != null)
+                "a reject case never runs, so it has no output, input, exit code, or warning"
             else if (self.expect_error == null or self.expect_stderr == null)
                 "a reject case needs expect_error and expect_stderr"
             else
@@ -634,6 +646,53 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "an expression statement with no effect is a warning",
+        .path = "./test/misc/no_effect_statement.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "1" },
+        },
+        .expect_warning = .{ .code = "W2012", .text = "this expression has no effect" },
+    },
+    .{
+        .name = "a byte order mark at the start of a source is skipped",
+        .path = "./test/misc/source_bom.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "hello" },
+        },
+    },
+    .{
+        .name = "a desugared form runs each subexpression once",
+        .path = "./test/misc/desugar_once.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "2 4 6 calls: 1" },
+            .{ .value = "6 calls: 1" },
+            .{ .value = "[11, 20, 30] calls: 1" },
+            .{ .value = "6 2 calls: 1" },
+        },
+    },
+    .{
+        .name = "a string literal's escapes and placeholders are decided once",
+        .path = "./test/misc/string_escapes.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "[a{b]" },
+            .{ .value = "{\"n\":1}" },
+            .{ .value = "{x}" },
+            .{ .value = "6" },
+            .{ .value = "a q\"} b" },
+            .{ .value = "c x2y d" },
+            .{ .value = "e \"2\" f" },
+            .{ .value = "g 2 h" },
+            .{ .value = "i 1 jk" },
+        },
+    },
+    .{
+        .name = "a raw line break in a string literal is one byte",
+        .path = "./test/misc/string_line_break.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "3" },
+        },
+    },
+    .{
         .name = "an array literal is typed by the array its context expects",
         .path = "./test/misc/array_literal_context.doxa",
         .expected_print = &[_]print_result{
@@ -1174,6 +1233,96 @@ const shared_cases = [_]Case{
         .expect_code = 1,
         .expect_stderr = "Index out of bounds at negative_index_store_fault.doxa:4:5: index -1, length 3",
     },
+    .{
+        .name = "an if without else is a statement",
+        .path = "./test/misc/if_statement_no_else.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "then" },
+            .{ .value = "nested" },
+            .{ .value = "1" },
+        },
+    },
+    .{
+        .name = "prefix ! is not",
+        .path = "./test/misc/bang_is_not.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "false true true" },
+        },
+    },
+    .{
+        .name = "comparisons codegen implements",
+        .path = "./test/misc/comparison_table.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "true true true true true true" },
+        },
+    },
+    .{
+        .name = "an empty concatenation takes its context's element type",
+        .path = "./test/misc/empty_concat_context.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "[3] [3, 4]" },
+        },
+    },
+    .{
+        .name = "a group reached by two paths is not a cycle",
+        .path = "./test/misc/group_diamond.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "leaf other" },
+        },
+    },
+    .{
+        .name = "a group may include one declared after it",
+        .path = "./test/misc/group_forward_include.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "leaf" },
+        },
+    },
+    .{
+        .name = "a constant and/or never folds the side it skips",
+        .path = "./test/misc/fold_short_circuit.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "false true true" },
+        },
+    },
+    .{
+        .name = "constant array literals concatenate",
+        .path = "./test/misc/fold_array_concat.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "[1, 2, 3, 4, 5, 6] [\"a\", \"b\", \"c\"]" },
+        },
+    },
+    .{
+        .name = "an unused variable in a block warns",
+        .path = "./test/misc/unused_in_block.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "done" },
+        },
+        .expect_warning = .{ .code = "W2006", .text = "unused variable 'a'" },
+    },
+    .{
+        .name = "an unused variable in a match arm warns",
+        .path = "./test/misc/unused_in_match_arm.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "done" },
+        },
+        .expect_warning = .{ .code = "W2006", .text = "unused variable 'b'" },
+    },
+    .{
+        .name = "an unused variable in an as branch warns",
+        .path = "./test/misc/unused_in_as_branch.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "done" },
+        },
+        .expect_warning = .{ .code = "W2006", .text = "unused variable 'c'" },
+    },
+    .{
+        .name = "an unused variable in a loop body warns",
+        .path = "./test/misc/unused_in_loop_body.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "done" },
+        },
+        .expect_warning = .{ .code = "W2006", .text = "unused variable 'd'" },
+    },
 };
 
 /// Programs the compiler must reject, each pinned to the code and text of the
@@ -1185,6 +1334,90 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E2004",
         .expect_stderr = "equals sign '=' is not used for variable declarations",
+    },
+    .{
+        .name = "a declaration ends at its expression",
+        .path = "./test/syntax/declaration_trailing_token.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the declaration, found '6'",
+    },
+    .{
+        .name = "a statement ends at its expression",
+        .path = "./test/syntax/statement_trailing_token.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the statement, found '3'",
+    },
+    .{
+        .name = "a placeholder ends at its expression: 7F",
+        .path = "./test/syntax/placeholder_trailing_1.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the interpolated expression, found 'F'",
+    },
+    .{
+        .name = "a placeholder ends at its expression: x y",
+        .path = "./test/syntax/placeholder_trailing_2.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the interpolated expression, found 'y'",
+    },
+    .{
+        .name = "a placeholder ends at its expression: x 99",
+        .path = "./test/syntax/placeholder_trailing_3.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the interpolated expression, found '99'",
+    },
+    .{
+        .name = "a placeholder ends at its expression: 1 + 1 2",
+        .path = "./test/syntax/placeholder_trailing_4.doxa",
+        .mode = .reject,
+        .expect_error = "E2023",
+        .expect_stderr = "Expected the end of the interpolated expression, found '2'",
+    },
+    .{
+        .name = "a keyword cannot name a parameter",
+        .path = "./test/syntax/keyword_parameter_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'at' is a keyword, so it cannot name a parameter",
+    },
+    .{
+        .name = "a keyword cannot name a function",
+        .path = "./test/syntax/keyword_function_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'to' is a keyword, so it cannot name a function",
+    },
+    .{
+        .name = "a failed @pack is one error, not also a nothing return",
+        .path = "./test/syntax/pack_error_return.doxa",
+        .mode = .reject,
+        .expect_error = "E1003",
+        .expect_stderr = "int is not implicitly assignable to byte",
+    },
+    .{
+        .name = "a failed comparison is one error, not also a nothing argument",
+        .path = "./test/syntax/nothing_compare_argument.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Union with Nothing",
+    },
+    .{
+        .name = "a group without nothing is never narrowed to nothing",
+        .path = "./test/syntax/group_as_nothing.doxa",
+        .mode = .reject,
+        .expect_error = "E1014",
+        .expect_stderr = "'Nothing' is not a member of group 'Err', so a value of the group never holds one",
+    },
+    .{
+        .name = "an unclosed placeholder says how to write a brace",
+        .path = "./test/syntax/unclosed_placeholder.doxa",
+        .mode = .reject,
+        .expect_error = "E2001",
+        .expect_stderr = "a placeholder's '{' is never closed on its line; write",
     },
     .{
         .name = "syntax error in imported module",
@@ -1250,6 +1483,8 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1015",
         .expect_stderr = "Cannot assign to immutable variable",
+        // Two stores, each to an immutable binding.
+        .expect_errors = 2,
     },
     .{
         .name = "method call with too few arguments",
@@ -1369,6 +1604,9 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1002",
         .expect_stderr = "struct_duplicate_method_error.doxa:10:19: struct 'Pair' already has a member named 'sum'",
+        // TODO(declaration poison): a call through the duplicate member is
+        // also checked against it (plan/front-end-invariants.md Step 4).
+        .expect_errors = 2,
     },
     .{
         .name = "two struct fields may not share a name",
@@ -1376,6 +1614,9 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1002",
         .expect_stderr = "struct_duplicate_field_error.doxa:4:12: struct 'Point' already has a member named 'x'",
+        // TODO(declaration poison): a literal of the struct is also checked
+        // against the duplicate (plan/front-end-invariants.md Step 4).
+        .expect_errors = 2,
     },
     .{
         .name = "a member-preserving union alias parameter accepts one member's storage",
@@ -1604,6 +1845,8 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E2001",
         .expect_stderr = "broken_syntax.doxa:2:1: ExpectedExpression",
+        // The unrelated type error, then the module's syntax error.
+        .expect_errors = 2,
     },
     .{
         .name = "an import cycle is reported at the import that closes it",
@@ -1863,6 +2106,120 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E3005",
         .expect_stderr = "'each ... in ^' borrows a variable or a field of one",
+    },
+    .{
+        .name = "a value if without else is an error",
+        .path = "./test/syntax/if_value_no_else.doxa",
+        .mode = .reject,
+        .expect_error = "E1038",
+        .expect_stderr = "an `if` used as a value requires an `else` branch",
+    },
+    .{
+        .name = "a constant value if without else is an error",
+        .path = "./test/syntax/if_value_no_else_constant.doxa",
+        .mode = .reject,
+        .expect_error = "E1038",
+        .expect_stderr = "an `if` used as a value requires an `else` branch",
+    },
+    .{
+        .name = "negating a string is an error",
+        .path = "./test/syntax/negate_string.doxa",
+        .mode = .reject,
+        .expect_error = "E1007",
+        .expect_stderr = "Negation requires a numeric operand, got String",
+    },
+    .{
+        .name = "not of an int is an error",
+        .path = "./test/syntax/not_int.doxa",
+        .mode = .reject,
+        .expect_error = "E1014",
+        .expect_stderr = "`not` requires a tetra operand, got Int",
+    },
+    .{
+        .name = "structs do not compare",
+        .path = "./test/syntax/compare_struct.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Custom with Custom using ==",
+    },
+    .{
+        .name = "arrays do not compare",
+        .path = "./test/syntax/compare_array.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Array with Array using ==",
+    },
+    .{
+        .name = "enums do not order",
+        .path = "./test/syntax/compare_enum_order.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Custom with Custom using <",
+    },
+    .{
+        .name = "tetras do not order",
+        .path = "./test/syntax/compare_tetra_order.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Tetra with Tetra using <",
+    },
+    .{
+        .name = "two enums do not compare",
+        .path = "./test/syntax/compare_two_enums.doxa",
+        .mode = .reject,
+        .expect_error = "E1016",
+        .expect_stderr = "Cannot compare Custom with Custom using ==",
+    },
+    .{
+        .name = "an unannotated empty concatenation has no element type",
+        .path = "./test/syntax/empty_concat_print.doxa",
+        .mode = .reject,
+        .expect_error = "E6019",
+        .expect_stderr = "cannot infer element type of empty array literal",
+    },
+    .{
+        .name = "indexing an empty concatenation has no element type",
+        .path = "./test/syntax/empty_concat_index.doxa",
+        .mode = .reject,
+        .expect_error = "E6019",
+        .expect_stderr = "cannot infer element type of empty array literal",
+    },
+    .{
+        .name = "removing from an empty concatenation has no element type",
+        .path = "./test/syntax/empty_concat_remove.doxa",
+        .mode = .reject,
+        .expect_error = "E6019",
+        .expect_stderr = "cannot infer element type of empty array literal",
+    },
+    .{
+        .name = "a group including itself transitively is a cycle",
+        .path = "./test/syntax/group_cycle_transitive.doxa",
+        .mode = .reject,
+        .expect_error = "E1003",
+        .expect_stderr = "Cycle detected in group",
+        // `A` and `B` each include themselves.
+        .expect_errors = 2,
+    },
+    .{
+        .name = "byte constants add as bytes when folded",
+        .path = "./test/syntax/byte_const_binding_overflow.doxa",
+        .mode = .reject,
+        .expect_error = "E1024",
+        .expect_stderr = "byte_const_binding_overflow.doxa:5:18: integer overflow in a constant expression",
+    },
+    .{
+        .name = "a struct literal sets each field once",
+        .path = "./test/syntax/struct_literal_duplicate_field.doxa",
+        .mode = .reject,
+        .expect_error = "E1011",
+        .expect_stderr = "struct 'Point' literal sets field 'x' twice",
+    },
+    .{
+        .name = "an as target the union never holds",
+        .path = "./test/syntax/as_impossible_target.doxa",
+        .mode = .reject,
+        .expect_error = "E1014",
+        .expect_stderr = "is not a member of",
     },
 };
 

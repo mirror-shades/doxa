@@ -1,0 +1,7 @@
+# The folder joins two literals into one that owns every element.
+entry function main() {
+    var xs is [1, 2] + [3] + [[4][0], 5]
+    var words is ["a"] + ["b", "c"]
+    @push(xs, 6)
+    @print("{xs} {words}\n")
+}

@@ -1,0 +1,5 @@
+# A value `if` needs an `else`, even on a constant condition.
+entry function main() {
+    var x is if false then 1
+    @print("{x}\n")
+}

@@ -1,0 +1,9 @@
+# `A` includes `B`, which includes `A`.
+enum Leaf { One }
+group A { B, Leaf }
+group B { A }
+
+entry function main() {
+    const x :: A is Leaf.One
+    @print("{x}\n")
+}

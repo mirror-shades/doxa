@@ -1,0 +1,9 @@
+# B035: a keyword is accepted as a parameter name, and the error only comes at
+# the first use, blaming the expression. `var at is 1` is refused cleanly.
+function first(bytes :: byte[], at :: int) returns int {
+    return @int(bytes[at])
+}
+
+entry function main() {
+    @print("{first([0x41], 0)}\n")
+}

@@ -1,0 +1,14 @@
+# B032, second shape: comparing a union with `nothing` reports E1016, then a
+# second E1003 because the failed comparison typed as `nothing`.
+function maybe() returns int | nothing {
+    return nothing
+}
+
+function check(ok :: tetra) {
+    @print("{ok}\n")
+}
+
+entry function main() {
+    const got is maybe()
+    check(got == nothing)
+}

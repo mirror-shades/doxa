@@ -1,0 +1,3 @@
+# An interpolation placeholder holds one expression: a trailing token is an error (B025).
+const x is 5
+@print("a {7F} b {x}\n")

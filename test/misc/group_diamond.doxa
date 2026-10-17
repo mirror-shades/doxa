@@ -1,0 +1,19 @@
+# `All` reaches `Leaf` through both `A` and `B`: one member, no cycle.
+enum Leaf { One, Two }
+enum Other { Three }
+group A { Leaf }
+group B { Leaf, Other }
+group All { A, B }
+
+function name(v :: All) returns string {
+    return match v {
+        Leaf then "leaf",
+        Other then "other",
+    }
+}
+
+entry function main() {
+    const x :: All is Leaf.Two
+    const y :: All is Other.Three
+    @print("{name(x)} {name(y)}\n")
+}

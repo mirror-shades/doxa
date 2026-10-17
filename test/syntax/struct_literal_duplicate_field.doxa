@@ -1,0 +1,6 @@
+# `x` is set twice.
+struct Point { public x :: int, public y :: int }
+entry function main() {
+    const p is $Point { x is 1, x is 2 }
+    @print("{p.x}\n")
+}

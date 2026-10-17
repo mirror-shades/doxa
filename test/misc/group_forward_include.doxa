@@ -1,0 +1,17 @@
+# `Outer` includes `Inner` before `Inner` is declared; it still flattens.
+enum Leaf { One }
+enum Other { Two }
+group Outer { Inner, Other }
+group Inner { Leaf }
+
+function name(v :: Outer) returns string {
+    return match v {
+        Leaf then "leaf",
+        Other then "other",
+    }
+}
+
+entry function main() {
+    const x :: Outer is Leaf.One
+    @print("{name(x)}\n")
+}

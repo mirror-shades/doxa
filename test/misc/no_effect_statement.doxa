@@ -1,0 +1,6 @@
+# A statement that computes a value and drops it does nothing: a warning (W2012).
+entry function main() {
+    var x is 1
+    x + 1
+    @print("{x}\n")
+}

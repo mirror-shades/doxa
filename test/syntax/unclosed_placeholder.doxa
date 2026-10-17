@@ -1,0 +1,5 @@
+# A `{` in a string opens a placeholder; a literal brace is written `\{` (B019).
+entry function main() {
+    const a is "a{b"
+    @print("{a}\n")
+}

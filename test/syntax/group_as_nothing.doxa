@@ -1,0 +1,16 @@
+# A group without `nothing` among its members never holds `nothing` (B018).
+enum Kind {
+    Bad,
+}
+
+group Err {
+    Kind,
+}
+
+function fails() returns Err {
+    return Kind.Bad
+}
+
+entry function main() {
+    fails() as nothing else @panic("never")
+}

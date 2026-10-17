@@ -111,7 +111,7 @@ const Suite = struct {
         }
         const capture = try suite.doxa.run(suite.gpa, suite.io, .{ .args = args.items, .stdin = case.input });
         defer capture.deinit(suite.gpa);
-        return judge(arena, case, capture);
+        return judge(arena, case, capture, capture.stderr);
     }
 
     /// Records `outcome`, or the error that kept the case from producing one.
@@ -193,7 +193,7 @@ const Compiled = struct {
         } else unreachable;
 
         if (target.harness_error) |err| return err;
-        if (case.mode == .reject) return judge(arena, case, target.capture.?);
+        if (case.mode == .reject) return judge(arena, case, target.capture.?, target.capture.?.stderr);
         if (!target.succeeded()) {
             if (target.owner != index) {
                 return .{ .fail = try std.fmt.allocPrint(arena, "did not compile; see '{s}'", .{suite.cases[target.owner].name}) };
@@ -215,7 +215,7 @@ const Compiled = struct {
             .timeout = harness.timeout,
         });
         defer capture.deinit(suite.gpa);
-        return judge(arena, case, capture);
+        return judge(arena, case, capture, target.capture.?.stderr);
     }
 };
 
@@ -296,7 +296,9 @@ const Worker = struct {
 // Judging
 // ---------------------------------------------------------------------------
 
-fn judge(arena: Allocator, case: Case, capture: process.Capture) !Outcome {
+/// Judge `capture`, the program's run (or, for a reject case, its compile).
+/// `compiler_stderr` is what the compile wrote, where its warnings are.
+fn judge(arena: Allocator, case: Case, capture: process.Capture, compiler_stderr: []const u8) !Outcome {
     var failure: harness.Failure = .init(arena);
     switch (capture.end) {
         .exited => |status| switch (case.mode) {
@@ -307,7 +309,19 @@ fn judge(arena: Allocator, case: Case, capture: process.Capture) !Outcome {
         },
         .abnormal, .timed_out => try failure.note("did not run to completion", .{}),
     }
+    if (case.expect_warning) |warning| try judgeWarning(&failure, warning, compiler_stderr);
     return failure.outcome(capture);
+}
+
+fn judgeWarning(failure: *harness.Failure, warning: cases.Warning, stderr: []const u8) !void {
+    var diagnostics = Diagnostics.init(stderr);
+    while (diagnostics.next()) |diagnostic| {
+        const header = diagnostic.header;
+        if (!std.mem.eql(u8, header.severity, "Warning")) continue;
+        if (!std.mem.eql(u8, header.code orelse continue, warning.code)) continue;
+        if (std.mem.indexOf(u8, diagnostic.text, warning.text) != null) return;
+    }
+    try failure.note("no compile warning {s} reads `{s}`", .{ warning.code, warning.text });
 }
 
 /// The most mismatches a failure lists before summarizing the rest.
@@ -392,13 +406,17 @@ fn judgeTerminate(failure: *harness.Failure, case: Case, status: u8, stderr: []c
 fn judgeReject(failure: *harness.Failure, case: Case, status: u8, stderr: []const u8) !void {
     if (status != constants.EXIT_CODE_USAGE) try failure.note("expected the compile-error exit status {d}", .{constants.EXIT_CODE_USAGE});
     var diagnostics = Diagnostics.init(stderr);
+    var errors: usize = 0;
+    var found = false;
     while (diagnostics.next()) |diagnostic| {
         const header = diagnostic.header;
         if (!header.isCompileError()) continue;
+        errors += 1;
         if (!std.mem.eql(u8, header.code orelse continue, case.expect_error.?)) continue;
-        if (std.mem.indexOf(u8, diagnostic.text, case.expect_stderr.?) != null) return;
+        if (std.mem.indexOf(u8, diagnostic.text, case.expect_stderr.?) != null) found = true;
     }
-    try failure.note("no compile error {s} reads `{s}`", .{ case.expect_error.?, case.expect_stderr.? });
+    if (!found) try failure.note("no compile error {s} reads `{s}`", .{ case.expect_error.?, case.expect_stderr.? });
+    if (errors != case.expect_errors) try failure.note("expected {d} compile error(s), found {d}", .{ case.expect_errors, errors });
 }
 
 /// The lines of a captured stream, without their terminators. A final newline

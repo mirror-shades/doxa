@@ -1,0 +1,49 @@
+# Each desugared form runs every subexpression once (B037, B038): the `each`
+# collection, a range end, a compound target's index and its object.
+
+struct P {
+    public n :: int,
+}
+
+var calls :: int is 0
+
+function items() returns int[] {
+    calls += 1
+    return [2, 4, 6]
+}
+
+function last() returns int {
+    calls += 1
+    return 3
+}
+
+function k() returns int {
+    calls += 1
+    return calls - 1
+}
+
+entry function main() {
+    var out is ""
+    each x in items() {
+        out += "{x} "
+    }
+    @print("{out}calls: {calls}\n")
+
+    calls is 0
+    var sum is 0
+    each i in 1 to last() {
+        sum += i
+    }
+    @print("{sum} calls: {calls}\n")
+
+    calls is 0
+    var a :: int[] is [10, 20, 30]
+    a[k()] += 1
+    @print("{a} calls: {calls}\n")
+
+    calls is 0
+    var ps :: P[] is [$P{ n is 1 }, $P{ n is 2 }]
+    ps[k()].n += 5
+    @print("{ps[0].n} {ps[1].n} calls: {calls}\n")
+
+}

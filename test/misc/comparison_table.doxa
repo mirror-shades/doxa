@@ -1,0 +1,7 @@
+# Numbers, strings, and tetra, enum and nothing equality compare.
+enum Color { Red, Blue }
+entry function main() {
+    var c is Color.Red
+    var t is 1 > 0
+    @print("{c == Color.Red} {c != .Blue} {"a" < "b"} {"x" == "x"} {t == t} {1 < 2.5}\n")
+}

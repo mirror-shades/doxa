@@ -1,0 +1,20 @@
+# A string literal's pieces are decided once, by the lexer: an escaped or
+# decoded brace is text, never a placeholder (B019), `\r` is an escape (B027),
+# and a placeholder's own source keeps its strings, escapes and `...`.
+
+entry function main() {
+    const a is "a\{b"
+    @print("[{a}]\n")
+    const json is "\{\"n\":1\}"
+    @print("{json}\n")
+    @print("\u{7b}x\u{7d}\n")
+    @print("{@length("line\r\n")}\n")
+    @print("a {"q\"}"} b\n")
+    @print("c {"x{1 + 1}y"} d\n")
+    @print("e {"\"{2}\""} f\n")
+    const x is 1
+    @print("g {x
+        ...+ 1} h\n")
+    @print("i {x} j
+        ...k\n")
+}

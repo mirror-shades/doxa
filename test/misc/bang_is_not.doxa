@@ -1,0 +1,6 @@
+# `!x` is `not x` on a runtime tetra.
+entry function main() {
+    var t is 1 > 0
+    var u is !t
+    @print("{u} {not u} {!!t}\n")
+}

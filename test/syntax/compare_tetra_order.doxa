@@ -1,0 +1,5 @@
+# Tetras compare by equality only.
+entry function main() {
+    var y is true < false
+    @print("{y}\n")
+}

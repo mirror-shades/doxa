@@ -1,0 +1,5 @@
+# `not` takes a tetra.
+entry function main() {
+    var y is not 5
+    @print("{y}\n")
+}

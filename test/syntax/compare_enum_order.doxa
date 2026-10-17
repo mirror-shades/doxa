@@ -1,0 +1,6 @@
+# Enum values compare by equality only.
+enum Color { Red, Blue }
+entry function main() {
+    var y is Color.Red < Color.Blue
+    @print("{y}\n")
+}

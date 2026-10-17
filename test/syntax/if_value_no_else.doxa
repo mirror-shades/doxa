@@ -1,0 +1,6 @@
+# A value `if` needs an `else`.
+entry function main() {
+    var c is 1 > 0
+    var x is if c then 1
+    @print("{x}\n")
+}

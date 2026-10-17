@@ -1,0 +1,5 @@
+# Nothing says what `[] + []` holds, so `@remove` has no result type.
+entry function main() {
+    var y is @remove([] + [], 0)
+    @print("{y}\n")
+}

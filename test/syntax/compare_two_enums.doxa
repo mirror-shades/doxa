@@ -1,0 +1,7 @@
+# Values of two enums are never equal.
+enum Color { Red, Blue }
+enum Other { Red }
+entry function main() {
+    var y is Color.Red == Other.Red
+    @print("{y}\n")
+}

@@ -1,0 +1,8 @@
+# A declaration nothing reads warns where its a block closes, too.
+entry function main() {
+    var k is 1 > 0
+    if k then {
+        var a is 1
+    }
+    @print("done\n")
+}

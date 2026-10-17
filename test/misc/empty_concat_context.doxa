@@ -1,0 +1,8 @@
+# `[] + []` is the array its annotation names; `xs + []` is `xs`'s.
+entry function main() {
+    var xs :: int[] is [] + []
+    @push(xs, 3)
+    var ys is xs + []
+    @push(ys, 4)
+    @print("{xs} {ys}\n")
+}

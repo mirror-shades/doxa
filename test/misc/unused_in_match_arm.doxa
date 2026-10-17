@@ -1,0 +1,9 @@
+# A declaration nothing reads warns where its a match arm closes, too.
+entry function main() {
+    var k is 1 > 0
+    match k {
+        true then { var b is 2 },
+        else { },
+    }
+    @print("done\n")
+}
