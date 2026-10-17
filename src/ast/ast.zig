@@ -54,6 +54,15 @@ var next_node_id: NodeId = 0;
 
 pub const NodeId = u32;
 
+pub const FunctionDecl = struct {
+    name: Token,
+    params: []FunctionParam,
+    return_type_info: TypeInfo,
+    body: []Stmt,
+    is_entry: bool = false,
+    is_public: bool = false,
+};
+
 pub fn generateNodeId() NodeId {
     defer next_node_id += 1;
     return next_node_id;
@@ -282,14 +291,7 @@ pub const Stmt = struct {
             /// `each n in ^path`.
             place: bool = false,
         },
-        FunctionDecl: struct {
-            name: Token,
-            params: []FunctionParam,
-            return_type_info: TypeInfo,
-            body: []Stmt,
-            is_entry: bool = false,
-            is_public: bool = false,
-        },
+        FunctionDecl: FunctionDecl,
         Return: struct {
             value: ?*Expr,
             type_info: TypeInfo,

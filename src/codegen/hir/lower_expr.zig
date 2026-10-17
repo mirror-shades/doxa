@@ -746,9 +746,13 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
             try args.append(l.g.alloc, a.ref);
             try args.append(l.g.alloc, a.arena);
         },
-        // `collectLent` made every lent local a slot; an element went
-        // through a temporary above.
-        .ssa, .element => unreachable,
+        // Analysis records every local lent as `^` (`effects.lend`), and
+        // `declareLocal` makes it a slot; an element went through a
+        // temporary above.
+        .ssa, .element => {
+            l.g.reporter.reportInternal("'{s}' is lent as `^` but analysis did not record it as lent", .{e.data.Variable.lexeme}, @src());
+            return ErrorList.TypeMismatch;
+        },
     }
 }
 

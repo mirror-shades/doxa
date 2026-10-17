@@ -50,6 +50,7 @@ const ModuleId = graph_mod.ModuleId;
 const ModuleLoader = @import("../../module/loader.zig").ModuleLoader;
 const resolution = @import("resolution.zig");
 const borrows = @import("borrows.zig");
+const effects = @import("effects.zig");
 const Resolution = resolution.Resolution;
 
 /// A struct method's analyzer-level description. A private method is
@@ -148,6 +149,9 @@ pub const SemanticAnalyzer = struct {
     /// verdicts are known. A loan through any other signature — a copy held
     /// by a function value — cannot be checked.
     checked_signatures: std.AutoHashMap(*const ast.FunctionType, void),
+    /// What each body does to the storage it is handed: the parameters it
+    /// writes through and the locals it lends (`effects.zig`).
+    effects: effects.Effects = .{},
     /// The union `^` parameters of the body being analyzed, by storage.
     union_alias_params: std.AutoHashMap(u32, ParamRef),
     custom_types: graph_mod.TypeRefHashMap(CustomTypeInfo),
@@ -241,6 +245,7 @@ pub const SemanticAnalyzer = struct {
         self.borrows.deinit(self.allocator);
         self.union_alias_params.deinit();
         self.checked_signatures.deinit();
+        self.effects.deinit(self.allocator);
         self.bare_variants.deinit(self.allocator);
         self.custom_types.deinit();
         var methods_it = self.struct_methods.valueIterator();
@@ -346,6 +351,7 @@ pub const SemanticAnalyzer = struct {
             }
         }
         try self.settleMemberLoans();
+        try self.effects.settle(self.allocator, &self.checked_signatures);
         if (self.fatal_error) return error.SemanticError;
 
         try self.reportUnused(entry_scope);
@@ -1903,12 +1909,28 @@ pub const SemanticAnalyzer = struct {
             self.union_alias_params.deinit();
             self.union_alias_params = outer_union_alias_params;
         }
+        // The body's parameters and receiver, whose writes decide which
+        // by-value parameters a call must copy, and which arguments lent to
+        // a `^` parameter are written (`effects.zig`).
+        const outer_params = self.effects.params;
+        const outer_receiver = self.effects.receiver;
+        self.effects.params = .empty;
+        self.effects.receiver = null;
+        defer {
+            self.effects.params.deinit(self.allocator);
+            self.effects.params = outer_params;
+            self.effects.receiver = outer_receiver;
+        }
         if (self.registeredSignature(func.name.lexeme, enclosing)) |signature| {
             try self.checked_signatures.put(signature, {});
             for (func.params, 0..) |param, i| {
+                try self.effects.params.put(self.allocator, param.storage.?, .{ .signature = signature, .index = @intCast(i) });
                 if (!param.is_alias or signature.params[i].base != .Union) continue;
                 try self.union_alias_params.put(param.storage.?, .{ .signature = signature, .index = @intCast(i) });
             }
+            if (enclosing) |e| if (e.has_this) {
+                self.effects.receiver = .{ .signature = signature, .index = null };
+            };
         }
 
         // Temporarily set current scope to function scope

@@ -27,7 +27,6 @@ const Resolution = @import("../../analysis/semantic/resolution.zig").Resolution;
 const module_graph = @import("../../module/graph.zig");
 const inline_zig = @import("../../inline_zig/compiler.zig");
 const TypeSystem = @import("type_system.zig").TypeSystem;
-const ParamMutation = @import("param_mutation.zig");
 const ir = @import("register/ir.zig");
 const builder_mod = @import("register/builder.zig");
 const hir_print = @import("register/print.zig");
@@ -55,7 +54,7 @@ const FunctionDecl = struct {
     /// The analyzed type of each declared parameter.
     param_types: []const HIRType,
     /// Whether the body writes through each by-value parameter, so it must
-    /// own a copy (`param_mutation.zig`).
+    /// own a copy: analysis decides it (`analysis/semantic/effects.zig`).
     param_mutated: []const bool,
     body: []ast.Stmt,
     /// Where the function is declared: its name.
@@ -185,7 +184,7 @@ pub const Generator = struct {
     fn collectSignatures(self: *Generator, record: *module_graph.ModuleRecord) Error!void {
         for (record.statements()) |*stmt| {
             switch (stmt.data) {
-                .FunctionDecl => try self.registerFunction(record.id, stmt),
+                .FunctionDecl => |*func| try self.registerFunction(record.id, stmt.base.id, func),
                 .Expression => |maybe| if (maybe) |expr| {
                     if (expr.data == .StructDecl) try self.registerMethods(record.id, &expr.data.StructDecl);
                 },
@@ -194,8 +193,7 @@ pub const Generator = struct {
         }
     }
 
-    fn registerFunction(self: *Generator, module: module_graph.ModuleId, stmt: *ast.Stmt) Error!void {
-        const func = &stmt.data.FunctionDecl;
+    fn registerFunction(self: *Generator, module: module_graph.ModuleId, id: ast.NodeId, func: *ast.FunctionDecl) Error!void {
         const variable = self.semantic.moduleScope(module).lookupLocalVariable(func.name.lexeme).?;
         const storage = self.semantic.memory.scope_manager.value_storage.get(variable.storage_id).?;
         const signature = storage.type_info.function_type.?;
@@ -203,7 +201,7 @@ pub const Generator = struct {
         // A function without `returns` takes the analyzer's inferred type.
         var ret = try self.lowerType(&func.return_type_info);
         if (func.return_type_info.base == .Nothing) {
-            if (self.semantic.function_return_types.get(stmt.base.id)) |inferred| ret = try self.lowerType(inferred);
+            if (self.semantic.function_return_types.get(id)) |inferred| ret = try self.lowerType(inferred);
         }
         try self.addFunction(.{ .module = module, .name = func.name.lexeme }, .{
             .link_name = try self.graph.mangle(self.alloc, module, .function, &.{func.name.lexeme}),
@@ -211,7 +209,7 @@ pub const Generator = struct {
             .receiver = null,
             .params = func.params,
             .param_types = try self.lowerTypes(signature.params),
-            .param_mutated = try self.mutatedParams(func.body, func.params),
+            .param_mutated = try self.writtenParams(signature),
             .body = func.body,
             .location = ast.SourceSpan.fromToken(func.name).location,
             .signature = undefined,
@@ -231,7 +229,7 @@ pub const Generator = struct {
                 .receiver = if (method.is_static) null else struct_id,
                 .params = method.params,
                 .param_types = try self.lowerTypes(info.signature.params),
-                .param_mutated = try self.mutatedParams(method.body, method.params),
+                .param_mutated = try self.writtenParams(info.signature),
                 .body = method.body,
                 .location = ast.SourceSpan.fromToken(method.name).location,
                 .signature = undefined,
@@ -271,9 +269,9 @@ pub const Generator = struct {
         try self.function_ids.put(self.alloc, key, id);
     }
 
-    fn mutatedParams(self: *Generator, body: []const ast.Stmt, params: []const ast.FunctionParam) ![]const bool {
-        const out = try self.alloc.alloc(bool, params.len);
-        for (params, out) |param, *m| m.* = ParamMutation.bodyMutatesVariable(body, param.name.lexeme);
+    fn writtenParams(self: *Generator, signature: *const ast.FunctionType) ![]const bool {
+        const out = try self.alloc.alloc(bool, signature.params.len);
+        for (out, 0..) |*w, i| w.* = self.semantic.effects.paramWritten(signature, @intCast(i));
         return out;
     }
 
@@ -375,7 +373,6 @@ pub const Generator = struct {
 
         l.caller = caller;
         try l.start();
-        try lower_control.collectLent(&l, decl.body);
         const body = try l.b.define(.{ .scope_enter = .{ .parent = caller } }, .arena);
         try l.pushArena(body, .owned);
 
@@ -800,8 +797,6 @@ pub const Lowering = struct {
     root: ValueId = undefined,
     this: ?ValueId = null,
     locals: std.AutoHashMapUnmanaged(u32, Local) = .empty,
-    /// Locals lent as `^` somewhere in the body, which are slots.
-    lent: std.AutoHashMapUnmanaged(u32, void) = .empty,
     arenas: std.ArrayListUnmanaged(ArenaFrame) = .empty,
     loops: std.ArrayListUnmanaged(LoopContext) = .empty,
     defers: std.ArrayListUnmanaged(std.ArrayListUnmanaged(*ast.Expr)) = .empty,
@@ -925,7 +920,7 @@ pub const Lowering = struct {
     /// `name` is one a debugger shows; a null one is a desugaring's binding.
     /// `arg` is the parameter it is, or 0 (`LocalInfo.arg`).
     pub fn declareLocal(self: *Lowering, storage: u32, name: ?[]const u8, ty: HIRType, value: ValueId, arg: u32) Error!void {
-        if (self.lent.contains(storage)) {
+        if (self.g.semantic.effects.isLent(storage)) {
             const home = try self.arena();
             const slot = try self.b.addSlot(ty, home);
             if (name) |n| _ = try self.b.addLocal(n, self.b.span, slot, arg);

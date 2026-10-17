@@ -12,6 +12,7 @@ const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const names = @import("names.zig");
 const borrows = @import("borrows.zig");
+const effects = @import("effects.zig");
 const ParamRef = @import("semantic.zig").ParamRef;
 const TypeRef = ast.TypeRef;
 const Scope = @import("../../utils/memory.zig").Scope;
@@ -1415,7 +1416,12 @@ const op: []const u8 = switch (bin.operator.type) {
             if (method_call.method.type == .STD) {
                 return try inferBuiltinCall(self, expr, method_name, null, &.{});
             }
-            return try inferBuiltinCall(self, expr, method_name, method_call.receiver, method_call.arguments);
+            const result = try inferBuiltinCall(self, expr, method_name, method_call.receiver, method_call.arguments);
+            // An in-place intrinsic writes its subject; one the registry does
+            // not know is taken to.
+            const in_place = if (builtin_methods.getMethodInfoByName(method_name)) |info| info.mutates_arg else true;
+            if (in_place) try effects.write(self, method_call.receiver);
+            return result;
         },
         .EnumMember => {
             // Untyped until its context names the enum; checked when the
@@ -1455,6 +1461,7 @@ const op: []const u8 = switch (bin.operator.type) {
         .IndexAssign => |index_assign| {
             try borrows.check(self, index_assign.array, expr, .write);
             const array_type = try inferTypeFromExpr(self, index_assign.array);
+            try effects.write(self, index_assign.array);
             const index_type = try inferTypeFromExpr(self, index_assign.index);
             const value_type = if (array_type.base == .Array and array_type.array_type != null)
                 try inferTypeIn(self, index_assign.value, array_type.array_type.?)
@@ -1494,6 +1501,7 @@ const op: []const u8 = switch (bin.operator.type) {
         .FieldAssignment => |field_assign| {
             try borrows.check(self, field_assign.object, expr, .write);
             const object_type = try inferTypeFromExpr(self, field_assign.object);
+            try effects.write(self, field_assign.object);
             const value_type = try inferTypeFromExpr(self, field_assign.value);
 
             const fields: []const ast.StructFieldType = switch (object_type.base) {
@@ -2014,6 +2022,10 @@ const op: []const u8 = switch (bin.operator.type) {
                 }
             }
 
+            // The body writes the borrowed path through its element binding.
+            // The condition (`@length` of it) is where the path is analyzed.
+            if (borrowed) try effects.write(self, loop.borrow.?);
+
             // Create iteration scope for loop body
             const iteration_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
             defer iteration_scope.deinit();
@@ -2199,6 +2211,7 @@ fn borrowSource(self: *SemanticAnalyzer, source: *ast.Expr) !bool {
 fn checkAliasArgument(self: *SemanticAnalyzer, arg: *ast.Expr, signature: *const ast.FunctionType, index: usize) !bool {
     const param = &signature.params[index];
     try borrows.check(self, arg, arg, .lend);
+    try effects.lend(self, arg, signature, @intCast(index));
     if (param.base == .Nothing) return true;
     // The parser admits only a name after `^`; an unresolved one is already
     // `Undefined variable`.
@@ -2564,6 +2577,7 @@ fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, 
                         .{ .static_method = .{ .owner = owner, .name = method.name } }
                     else
                         .{ .method = .{ .owner = owner, .name = method.name } });
+                    if (!method.is_static) try effects.receiverCall(self, field_access.object, method.signature);
                     if (!try validateFunctionCallArguments(self, expr, arguments, method.signature)) {
                         type_info.base = .Nothing;
                         return type_info;

@@ -15,7 +15,8 @@ pub const BuiltinMethodInfo = struct {
     /// Whether the builtin writes through its subject argument in place
     /// (`@push`/`@pop`/`@insert`/`@remove`/`@clear`). Defaults to `true` so an
     /// unannotated builtin is treated as mutating; read-only intrinsics opt out
-    /// (the read-only analysis in `param_mutation.zig` relies on this).
+    /// (analysis counts a call to one as a write through its subject:
+    /// `analysis/semantic/effects.zig`).
     mutates_arg: bool = true,
     name: []const u8,
     /// Display names for the parameters, positionally aligned with
