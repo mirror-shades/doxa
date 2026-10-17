@@ -289,5 +289,5 @@ TypePath        := IDENT ( '.' IDENT )*
 - [ ] Implement cross-member equality as a compile error.
 - [x] Add group type handling to the native LLVM backend: `GroupCheck` and `GroupExtractPayload` lower against `%DoxaValue`, and group members are wrapped like union arms.
 - [x] Validate that `registerSpecificSymbol` uses the correct `.Group` kind instead of `.Enum` for imported group symbols.
-- [x] Fix the fixed-2 allocation in `getGroupMemberNames` (was `getSetSourceMemberNames`) to iterate actual expanded members.
+- [x] Read a group's member names from the group table's expanded members (the fixed-2 allocation is gone).
 - [ ] Give the group-cycle error (`E1003`) a real source location; it currently reports `:0:0`.

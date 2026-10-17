@@ -28,6 +28,10 @@ const print = @import("../codegen/hir/register/print.zig");
 const complexity = @import("complexity.zig");
 const report = @import("report.zig");
 
+const banner = complexity.banner;
+const has = complexity.has;
+const eql = complexity.eql;
+
 pub const header = "doxa-memory 1";
 
 pub fn write(alloc: std.mem.Allocator, w: *std.Io.Writer, module: *const ir.Module) !void {
@@ -373,22 +377,10 @@ fn roleText(role: []const u8) []const u8 {
     return "a block's arena";
 }
 
-fn banner(w: *std.Io.Writer, title: []const u8) !void {
-    try w.print("\n==========================================\n{s}\n==========================================\n", .{title});
-}
-
-fn has(rows: []const complexity.Finding, kind: []const u8) bool {
-    return count(rows, kind) != 0;
-}
-
 fn count(rows: []const complexity.Finding, kind: []const u8) u32 {
     var n: u32 = 0;
     for (rows) |r| if (eql(r.kind, kind)) {
         n += 1;
     };
     return n;
-}
-
-fn eql(a: []const u8, b: []const u8) bool {
-    return std.mem.eql(u8, a, b);
 }

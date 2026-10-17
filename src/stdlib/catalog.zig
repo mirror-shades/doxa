@@ -8,6 +8,10 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ident = @import("../common/ident.zig");
+const snippet_mod = @import("../common/snippet.zig");
+const isIdentStart = ident.isStart;
+const isIdentChar = ident.isContinue;
 
 pub const Kind = enum {
     function,
@@ -154,14 +158,7 @@ pub fn parameterLabel(allocator: Allocator, param: *const Param) ![]u8 {
 pub fn callSnippet(allocator: Allocator, decl: *const Decl) ![]u8 {
     var out = std.Io.Writer.Allocating.init(allocator);
     errdefer out.deinit();
-    const w = &out.writer;
-
-    try w.print("{s}(", .{decl.short_name});
-    for (decl.params, 0..) |_, i| {
-        if (i > 0) try w.writeAll(", ");
-        try w.print("${d}", .{i + 1});
-    }
-    try w.writeAll(")");
+    try snippet_mod.write(&out.writer, decl.short_name, decl.params.len);
     return out.toOwnedSlice();
 }
 
@@ -536,14 +533,6 @@ fn parseEnumVariants(allocator: Allocator, body: []const u8) Allocator.Error![]c
     return list.toOwnedSlice();
 }
 
-fn isIdentStart(c: u8) bool {
-    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_';
-}
-
-fn isIdentChar(c: u8) bool {
-    return isIdentStart(c) or (c >= '0' and c <= '9');
-}
-
 fn identEnd(src: []const u8, start: usize, end: usize) usize {
     var i = start;
     while (i < end and isIdentChar(src[i])) i += 1;
@@ -662,26 +651,21 @@ fn matchZigBrace(src: []const u8, open: usize, end: usize) usize {
 }
 
 fn skipZigString(src: []const u8, start: usize, end: usize) usize {
-    var i = start + 1;
-    while (i < end) {
-        if (src[i] == '\\') {
-            i += 2;
-            continue;
-        }
-        if (src[i] == '"') return i + 1;
-        i += 1;
-    }
-    return end;
+    return skipZigQuoted(src, start, end, '"');
 }
 
 fn skipZigChar(src: []const u8, start: usize, end: usize) usize {
+    return skipZigQuoted(src, start, end, '\'');
+}
+
+fn skipZigQuoted(src: []const u8, start: usize, end: usize, comptime quote: u8) usize {
     var i = start + 1;
     while (i < end) {
         if (src[i] == '\\') {
             i += 2;
             continue;
         }
-        if (src[i] == '\'') return i + 1;
+        if (src[i] == quote) return i + 1;
         i += 1;
     }
     return end;

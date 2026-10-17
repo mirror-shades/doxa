@@ -9,6 +9,7 @@
 const std = @import("std");
 const builtins = @import("../runtime/builtin_methods.zig");
 const ast = @import("../ast/ast.zig");
+const render = @import("render.zig");
 
 /// Prose for a builtin, keyed by its bare name (no `@`).
 const Doc = struct {
@@ -53,49 +54,33 @@ pub fn find(label: []const u8) ?*const builtins.BuiltinMethodInfo {
     return builtins.getMethodInfoByName(name);
 }
 
-/// The prose description for a builtin, or `""` when none is registered.
-pub fn documentation(info: *const builtins.BuiltinMethodInfo) []const u8 {
-    for (DOCS) |doc| {
-        if (std.mem.eql(u8, doc.name, info.name)) return doc.text;
-    }
-    return "";
-}
-
-fn returnDisplay(info: *const builtins.BuiltinMethodInfo) ?[]const u8 {
-    for (DOCS) |doc| {
-        if (std.mem.eql(u8, doc.name, info.name)) return doc.return_display;
+fn docFor(info: *const builtins.BuiltinMethodInfo) ?*const Doc {
+    for (&DOCS) |*doc| {
+        if (std.mem.eql(u8, doc.name, info.name)) return doc;
     }
     return null;
 }
 
-fn typeLabel(t: ast.Type) []const u8 {
-    return switch (t) {
-        .Int => "int",
-        .Byte => "byte",
-        .Float => "float",
-        .String => "string",
-        .Tetra => "tetra",
-        .Array => "array",
-        .Function => "function",
-        .Struct => "struct",
-        .Enum => "enum",
-        .Custom => "custom",
-        .Nothing => "nothing",
-        .Union => "union",
-    };
+/// The prose description for a builtin, or `""` when none is registered.
+pub fn documentation(info: *const builtins.BuiltinMethodInfo) []const u8 {
+    return if (docFor(info)) |doc| doc.text else "";
+}
+
+fn returnDisplay(info: *const builtins.BuiltinMethodInfo) ?[]const u8 {
+    return if (docFor(info)) |doc| doc.return_display else null;
 }
 
 fn writeInputSpec(writer: *std.Io.Writer, spec: builtins.InputTypeSpec) !void {
     switch (spec) {
-        .Single => |t| try writer.writeAll(typeLabel(t)),
+        .Single => |t| try writer.writeAll(render.typeBaseLabel(t)),
         .Union => |types| {
             for (types, 0..) |t, i| {
                 if (i > 0) try writer.writeAll(" | ");
-                try writer.writeAll(typeLabel(t));
+                try writer.writeAll(render.typeBaseLabel(t));
             }
         },
         .TypedArray => |t| {
-            try writer.writeAll(typeLabel(t));
+            try writer.writeAll(render.typeBaseLabel(t));
             try writer.writeAll("[]");
         },
         .Any => try writer.writeAll("any"),
@@ -111,11 +96,11 @@ fn writeReturn(writer: *std.Io.Writer, info: *const builtins.BuiltinMethodInfo) 
     }
     if (info.return_type == .Array) {
         if (info.return_element_type) |element| {
-            try writer.print("{s}[]", .{typeLabel(element)});
+            try writer.print("{s}[]", .{render.typeBaseLabel(element)});
             return;
         }
     }
-    try writer.writeAll(typeLabel(info.return_type));
+    try writer.writeAll(render.typeBaseLabel(info.return_type));
 }
 
 /// A one-line human signature: `@insert(collection: array | string, index: int, value: any) -> nothing`.

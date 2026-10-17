@@ -183,10 +183,6 @@ pub const FunctionBuilder = struct {
         self.current = block;
     }
 
-    pub fn currentBlock(self: *const FunctionBuilder) BlockId {
-        return self.current;
-    }
-
     /// The current block has its terminator: the code that follows is dead
     /// until the generator switches to another block.
     pub fn isTerminated(self: *const FunctionBuilder) bool {

@@ -5,8 +5,6 @@ const ErrorList = Errors.ErrorList;
 const source_cache = @import("source_cache.zig");
 const source_render = @import("source_render.zig");
 
-pub const MAX_DIAGNOSTIC_LOG_BYTES: usize = 2 * (1024 * 1024);
-
 pub const Severity = enum {
     Error,
     Warning,
@@ -60,22 +58,6 @@ pub const Diagnostic = struct {
     code: ?[]const u8 = null,
     related_info: ?[]RelatedInformation = null,
     source: ?[]const u8 = "Doxa",
-};
-
-pub const DiagnosticView = struct {
-    allocator: std.mem.Allocator,
-    items: []const *const Diagnostic,
-
-    pub fn empty(allocator: std.mem.Allocator) DiagnosticView {
-        return .{ .allocator = allocator, .items = &[_]*const Diagnostic{} };
-    }
-
-    pub fn deinit(self: *DiagnosticView) void {
-        if (self.items.len > 0) {
-            self.allocator.free(self.items);
-        }
-        self.* = DiagnosticView.empty(self.allocator);
-    }
 };
 
 pub const Reporter = struct {
@@ -275,21 +257,6 @@ pub const Reporter = struct {
         self.appendDiagnostic(diag);
     }
 
-    fn debugLexer(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_lexer and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
-    fn debugParser(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_parser and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
-    fn debugSemantic(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_semantic and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
     pub fn debugMemory(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         if (!self.options.debug_memory and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
@@ -297,10 +264,6 @@ pub const Reporter = struct {
 
     pub fn reportCompileError(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         self.report(.CompileTime, .Error, loc, code, fmt, args);
-    }
-
-    pub fn reportRuntimeError(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        self.report(.Runtime, .Error, loc, code, fmt, args);
     }
 
     /// Surfaces a failed build step (a `zig` subprocess) as a diagnostic. The
@@ -328,19 +291,6 @@ pub const Reporter = struct {
         self.report(.CompileTime, .Warning, loc, code, fmt, args);
     }
 
-    pub fn reportInfo(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        self.report(.CompileTime, .Info, loc, code, fmt, args);
-    }
-
-    pub fn reportInternalError(
-        self: *Reporter,
-        comptime fmt: []const u8,
-        args: anytype,
-        comptime src: std.builtin.SourceLocation,
-    ) void {
-        self.reportInternal(fmt, args, src);
-    }
-
     pub fn reportInternal(self: *Reporter, comptime fmt: []const u8, args: anytype, comptime src: std.builtin.SourceLocation) void {
         const loc = Location{
             .file = src.file,
@@ -354,32 +304,6 @@ pub const Reporter = struct {
         };
 
         self.report(.Internal, .Internal, loc, null, fmt, args);
-    }
-
-    pub fn hasErrors(self: *Reporter) bool {
-        for (self.diagnostics.items) |diag| {
-            if (diag.severity == .Error or diag.severity == .Internal) return true;
-        }
-        return false;
-    }
-
-    pub fn hasWarnings(self: *Reporter) bool {
-        for (self.diagnostics.items) |diag| {
-            if (diag.severity == .Warning) return true;
-        }
-        return false;
-    }
-
-    pub fn countBySeverity(self: *Reporter, severity: Severity) i32 {
-        var count: i32 = 0;
-        for (self.diagnostics.items) |diag| {
-            if (diag.severity == severity) count += 1;
-        }
-        return count;
-    }
-
-    pub fn totalDiagnostics(self: *Reporter) i32 {
-        return self.diagnostics.items.len;
     }
 
     /// The index of the first error diagnostic recorded at or after `start`.
@@ -428,52 +352,6 @@ pub const Reporter = struct {
         }
 
         self.diagnostics.shrinkRetainingCapacity(write_index);
-    }
-
-    pub fn reportBatch(self: *Reporter, diags: []const Diagnostic) void {
-        for (diags) |diag| {
-            if (self.diagnostics.items.len >= self.options.max_diagnostics) break;
-            self.appendDiagnosticClone(&diag);
-        }
-    }
-
-    pub fn filterBySeverity(self: *Reporter, allocator: std.mem.Allocator, severity: Severity) !DiagnosticView {
-        var matches = std.ArrayList(*const Diagnostic).init(allocator);
-        errdefer matches.deinit();
-
-        for (self.diagnostics.items, 0..) |diag, idx| {
-            if (diag.severity == severity) {
-                try matches.append(&self.diagnostics.items[idx]);
-            }
-        }
-
-        const owned = matches.toOwnedSlice() catch {
-            matches.deinit();
-            return error.OutOfMemory;
-        };
-        return .{ .allocator = allocator, .items = owned };
-    }
-
-    pub fn filterByFile(self: *Reporter, allocator: std.mem.Allocator, file_or_uri: []const u8) !DiagnosticView {
-        var matches = std.ArrayList(*const Diagnostic).init(allocator);
-        errdefer matches.deinit();
-
-        var needle = FileNeedleContext.init(self, file_or_uri);
-        defer needle.deinit(self);
-
-        for (self.diagnostics.items, 0..) |diag, idx| {
-            if (diag.loc) |location| {
-                if (self.locationMatchesNeedle(location, &needle)) {
-                    try matches.append(&self.diagnostics.items[idx]);
-                }
-            }
-        }
-
-        const owned = matches.toOwnedSlice() catch {
-            matches.deinit();
-            return error.OutOfMemory;
-        };
-        return .{ .allocator = allocator, .items = owned };
     }
 
     pub fn toLspDiagnostics(self: *Reporter, allocator: std.mem.Allocator, file_or_uri: []const u8) ![]u8 {
@@ -631,26 +509,6 @@ pub const Reporter = struct {
         };
         const stored = &self.diagnostics.items[self.diagnostics.items.len - 1];
         self.logDiagnostic(stored);
-    }
-
-    fn appendDiagnosticClone(self: *Reporter, source: *const Diagnostic) void {
-        const msg_copy = self.allocator.dupe(u8, source.message) catch return;
-        errdefer self.allocator.free(msg_copy);
-
-        const related_source: ?[]const RelatedInformation = source.related_info;
-        const related_clone = self.cloneRelatedInformation(related_source) catch null;
-
-        const diag = Diagnostic{
-            .phase = source.phase,
-            .severity = source.severity,
-            .message = msg_copy,
-            .loc = source.loc,
-            .code = source.code,
-            .related_info = related_clone,
-            .source = source.source,
-        };
-
-        self.appendDiagnostic(diag);
     }
 
     fn cloneRelatedInformation(

@@ -229,7 +229,7 @@ fn makeErrorUnionType(allocator: std.mem.Allocator, enum_path: []const u8, paylo
     members[1].* = .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = enum_path } };
 
     const union_type = try allocator.create(ast.UnionType);
-    union_type.* = .{ .types = members, .current_type_index = 0 };
+    union_type.* = .{ .types = members };
     return .{ .base = .Union, .union_type = union_type, .is_mutable = false };
 }
 

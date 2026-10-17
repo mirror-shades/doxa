@@ -283,11 +283,6 @@ pub const Generator = struct {
 
     // ── Callees ──
 
-    pub const Callee = union(enum) {
-        doxa: ir.FunctionId,
-        zig: ir.ZigFunctionId,
-    };
-
     /// The Doxa function or method `key` names.
     pub fn functionId(self: *Generator, key: module_graph.SymbolKey) ir.FunctionId {
         return self.function_ids.get(key).?;
@@ -479,7 +474,7 @@ pub const Generator = struct {
         }
 
         const structs = &self.semantic.struct_table;
-        const struct_count = structs.entries.items.len + 1;
+        const struct_count = structs.table.entries.items.len + 1;
         const struct_fields = try self.alloc.alloc([]const HIRType, struct_count);
         const struct_names = try self.alloc.alloc([]const u8, struct_count);
         const struct_keys = try self.alloc.alloc([]const u8, struct_count);
@@ -489,7 +484,7 @@ pub const Generator = struct {
         struct_names[0] = "?struct";
         struct_keys[0] = "";
         struct_field_names[0] = &.{};
-        for (structs.entries.items) |entry| {
+        for (structs.table.entries.items) |entry| {
             const types = try self.alloc.alloc(HIRType, entry.fields.len);
             const field_names = try self.alloc.alloc([]const u8, entry.fields.len);
             for (entry.fields, types, field_names) |field, *t, *field_name| {
@@ -503,9 +498,9 @@ pub const Generator = struct {
         }
 
         const enums = &self.semantic.enum_table;
-        const enum_names = try self.alloc.alloc([]const u8, enums.entries.items.len);
-        const enum_variants = try self.alloc.alloc([]const []const u8, enums.entries.items.len);
-        for (enums.entries.items, enum_names, enum_variants) |entry, *name, *variants| {
+        const enum_names = try self.alloc.alloc([]const u8, enums.table.entries.items.len);
+        const enum_variants = try self.alloc.alloc([]const []const u8, enums.table.entries.items.len);
+        for (enums.table.entries.items, enum_names, enum_variants) |entry, *name, *variants| {
             name.* = entry.ref.name;
             const variant_names = try self.alloc.alloc([]const u8, entry.variants.len);
             for (entry.variants) |v| variant_names[v.index] = v.name;
@@ -513,9 +508,9 @@ pub const Generator = struct {
         }
 
         const groups = &self.semantic.group_table;
-        const group_members = try self.alloc.alloc([]const HIRType, groups.entries.items.len);
-        const group_names = try self.alloc.alloc([]const u8, groups.entries.items.len);
-        for (groups.entries.items, group_members, group_names) |entry, *members, *name| {
+        const group_members = try self.alloc.alloc([]const HIRType, groups.table.entries.items.len);
+        const group_names = try self.alloc.alloc([]const u8, groups.table.entries.items.len);
+        for (groups.table.entries.items, group_members, group_names) |entry, *members, *name| {
             const types = try self.alloc.alloc(HIRType, entry.members.len);
             for (entry.members, types) |member, *t| t.* = groupMemberType(member);
             members.* = types;
@@ -844,10 +839,6 @@ pub const Lowering = struct {
         try self.arenas.append(self.g.alloc, .{ .v = v, .owned = ownership == .owned });
     }
 
-    pub fn popArena(self: *Lowering) void {
-        _ = self.arenas.pop();
-    }
-
     /// The innermost open arena: where the code being lowered allocates.
     pub fn arena(self: *Lowering) Error!ValueId {
         return self.b.useVar(self.arenas.items[self.arenas.items.len - 1].v);
@@ -1091,7 +1082,7 @@ pub const Lowering = struct {
             return self.define(op, to);
         }
         if (from.isBoxed()) return self.define(.{ .unbox = .{ .operand = value } }, to);
-        if (isNumber(from) and isNumber(to)) return self.define(.{ .convert = .{ .operand = value } }, to);
+        if (from.isNumeric() and to.isNumeric()) return self.define(.{ .convert = .{ .operand = value } }, to);
         if (from == .Array and to == .Array and from.Array.size != null and to.Array.size == null) {
             const element = try self.convertElements(from.Array.element.*, to.Array.element.*);
             if (element) return self.define(.{ .array_from_fixed = .{ .arena = try self.arena(), .operand = value } }, to);
@@ -1171,7 +1162,3 @@ pub const Lowering = struct {
         return .{ .Array = .{ .element = element } };
     }
 };
-
-fn isNumber(t: HIRType) bool {
-    return t == .Int or t == .Byte or t == .Float;
-}

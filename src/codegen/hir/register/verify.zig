@@ -464,10 +464,6 @@ const Verifier = struct {
         if (!(try self.result(inst)).eql(want)) return self.fail("yields a value of the wrong type", .{});
     }
 
-    fn isNumeric(t: HIRType) bool {
-        return t == .Int or t == .Byte or t == .Float;
-    }
-
     fn members(self: *Verifier, boxed: HIRType) Error![]const HIRType {
         const count = switch (boxed) {
             .Union => |u| u.members.len,
@@ -515,24 +511,24 @@ const Verifier = struct {
             },
             .arith => |a| {
                 const t = try self.doxa(a.lhs);
-                if (!isNumeric(t)) return self.fail("arithmetic on a {s}", .{@tagName(t)});
+                if (!t.isNumeric()) return self.fail("arithmetic on a {s}", .{@tagName(t)});
                 try self.expectDoxa(a.rhs, t);
                 try self.resultIs(inst, .{ .doxa = t });
             },
             .neg => |u| {
                 const t = try self.doxa(u.operand);
-                if (!isNumeric(t)) return self.fail("negates a {s}", .{@tagName(t)});
+                if (!t.isNumeric()) return self.fail("negates a {s}", .{@tagName(t)});
                 try self.resultIs(inst, .{ .doxa = t });
             },
             .convert => |u| {
                 const from = try self.doxa(u.operand);
                 const to = try self.resultDoxa(inst);
-                if (!isNumeric(from) or !isNumeric(to) or from.eql(to)) return self.fail("converts a {s} to a {s}", .{ @tagName(from), @tagName(to) });
+                if (!from.isNumeric() or !to.isNumeric() or from.eql(to)) return self.fail("converts a {s} to a {s}", .{ @tagName(from), @tagName(to) });
             },
             .cmp => |c| {
                 const t = try self.doxa(c.lhs);
                 try self.expectDoxa(c.rhs, t);
-                if (c.op != .Eq and c.op != .Ne and !isNumeric(t) and t != .String) return self.fail("orders values of type {s}", .{@tagName(t)});
+                if (c.op != .Eq and c.op != .Ne and !t.isNumeric() and t != .String) return self.fail("orders values of type {s}", .{@tagName(t)});
                 try self.resultIs(inst, .cond);
             },
             .tetra_binary => |t| {

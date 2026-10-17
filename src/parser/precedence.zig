@@ -5,7 +5,6 @@ const expr_parser = @import("./expression_parser.zig");
 const decl_parser = @import("./declaration_parser.zig");
 const quantifer_parser = @import("./quantifer_parser.zig");
 const ast = @import("../ast/ast.zig");
-const Reporting = @import("../utils/reporting.zig");
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 

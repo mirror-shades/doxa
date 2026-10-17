@@ -311,15 +311,15 @@ fn ran(w: *std.Io.Writer, f: Finding, counted: ?[]const report.Site) !void {
     try w.writeAll("\n");
 }
 
-fn banner(w: *std.Io.Writer, title: []const u8) !void {
+pub fn banner(w: *std.Io.Writer, title: []const u8) !void {
     try w.print("\n==========================================\n{s}\n==========================================\n", .{title});
 }
 
-fn has(findings: []const Finding, kind: []const u8) bool {
+pub fn has(findings: []const Finding, kind: []const u8) bool {
     for (findings) |f| if (eql(f.kind, kind)) return true;
     return false;
 }
 
-fn eql(a: []const u8, b: []const u8) bool {
+pub fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }

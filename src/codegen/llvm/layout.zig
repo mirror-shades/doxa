@@ -249,13 +249,7 @@ pub const Layout = struct {
         fn value(self: *NeedsVisitor, t: HIRType) void {
             switch (t) {
                 .Array => |a| self.element(a.element.*, a.size != null),
-                .Union => |u| for (u.members) |m| self.nested(m.*),
-                .Group => |gid| for (self.program.group_members[gid]) |m| self.nested(m),
-                .Function => |f| {
-                    for (f.params) |p| self.nested(p.*);
-                    self.nested(f.ret.*);
-                },
-                else => {},
+                else => self.walkNested(t),
             }
         }
 
@@ -273,6 +267,14 @@ pub const Layout = struct {
             switch (t) {
                 .Struct => |id| self.needs[id] = true,
                 .Array => |a| self.nested(a.element.*),
+                else => self.walkNested(t),
+            }
+        }
+
+        /// The members a container walks: a union's, a group's, or a
+        /// function's parameters and return.
+        fn walkNested(self: *NeedsVisitor, t: HIRType) void {
+            switch (t) {
                 .Union => |u| for (u.members) |m| self.nested(m.*),
                 .Group => |gid| for (self.program.group_members[gid]) |m| self.nested(m),
                 .Function => |f| {

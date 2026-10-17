@@ -19,12 +19,6 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
-const TokenStyle = enum {
-    Keyword,
-    Symbol,
-    Undefined,
-};
-
 fn parserErrorHint(err: anyerror) []const u8 {
     return switch (err) {
         error.ExpectedComma => "expected a ',' between arguments or list elements",
@@ -971,16 +965,6 @@ pub const Parser = struct {
             },
         };
         return enum_member;
-    }
-
-    fn reportWarning(self: *Parser, message: []const u8) void {
-        _ = self;
-        var reporting = Reporting.init();
-        reporting.reportWarning("{s}", .{message});
-    }
-
-    fn check(self: *Parser, token_type: token.TokenType) bool {
-        return self.peek().type == token_type;
     }
 
     pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

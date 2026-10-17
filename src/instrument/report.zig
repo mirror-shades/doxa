@@ -219,22 +219,22 @@ fn eqlKind(s: Site, kind: []const u8) bool {
     return std.mem.eql(u8, s.kind, kind);
 }
 
-fn moreBytes(sites: []const Site, a: u32, b: u32) bool {
-    const x = if (sites[a].trace) |t| t.bytes else 0;
-    const y = if (sites[b].trace) |t| t.bytes else 0;
+fn moreStat(comptime stat_field: []const u8, sites: []const Site, a: u32, b: u32) bool {
+    const x = if (sites[a].trace) |t| @field(t, stat_field) else 0;
+    const y = if (sites[b].trace) |t| @field(t, stat_field) else 0;
     return if (x != y) x > y else a < b;
+}
+
+fn moreBytes(sites: []const Site, a: u32, b: u32) bool {
+    return moreStat("bytes", sites, a, b);
 }
 
 fn moreRooted(sites: []const Site, a: u32, b: u32) bool {
-    const x = if (sites[a].trace) |t| t.rooted else 0;
-    const y = if (sites[b].trace) |t| t.rooted else 0;
-    return if (x != y) x > y else a < b;
+    return moreStat("rooted", sites, a, b);
 }
 
 fn moreHeld(sites: []const Site, a: u32, b: u32) bool {
-    const x = if (sites[a].trace) |t| t.peak_held else 0;
-    const y = if (sites[b].trace) |t| t.peak_held else 0;
-    return if (x != y) x > y else a < b;
+    return moreStat("peak_held", sites, a, b);
 }
 
 /// The counter tables (`calls`, `lines`), hottest first.

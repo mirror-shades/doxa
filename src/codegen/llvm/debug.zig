@@ -15,6 +15,7 @@ const std = @import("std");
 const ir = @import("../hir/register/ir.zig");
 const layout_mod = @import("layout.zig");
 const rt = @import("../../runtime/doxa_rt.zig");
+const escaped = @import("escape.zig").escaped;
 
 const HIRType = ir.HIRType;
 
@@ -402,19 +403,3 @@ pub const Debug = struct {
         try w.writeAll(self.nodes.written());
     }
 };
-
-/// A metadata string's contents: LLVM spells a byte outside printable ASCII,
-/// or a quote or backslash, as `\XX`.
-fn escaped(bytes: []const u8) std.fmt.Alt([]const u8, writeEscaped) {
-    return .{ .data = bytes };
-}
-
-fn writeEscaped(bytes: []const u8, w: *std.Io.Writer) std.Io.Writer.Error!void {
-    for (bytes) |c| {
-        if (c >= 0x20 and c < 0x7f and c != '"' and c != '\\') {
-            try w.writeByte(c);
-        } else {
-            try w.print("\\{X:0>2}", .{c});
-        }
-    }
-}

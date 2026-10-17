@@ -832,12 +832,6 @@ fn parseQualifiedCustomTypeToken(self: *Parser, first_token: token.Token) !token
     };
 }
 
-pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
-    const new_expr = try self.allocator.create(ast.Expr);
-    new_expr.* = expr;
-    return new_expr;
-}
-
 pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance();
 
@@ -1385,25 +1379,6 @@ fn resolveBasicTypeName(token_type: token.TokenType, type_name: []const u8) ?ast
     };
 }
 
-fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
-    const type_token = self.peek();
-    const basic_type = resolveBasicTypeName(type_token.type, type_token.lexeme) orelse return null;
-
-    self.advance();
-
-    const type_expr = try self.allocator.create(ast.TypeExpr);
-    type_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(type_token),
-        },
-        .data = .{
-            .Basic = basic_type,
-        },
-    };
-    return type_expr;
-}
-
 pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
     switch (expr.data) {
         .Literal => |lit| {
@@ -1425,10 +1400,6 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
         },
         .Cast => return .{ .base = .Nothing, .is_mutable = false },
         .InterpolatedString => return .{ .base = .String, .is_mutable = false },
-        .Print => |print| {
-            _ = try inferType(print.expr);
-            return .{ .base = .Nothing, .is_mutable = false };
-        },
         else => return .{ .base = .Nothing, .is_mutable = false },
     }
 }

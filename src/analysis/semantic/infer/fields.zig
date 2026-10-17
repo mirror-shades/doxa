@@ -109,20 +109,6 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
     }
 }
 
-pub fn anonymousStruct(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    const fields = expr.data.Struct;
-    const struct_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
-    for (fields, struct_fields) |field, *struct_field| {
-        const field_type = try infer_type.inferTypeFromExpr(self, field.value);
-        struct_field.* = .{
-            .name = field.name.lexeme,
-            .type_info = field_type,
-            .is_public = true, // Struct literal fields are always public
-        };
-    }
-    type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
-}
-
 pub fn fieldAssignment(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
     const field_assign = expr.data.FieldAssignment;
     try borrows.check(self, field_assign.object, expr, .write);

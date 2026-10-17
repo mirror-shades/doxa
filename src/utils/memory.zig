@@ -57,11 +57,6 @@ pub const Variable = struct {
     }
 };
 
-pub const ScopeKind = enum {
-    analysis,
-    runtime,
-};
-
 pub const Scope = struct {
     id: u32,
     parent: ?*Scope,
@@ -72,7 +67,6 @@ pub const Scope = struct {
     manager: *ScopeManager,
     memory_manager: *MemoryManager,
     arena: std.heap.ArenaAllocator,
-    kind: ScopeKind,
     is_deinited: bool = false,
 
     pub fn init(scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) Scope {
@@ -86,58 +80,29 @@ pub const Scope = struct {
             .manager = memory_manager.scope_manager,
             .memory_manager = memory_manager,
             .arena = std.heap.ArenaAllocator.init(memory_manager.allocator),
-            .kind = .analysis,
             .is_deinited = false,
         };
-    }
-
-    pub fn initRuntime(scope_id: u32, parent: ?*Scope, global_allocator: std.mem.Allocator) !*Scope {
-        var arena = std.heap.ArenaAllocator.init(global_allocator);
-        const arena_alloc = arena.allocator();
-
-        const self = try arena_alloc.create(Scope);
-        self.* = .{
-            .id = scope_id,
-            .parent = parent,
-            .children = .empty,
-            .allocator = arena_alloc,
-            .variables = std.AutoHashMap(u32, *Variable).init(arena_alloc),
-            .name_map = std.StringHashMap(*Variable).init(arena_alloc),
-            .manager = undefined,
-            .memory_manager = undefined,
-            .arena = arena,
-            .kind = .runtime,
-            .is_deinited = false,
-        };
-        return self;
     }
 
     pub fn deinit(self: *Scope) void {
         if (self.is_deinited) return;
         self.is_deinited = true;
 
-        switch (self.kind) {
-            .analysis => {
-                var it = self.variables.valueIterator();
-                while (it.next()) |var_ptr| {
-                    const variable = var_ptr.*;
-                    _ = self.manager.variable_map.remove(variable.id);
-                    if (!variable.is_alias) {
-                        if (self.manager.value_storage.fetchRemove(variable.storage_id)) |kv| {
-                            self.allocator.destroy(kv.value);
-                        }
-                    }
-                    self.allocator.destroy(variable);
+        var it = self.variables.valueIterator();
+        while (it.next()) |var_ptr| {
+            const variable = var_ptr.*;
+            _ = self.manager.variable_map.remove(variable.id);
+            if (!variable.is_alias) {
+                if (self.manager.value_storage.fetchRemove(variable.storage_id)) |kv| {
+                    self.allocator.destroy(kv.value);
                 }
-                self.variables.deinit();
-                self.name_map.deinit();
-                self.children.deinit(self.allocator);
-                self.arena.deinit();
-            },
-            .runtime => {
-                self.arena.deinit();
-            },
+            }
+            self.allocator.destroy(variable);
         }
+        self.variables.deinit();
+        self.name_map.deinit();
+        self.children.deinit(self.allocator);
+        self.arena.deinit();
     }
 
     pub fn createValueBinding(
@@ -194,52 +159,6 @@ pub const Scope = struct {
         return variable;
     }
 
-    pub fn createAlias(self: *Scope, name: []const u8, target: *Variable) !*Variable {
-        const variable_id = self.manager.variable_counter;
-        self.manager.variable_counter += 1;
-
-        const variable = try self.allocator.create(Variable);
-        variable.* = .{
-            .name = name,
-            .type = target.type,
-            .storage_id = target.storage_id,
-            .id = variable_id,
-            .is_alias = true,
-        };
-
-        try self.manager.variable_map.put(variable_id, variable);
-        try self.variables.put(variable_id, variable);
-        try self.name_map.put(name, variable);
-
-        return variable;
-    }
-
-    pub fn createAliasFromStorageId(
-        self: *Scope,
-        name: []const u8,
-        storage_id: u32,
-        vtype: TokenType,
-        type_info: *TypeInfo,
-    ) !*Variable {
-        _ = type_info;
-        const variable_id = self.manager.variable_counter;
-        self.manager.variable_counter += 1;
-
-        const variable = try self.allocator.create(Variable);
-        variable.* = .{
-            .name = name,
-            .type = vtype,
-            .storage_id = storage_id,
-            .id = variable_id,
-            .is_alias = true,
-        };
-
-        try self.manager.variable_map.put(variable_id, variable);
-        try self.variables.put(variable_id, variable);
-        try self.name_map.put(name, variable);
-
-        return variable;
-    }
 
     pub fn lookupVariable(self: *Scope, name: []const u8) ?*Variable {
         if (self.name_map.get(name)) |v| return v;
@@ -306,13 +225,6 @@ pub const ScopeManager = struct {
         return memory_manager.createScope(scope_id, parent);
     }
 
-    pub fn createScopeWithId(self: *ScopeManager, parent: ?*Scope, memory_manager: *MemoryManager, scope_id: u32) !*Scope {
-        if (scope_id >= self.next_scope_id) {
-            self.next_scope_id = scope_id + 1;
-        }
-        return memory_manager.createScope(scope_id, parent);
-    }
-
     pub fn getVariableScope(self: *ScopeManager, variable: *Variable) ?*Scope {
         var scope: ?*Scope = self.root_scope;
         while (scope) |s| {
@@ -320,36 +232,6 @@ pub const ScopeManager = struct {
             scope = s.parent;
         }
         return null;
-    }
-
-    pub fn dumpState(self: *ScopeManager, scope_id: u32) void {
-        std.debug.print("Current scope ID: {}\n", .{scope_id});
-
-        if (self.variable_map.count() > 0) {
-            std.debug.print("Variables:\n", .{});
-            var var_it = self.variable_map.iterator();
-            while (var_it.next()) |entry| {
-                const key = entry.key_ptr.*;
-                const value = entry.value_ptr.*;
-                if (self.getVariableScope(value)) |var_scope| {
-                    std.debug.print("  [{d}]: name='{s}', type={}, storage={d}, scope={d}, is_alias={}\n", .{ key, value.name, value.type, value.storage_id, var_scope.id, value.is_alias });
-                } else {
-                    std.debug.print("  [{d}]: name='{s}', type={}, storage={d}, scope=?, is_alias={}\n", .{ key, value.name, value.type, value.storage_id, value.is_alias });
-                }
-            }
-        } else {
-            std.debug.print("No variables\n", .{});
-        }
-
-        if (self.value_storage.count() > 0) {
-            std.debug.print("Storage:\n", .{});
-            var storage_it = self.value_storage.iterator();
-            while (storage_it.next()) |entry| {
-                const key = entry.key_ptr.*;
-                const value = entry.value_ptr.*;
-                std.debug.print("  [{d}]: type={}, constant={}\n", .{ key, value.type, value.constant });
-            }
-        }
     }
 
     pub fn dumpStateWithReporter(self: *ScopeManager, reporter: anytype) void {

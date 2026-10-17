@@ -166,12 +166,6 @@ pub export fn doxa_print_i64(value: i64) callconv(.c) void {
     io.doxaWrite(rendered);
 }
 
-pub export fn doxa_print_u64(value: u64) callconv(.c) void {
-    var buf: [64]u8 = undefined;
-    const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-    io.doxaWrite(rendered);
-}
-
 pub export fn doxa_print_f64(value: f64) callconv(.c) void {
     var buf: [max_float_text_len]u8 = undefined;
     io.doxaWrite(formatFloat(&buf, value));
@@ -186,10 +180,6 @@ pub export fn doxa_print_byte(value: i64) callconv(.c) void {
     const byte_val: u8 = @intCast(value & 0xff);
     const rendered = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch return;
     io.doxaWrite(rendered);
-}
-
-pub export fn doxa_int(value: f64) callconv(.c) i64 {
-    return @intFromFloat(value);
 }
 
 pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64, site: *const fault.DoxaFaultSite) callconv(.c) i64 {

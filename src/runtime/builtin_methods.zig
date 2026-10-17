@@ -1,5 +1,4 @@
 const std = @import("std");
-const token = @import("../types/token.zig");
 const ast = @import("../ast/ast.zig");
 
 pub const BuiltinMethodInfo = struct {
@@ -36,32 +35,6 @@ pub const InputTypeSpec = union(enum) {
     Collection,
 };
 
-pub fn getMethodInfo(method_type: token.TokenType) ?*const BuiltinMethodInfo {
-    return switch (method_type) {
-        .LENGTH => &METHODS[0],
-        .PUSH => &METHODS[1],
-        .POP => &METHODS[2],
-        .INSERT => &METHODS[3],
-        .REMOVE => &METHODS[4],
-        .CLEAR => &METHODS[5],
-        .FIND => &METHODS[6],
-        .SLICE => &METHODS[7],
-        .TOSTRING => &METHODS[8],
-        .TOINT => &METHODS[9],
-        .TOFLOAT => &METHODS[10],
-        .TOBYTE => &METHODS[11],
-        .TYPE => &METHODS[12],
-        .PRINT => &METHODS[13],
-        .ASSERT => &METHODS[14],
-        .PANIC => &METHODS[15],
-        .EXIT => &METHODS[16],
-        .STD => &METHODS[17],
-        .PACK => &METHODS[18],
-        .UNPACK => &METHODS[19],
-        else => null,
-    };
-}
-
 pub fn getMethodInfoByName(name: []const u8) ?*const BuiltinMethodInfo {
     inline for (METHODS) |method| {
         if (std.mem.eql(u8, method.name, name)) {
@@ -69,39 +42,6 @@ pub fn getMethodInfoByName(name: []const u8) ?*const BuiltinMethodInfo {
         }
     }
     return null;
-}
-
-pub fn canMethodPanic(method_type: token.TokenType) bool {
-    if (getMethodInfo(method_type)) |info| {
-        return info.can_panic;
-    }
-    return false;
-}
-
-pub fn getArgCountRange(method_type: token.TokenType) ?struct { min: usize, max: usize } {
-    if (getMethodInfo(method_type)) |info| {
-        return .{
-            .min = info.arg_count_min,
-            .max = info.arg_count_max orelse info.arg_count_min,
-        };
-    }
-    return null;
-}
-
-pub fn validateArgCount(method_type: token.TokenType, arg_count: usize) bool {
-    if (getMethodInfo(method_type)) |info| {
-        const max = info.arg_count_max orelse info.arg_count_min;
-        return arg_count >= info.arg_count_min and arg_count <= max;
-    }
-    return false;
-}
-
-pub fn validateArgCountByName(name: []const u8, arg_count: usize) bool {
-    if (getMethodInfoByName(name)) |info| {
-        const max = info.arg_count_max orelse info.arg_count_min;
-        return arg_count >= info.arg_count_min and arg_count <= max;
-    }
-    return false;
 }
 
 pub fn getArgCountRangeByName(name: []const u8) ?struct { min: usize, max: usize } {

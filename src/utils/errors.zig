@@ -335,7 +335,6 @@ pub const ErrorCode = struct {
     pub const VARIABLE_NOT_FOUND = "E1001";
     pub const DUPLICATE_VARIABLE = "E1002";
     pub const TYPE_MISMATCH = "E1003";
-    pub const TETRA_TYPE_ERROR = "E1004";
     pub const DIVISION_REQUIRES_NUMERIC_OPERANDS = "E1005";
     pub const MODULO_REQUIRES_INTEGER_OR_BYTE_OPERANDS = "E1006";
     pub const ARITHMETIC_REQUIRES_NUMERIC_OPERANDS = "E1007";
@@ -350,9 +349,7 @@ pub const ErrorCode = struct {
     pub const INCOMPATIBLE_TYPES_FOR_COMPARISON = "E1016";
     pub const INVALID_CONDITION_TYPE = "E1017";
     pub const DUPLICATE_BOUND_VARIABLE_NAME = "E1018";
-    pub const SYMBOL_NOT_FOUND = "E1019";
     pub const UNDEFINED_VARIABLE = "E1020";
-    pub const UNKNOWN_TYPE_FOUND_IN_PEEK_INSTRUCTION = "E1021";
     pub const EXPECTED_TYPE_ANNOTATION = "E1022";
     pub const SELF_REFERENTIAL_INITIALIZER = "E1023";
     pub const ARITHMETIC_OVERFLOW = "E1024";
@@ -372,11 +369,8 @@ pub const ErrorCode = struct {
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";
-    pub const UNEXPECTED_TOKEN = "E2002";
-    pub const MISSING_BRACKET = "E2003";
     pub const USE_IS_FOR_ASSIGNMENT = "E2004";
     pub const MISSING_ENTRY_POINT_FUNCTION = "E2005";
-    pub const ENTRY_SHOULD_BE_PUBLIC = "W2005";
     pub const UNUSED_VARIABLE = "W2006";
     pub const UNUSED_PARAMETER = "W2007";
     pub const UNUSED_FUNCTION = "W2008";
@@ -384,47 +378,27 @@ pub const ErrorCode = struct {
     pub const UNREACHABLE_CODE = "W2010";
     pub const CONDITION_ALWAYS_TRUE = "W2011";
     pub const EXPECTED_EXPRESSION = "E2006";
-    pub const EXPECTED_IDENTIFIER = "E2007";
     pub const EXPECTED_TYPE = "E2008";
     pub const EXPECTED_CLOSING_PARENTHESIS = "E2009";
-    pub const EXPECTED_CLOSING_BRACKET = "E2010";
     pub const EXPECTED_CLOSING_BRACE = "E2011";
     pub const EXPECTED_FUNCTION_NAME = "E2012";
     pub const EXPECTED_FUNCTION_PARAMS = "E2013";
-    pub const EXPECTED_FUNCTION_BODY = "E2014";
-    pub const INVALID_CHARACTER = "E2015";
-    pub const EXPONENTIATION_REQUIRES_NUMERIC_OPERANDS = "E2016";
     pub const UNSUPPORTED_OPERATOR = "E2017";
     pub const CONTINUE_USED_OUTSIDE_OF_LOOP = "E2018";
     pub const BREAK_USED_OUTSIDE_OF_LOOP = "E2019";
-    pub const UNHANDLED_STATEMENT_TYPE = "E2020";
     pub const EXPECTED_THEN = "E2021";
-    pub const EXPECTED_ELSE = "E2022";
     pub const EXPECTED_NEWLINE = "E2023";
-    pub const INVALID_ARGUMENT_COUNT = "E2024";
     pub const UNKNOWN_TYPE = "E2025";
-    pub const NOT_TRUTHY = "E2026";
-    pub const EXPECTED_OPEN_BRACE = "E2027";
     pub const INVALID_PLACEHOLDER_EXPRESSION = "E2028";
     pub const NESTED_DECLARATION = "E2029";
     pub const INVALID_THIS = "E2030";
     pub const NESTING_TOO_DEEP = "E2031";
 
     // 3xxx - Memory & Ownership
-    pub const MEMORY_ERROR = "E3001";
-    pub const SCOPE_ERROR = "E3002";
-    pub const REFERENCE_ERROR = "E3003";
-    pub const VARIABLE_STORAGE_NOT_FOUND = "E3004";
     pub const INVALID_BORROW_SOURCE = "E3005";
     pub const BORROW_CONFLICT = "E3006";
 
-    // 4xxx - Runtime
-    pub const RUNTIME_ERROR = "E4001";
-    pub const STACK_OVERFLOW = "E4002";
-    pub const DIVISION_BY_ZERO = "E4003";
-
     // 5xxx - Functions & Calls
-    pub const FUNCTION_NOT_FOUND = "E5001";
     pub const INVALID_FUNCTION_CALL = "E5002";
     pub const MISSING_PARAMETER_TYPE = "E5003";
     pub const MISSING_RETURN_TYPE = "E5004";
@@ -432,44 +406,30 @@ pub const ErrorCode = struct {
     pub const TOO_FEW_ARGUMENTS = "E5006";
     pub const INVALID_ARGUMENT_TYPE = "E5007";
     pub const NO_DEFAULT_VALUE_FOR_PARAMETER = "E5008";
-    pub const ARGUMENT_COUNT_MISMATCH = "E5009";
     pub const INVALID_FUNCTION_TYPE = "E5010";
     pub const MISSING_RETURN_VALUE = "E5011";
-    pub const UNSUPPORTED_FUNCTION_CALL_TYPE = "E5012";
-    pub const EXPECTED_METHOD = "E5013";
-    pub const THIS_TYPE_MISMATCH = "E5014";
-    pub const INVALID_ARGUMENT = "E5015";
     pub const EXPECTED_LEFT_BRACE_OR_RETURNS_KEYWORD = "E5016";
 
     // 6xxx - Collections & Data Structures
     pub const INVALID_ARRAY_TYPE = "E6001";
-    pub const ARRAY_TYPE_MISMATCH = "E6002";
-    pub const INDEX_OUT_OF_BOUNDS = "E6005";
     pub const INVALID_ARRAY_INDEX_TYPE = "E6006";
     pub const CANNOT_INDEX_TYPE = "E6008";
     pub const FIELD_NOT_FOUND = "E6009";
-    pub const STRUCT_HAS_NO_FIELDS = "E6010";
     pub const CANNOT_ACCESS_FIELD_ON_TYPE = "E6011";
-    pub const INVALID_STRING_OPERATION = "E6012";
-    pub const INVALID_STRING_TYPE = "E6013";
     pub const INVALID_STRING_INDEX_TYPE = "E6014";
     pub const INVALID_RETURN_TYPE_FOR_UNION = "E6015";
     pub const PRIVATE_FIELD_ACCESS = "E6016";
-    pub const UNDEFINED_FIELD = "E6017";
     pub const ARRAY_REQUIRES_DYNAMIC_STORAGE = "E6018";
     pub const CANNOT_INFER_ARRAY_ELEMENT_TYPE = "E6019";
 
     // 7xxx - Modules & Imports
     pub const MODULE_NOT_FOUND = "E7001";
     pub const CIRCULAR_IMPORT = "E7002";
-    pub const IMPORT_MUST_HAVE_ALIAS = "E7003";
-    pub const MISPLACED_PUBLIC_MODIFIER = "E7004";
     pub const SYMBOL_NOT_FOUND_IN_IMPORT_MODULE = "E7005";
     pub const EXPECTED_MODULE_NAME = "E7006";
     pub const EXPECTED_MODULE_PATH = "E7007";
-    pub const EXPECTED_IMPORT_SYMBOL = "E7007";
+    pub const EXPECTED_IMPORT_SYMBOL = "E7014";
     pub const MISSING_FROM_KEYWORD = "E7008";
-    pub const INVALID_PRINT_EXPRESSION = "E7009";
     pub const INVALID_IMPORT = "E7010";
     pub const MODULE_NAMESPACE_NOT_A_VALUE = "E7011";
     pub const MODULE_ROOT_UNKNOWN = "E7012";
@@ -479,12 +439,4 @@ pub const ErrorCode = struct {
     pub const INTERNAL_ERROR = "E8001";
     pub const NOT_IMPLEMENTED = "E8002";
     pub const PARSER_DID_NOT_ADVANCE = "E8003";
-    pub const STACK_UNDERFLOW = "E8004";
-
-    // 9xxx - I/O Operations
-    pub const INVALID_FILE_PATH_TYPE = "E9001";
-    pub const INVALID_FILE_CONTENT_TYPE = "E9002";
-    pub const INVALID_COMMAND_TYPE = "E9003";
-    pub const COULD_NOT_DELETE_ARTIFACT = "E9004";
-    pub const SOXA_FILE_INCOMPATIBLE = "E9005";
 };

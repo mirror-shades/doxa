@@ -58,15 +58,6 @@ pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     }
 }
 
-/// Write a null-terminated string to the active output sink. Used for
-/// user-provided error messages and C-string values where the
-/// length is not known statically.
-pub export fn doxa_write_raw(ptr: ?[*:0]const u8) callconv(.c) void {
-    if (ptr) |p| {
-        doxaWrite(std.mem.span(p));
-    }
-}
-
 /// Write `slice` with control characters and `"`/`\` escaped. Peek values are
 /// rendered inside quotes on a single line, so a string containing `\n`, `\r`,
 /// or `\t` (common for captured subprocess output on Windows) must not spill

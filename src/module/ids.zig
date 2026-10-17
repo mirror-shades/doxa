@@ -10,6 +10,17 @@ const std = @import("std");
 
 pub const ModuleId = u32;
 
+fn hashKey(module: ModuleId, name: []const u8) u64 {
+    var h = std.hash.Wyhash.init(0);
+    h.update(std.mem.asBytes(&module));
+    h.update(name);
+    return h.final();
+}
+
+fn eqlKey(a_module: ModuleId, a_name: []const u8, b_module: ModuleId, b_name: []const u8) bool {
+    return a_module == b_module and std.mem.eql(u8, a_name, b_name);
+}
+
 /// Semantic type identity: the *defining* module plus the declared name. Two
 /// modules' `Node` are distinct types because `module` differs; importing,
 /// re-exporting, or qualifying a type never mints a new identity.
@@ -18,14 +29,11 @@ pub const TypeRef = struct {
     name: []const u8,
 
     pub fn eql(a: TypeRef, b: TypeRef) bool {
-        return a.module == b.module and std.mem.eql(u8, a.name, b.name);
+        return eqlKey(a.module, a.name, b.module, b.name);
     }
 
     pub fn hash(self: TypeRef) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(&self.module));
-        h.update(self.name);
-        return h.final();
+        return hashKey(self.module, self.name);
     }
 };
 
@@ -69,13 +77,10 @@ pub const SymbolKey = struct {
 
 pub const SymbolKeyContext = struct {
     pub fn hash(_: SymbolKeyContext, key: SymbolKey) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(&key.module));
-        h.update(key.name);
-        return h.final();
+        return hashKey(key.module, key.name);
     }
 
     pub fn eql(_: SymbolKeyContext, a: SymbolKey, b: SymbolKey) bool {
-        return a.module == b.module and std.mem.eql(u8, a.name, b.name);
+        return eqlKey(a.module, a.name, b.module, b.name);
     }
 };

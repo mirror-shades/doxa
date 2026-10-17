@@ -37,36 +37,33 @@ fn catalogResolved(allocator: std.mem.Allocator, decl: *const stdlib.Decl) !Reso
     };
 }
 
-fn callableResolved(allocator: std.mem.Allocator, callable: *const model.CachedCallable) !ResolvedSignature {
-    var params = std.array_list.Managed([]u8).init(allocator);
+fn resolvedSignature(
+    allocator: std.mem.Allocator,
+    params: []const model.CachedParam,
+    label: []u8,
+) !ResolvedSignature {
+    var out = std.array_list.Managed([]u8).init(allocator);
     errdefer {
-        for (params.items) |p| allocator.free(p);
-        params.deinit();
+        for (out.items) |p| allocator.free(p);
+        out.deinit();
+        allocator.free(label);
     }
-    for (callable.params) |param| {
-        try params.append(try render.cachedParamLabel(allocator, param));
+    for (params) |param| {
+        try out.append(try render.cachedParamLabel(allocator, param));
     }
     return .{
-        .label = try render.callableSignature(allocator, callable),
-        .params = try params.toOwnedSlice(),
+        .label = label,
+        .params = try out.toOwnedSlice(),
         .variadic = false,
     };
 }
 
+fn callableResolved(allocator: std.mem.Allocator, callable: *const model.CachedCallable) !ResolvedSignature {
+    return resolvedSignature(allocator, callable.params, try render.callableSignature(allocator, callable));
+}
+
 fn methodResolved(allocator: std.mem.Allocator, method: model.CachedMethod) !ResolvedSignature {
-    var params = std.array_list.Managed([]u8).init(allocator);
-    errdefer {
-        for (params.items) |p| allocator.free(p);
-        params.deinit();
-    }
-    for (method.params) |param| {
-        try params.append(try render.cachedParamLabel(allocator, param));
-    }
-    return .{
-        .label = try render.methodSignature(allocator, method),
-        .params = try params.toOwnedSlice(),
-        .variadic = false,
-    };
+    return resolvedSignature(allocator, method.params, try render.methodSignature(allocator, method));
 }
 
 /// Resolves a caller path (`std.io.print`, `io.print`, `json.Node.parse`) to

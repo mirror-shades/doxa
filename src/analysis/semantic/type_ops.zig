@@ -73,7 +73,7 @@ pub fn deepCopyTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.T
                     new_types[i] = m_copy;
                 }
                 const u_copy = try self.allocator.create(ast.UnionType);
-                u_copy.* = .{ .types = new_types, .current_type_index = u.current_type_index };
+                u_copy.* = .{ .types = new_types };
                 copied.union_type = u_copy;
             }
         },

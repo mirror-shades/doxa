@@ -1,9 +1,7 @@
 const std = @import("std");
 pub const Token = @import("../types/token.zig").Token;
 pub const TokenLiteral = @import("../types/types.zig").TokenLiteral;
-const Reporting = @import("../utils/reporting.zig");
 const Location = @import("../utils/reporting.zig").Location;
-const Reporter = @import("../utils/reporting.zig").Reporter;
 const HIRType = @import("../codegen/hir/types.zig").HIRType;
 const ids = @import("../module/ids.zig");
 
@@ -113,16 +111,6 @@ pub const StructField = struct {
     }
 };
 
-pub const StructLiteralField = struct {
-    name: Token,
-    value: *Expr,
-
-    pub fn deinit(self: *StructLiteralField, allocator: std.mem.Allocator) void {
-        self.value.deinit(allocator);
-        allocator.destroy(self.value);
-    }
-};
-
 pub const StructInstanceField = struct {
     name: Token,
     value: *Expr,
@@ -218,15 +206,6 @@ pub const FunctionType = struct {
     param_aliases: ?[]bool = null,
 };
 
-pub const ASTVisitor = struct {
-    visitExpr: fn (self: *ASTVisitor, expr: *Expr) anyerror!void,
-    visitStmt: fn (self: *ASTVisitor, stmt: *Stmt) anyerror!void,
-    visitTypeExpr: fn (self: *ASTVisitor, type_expr: *TypeExpr) anyerror!void,
-
-    enterScope: ?fn (self: *ASTVisitor) anyerror!void = null,
-    exitScope: ?fn (self: *ASTVisitor) anyerror!void = null,
-};
-
 pub const Base = struct {
     id: NodeId,
     span: ?SourceSpan,
@@ -311,14 +290,6 @@ pub const Stmt = struct {
             value: *Expr,
         },
     };
-
-    pub fn getBase(self: *Stmt) *Base {
-        return &self.base;
-    }
-
-    pub fn accept(self: *Stmt, visitor: *ASTVisitor) anyerror!void {
-        try visitor.visitStmt(self);
-    }
 
     pub fn deinit(self: *Stmt, allocator: std.mem.Allocator) void {
         switch (self.data) {
@@ -446,7 +417,6 @@ pub const PeekExpr = struct {
     expr: *Expr,
     location: Location,
     variable_name: ?[]const u8,
-    field_name: ?[]const u8 = null,
 };
 
 pub const FormatTemplate = struct {
@@ -474,15 +444,6 @@ pub const FormatPart = union(enum) {
                 allocator.destroy(expr);
             },
         }
-    }
-};
-
-pub const PrintExpr = struct {
-    expr: *Expr,
-
-    pub fn deinit(self: *PrintExpr, allocator: std.mem.Allocator) void {
-        self.expr.deinit(allocator);
-        allocator.destroy(self.expr);
     }
 };
 
@@ -562,15 +523,6 @@ pub const Expr = struct {
         Binary: Binary,
         Unary: Unary,
         Peek: PeekExpr,
-        Print: PrintExpr,
-        PeekStruct: struct {
-            expr: *Expr,
-            location: Location,
-            variable_name: ?[]const u8,
-        },
-        Input: struct {
-            prompt: Token,
-        },
         Variable: Token,
         Assignment: Assignment,
         Grouping: ?*Expr,
@@ -584,7 +536,6 @@ pub const Expr = struct {
             braced: bool = true,
         },
         Array: []const *Expr,
-        Struct: []*StructLiteralField,
         Index: Index,
         IndexAssign: struct {
             array: *Expr,
@@ -675,14 +626,6 @@ pub const Expr = struct {
         },
     };
 
-    pub fn getBase(self: *Expr) *Base {
-        return &self.base;
-    }
-
-    pub fn accept(self: *Expr, visitor: *ASTVisitor) anyerror!void {
-        try visitor.visitExpr(self);
-    }
-
     pub fn deinit(self: *Expr, allocator: std.mem.Allocator) void {
         switch (self.data) {
             .Binary => |*b| {
@@ -743,14 +686,6 @@ pub const Expr = struct {
                 }
                 allocator.free(elements);
             },
-            .Struct => |fields| {
-                for (fields) |field| {
-                    field.value.deinit(allocator);
-                    allocator.destroy(field.value);
-                    allocator.destroy(field);
-                }
-                allocator.free(fields);
-            },
             .If => |*i| {
                 if (i.condition) |condition| {
                     condition.deinit(allocator);
@@ -796,13 +731,6 @@ pub const Expr = struct {
             .Peek => |i| {
                 i.expr.deinit(allocator);
                 allocator.destroy(i.expr);
-            },
-            .PeekStruct => |peek| {
-                peek.expr.deinit(allocator);
-                allocator.destroy(peek.expr);
-            },
-            .Print => |*pm| {
-                pm.deinit(allocator);
             },
             .FieldAccess => |*f| {
                 f.object.deinit(allocator);
@@ -888,7 +816,6 @@ pub const Expr = struct {
                 }
                 allocator.free(m.arguments);
             },
-            .Input => {},
             .Assert => |*a| {
                 a.condition.deinit(allocator);
                 allocator.destroy(a.condition);
@@ -1073,15 +1000,6 @@ pub const StructFieldType = struct {
 
 pub const UnionType = struct {
     types: []const *TypeInfo,
-    current_type_index: ?u32 = null,
-
-    pub fn getCurrentType(self: *const UnionType) ?*TypeInfo {
-        return if (self.current_type_index) |idx| self.types[idx] else null;
-    }
-
-    pub fn setCurrentType(self: *UnionType, type_index: u32) void {
-        self.current_type_index = type_index;
-    }
 };
 
 pub const BasicType = enum {
@@ -1117,17 +1035,8 @@ pub const TypeExpr = struct {
         Custom: CustomTypeExpr,
         Array: ArrayType,
         Struct: []*StructField,
-        Enum: []const []const u8,
         Union: []*TypeExpr,
     };
-
-    pub fn getBase(self: *TypeExpr) *Base {
-        return &self.base;
-    }
-
-    pub fn accept(self: *TypeExpr, visitor: *ASTVisitor) anyerror!void {
-        try visitor.visitTypeExpr(self);
-    }
 
     pub fn deinit(self: *TypeExpr, allocator: std.mem.Allocator) void {
         switch (self.data) {
@@ -1142,9 +1051,6 @@ pub const TypeExpr = struct {
                     allocator.destroy(field);
                 }
                 allocator.free(fields);
-            },
-            .Enum => |variants| {
-                allocator.free(variants);
             },
             .Union => |types| {
                 for (types) |type_expr| {
@@ -1271,14 +1177,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
             for (blk.statements) |*s| try dumpStmt(writer, s, depth + 1);
             if (blk.value) |v| try dumpExpr(writer, v, depth + 1);
         },
-        .Struct => |fields| {
-            try writer.print("Expr.Struct\n", .{});
-            for (fields) |field| {
-                try dumpIndent(writer, depth + 1);
-                try writer.print(".{s}\n", .{field.name.lexeme});
-                try dumpExpr(writer, field.value, depth + 2);
-            }
-        },
         .Array => |elements| {
             try writer.print("Expr.Array len={}\n", .{elements.len});
             for (elements) |e| try dumpExpr(writer, e, depth + 1);
@@ -1333,15 +1231,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
             try writer.print("Expr.Peek\n", .{});
             try dumpExpr(writer, p.expr, depth + 1);
         },
-        .Print => |p| {
-            try writer.print("Expr.Print\n", .{});
-            try dumpExpr(writer, p.expr, depth + 1);
-        },
-        .PeekStruct => |p| {
-            try writer.print("Expr.PeekStruct\n", .{});
-            try dumpExpr(writer, p.expr, depth + 1);
-        },
-        .Input => try writer.print("Expr.Input\n", .{}),
         .IndexAssign => |i| {
             try writer.print("Expr.IndexAssign\n", .{});
             try dumpExpr(writer, i.array, depth + 1);
@@ -1426,27 +1315,11 @@ fn dumpTypeExpr(writer: *std.Io.Writer, type_expr: *const TypeExpr, depth: u32) 
                 try dumpTypeExpr(writer, f.type_expr, depth + 2);
             }
         },
-        .Enum => |variants| {
-            try writer.print("TypeExpr.Enum\n", .{});
-            for (variants) |v| try writer.print("  {s}\n", .{v});
-        },
         .Union => |types| {
             try writer.print("TypeExpr.Union\n", .{});
             for (types) |t| try dumpTypeExpr(writer, t, depth + 1);
         },
     }
-}
-
-pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpan) !*Expr {
-    const expr = try allocator.create(Expr);
-    expr.* = .{
-        .base = .{
-            .id = generateNodeId(),
-            .span = span,
-        },
-        .data = data,
-    };
-    return expr;
 }
 
 pub fn createFormatTemplate(allocator: std.mem.Allocator, parts: []FormatPart) !*FormatTemplate {
@@ -1530,7 +1403,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             .base = .Custom,
             .custom_type = if (custom.ref) |ref| .{ .ref = ref } else .{ .written = custom.name.lexeme },
         },
-        .Enum => TypeInfo{ .base = .Nothing },
         .Union => |types| blk: {
             var union_types = try allocator.alloc(*TypeInfo, types.len);
             errdefer allocator.free(union_types);
@@ -1542,7 +1414,6 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             const union_type = try allocator.create(UnionType);
             union_type.* = .{
                 .types = union_types,
-                .current_type_index = 0,
             };
 
             break :blk TypeInfo{

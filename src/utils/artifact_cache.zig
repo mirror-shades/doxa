@@ -60,7 +60,7 @@ pub const ArtifactCache = struct {
     pub fn pathAlloc(self: *const ArtifactCache, key: hashing.Digest, ext: []const u8) ![]u8 {
         const name = try self.nameAlloc(key, ext);
         defer self.allocator.free(name);
-        return std.fs.path.join(self.allocator, &.{ self.dir_path, name });
+        return self.pathFor(name);
     }
 
     /// The basename a producer writes before publishing.
@@ -74,6 +74,10 @@ pub const ArtifactCache = struct {
     pub fn stagingPathAlloc(self: *const ArtifactCache, key: hashing.Digest, ext: []const u8) ![]u8 {
         const name = try self.stagingNameAlloc(key, ext);
         defer self.allocator.free(name);
+        return self.pathFor(name);
+    }
+
+    fn pathFor(self: *const ArtifactCache, name: []const u8) ![]u8 {
         return std.fs.path.join(self.allocator, &.{ self.dir_path, name });
     }
 

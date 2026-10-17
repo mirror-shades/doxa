@@ -17,7 +17,7 @@ const Ranges = @import("ranges.zig").Ranges;
 const function = @import("function.zig");
 pub const debug = @import("debug.zig");
 const consteval = @import("../../analysis/consteval.zig");
-const module_graph = @import("../../module/graph.zig");
+const writeEscaped = @import("escape.zig").write;
 
 const HIRType = ir.HIRType;
 const Layout = layout_mod.Layout;
@@ -232,7 +232,7 @@ pub const Emitter = struct {
             self.next_global += 1;
             const g = &self.globals.writer;
             try g.print("@.s.{d} = private unnamed_addr constant [{d} x i8] c\"", .{ entry.value_ptr.*, bytes.len + 1 });
-            try writeEscaped(g, bytes);
+            try writeEscaped(bytes, g);
             try g.writeAll("\\00\"\n");
         }
         return std.fmt.allocPrint(self.alloc, "@.s.{d}", .{entry.value_ptr.*});
@@ -426,16 +426,6 @@ pub const Emitter = struct {
         return list;
     }
 };
-
-fn writeEscaped(w: *std.Io.Writer, bytes: []const u8) !void {
-    for (bytes) |c| {
-        if (c >= 0x20 and c < 0x7f and c != '"' and c != '\\') {
-            try w.writeByte(c);
-        } else {
-            try w.print("\\{X:0>2}", .{c});
-        }
-    }
-}
 
 // ── The inline-Zig ABI (`docs/zig.md`) ──
 

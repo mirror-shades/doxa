@@ -185,8 +185,3 @@ pub export fn doxa_str_pop(scope: *Scope, s_ptr: ?[*]const u8, s_len: u64, out_r
     out_popped.* = allocDoxaString(scope, src[last_char_start..src.len]);
     return 1;
 }
-
-pub export fn doxa_str_len(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
-    _ = ptr;
-    return @intCast(len);
-}

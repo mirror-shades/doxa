@@ -15,6 +15,9 @@ const TypesImport = @import("../types/types.zig");
 const Tetra = TypesImport.Tetra;
 const TokenLiteral = TypesImport.TokenLiteral;
 
+const ident = @import("../common/ident.zig");
+const isAlpha = ident.isStart;
+
 pub const LexicalAnalyzer = struct {
     keywords: std.StringHashMap(TokenType),
     tokens: std.array_list.Managed(Token),
@@ -25,7 +28,6 @@ pub const LexicalAnalyzer = struct {
     column: usize,
     allocator: std.mem.Allocator,
     allocated_strings: std.array_list.Managed([]const u8),
-    allocated_arrays: std.array_list.Managed([]const TokenLiteral),
     line_start: usize,
     file_path: []const u8,
     file_uri: []const u8,
@@ -48,7 +50,6 @@ pub const LexicalAnalyzer = struct {
             .tokens = std.array_list.Managed(Token).init(allocator),
             .keywords = std.StringHashMap(TokenType).init(allocator),
             .allocated_strings = std.array_list.Managed([]const u8).init(allocator),
-            .allocated_arrays = std.array_list.Managed([]const TokenLiteral).init(allocator),
             .file_path = file_path,
             .file_uri = file_uri,
             .token_line = 1,
@@ -62,11 +63,6 @@ pub const LexicalAnalyzer = struct {
             self.allocator.free(str);
         }
         self.allocated_strings.deinit();
-
-        for (self.allocated_arrays.items) |arr| {
-            self.allocator.free(arr);
-        }
-        self.allocated_arrays.deinit();
 
         self.tokens.deinit();
         self.keywords.deinit();
@@ -547,12 +543,6 @@ pub const LexicalAnalyzer = struct {
         if (self.source[self.current] != expected) return false;
         self.advance();
         return true;
-    }
-
-    fn isAlpha(c: u8) bool {
-        return (c >= 'a' and c <= 'z') or
-            (c >= 'A' and c <= 'Z') or
-            c == '_';
     }
 
     fn isDigit(c: u8) bool {
@@ -1267,12 +1257,6 @@ pub const LexicalAnalyzer = struct {
     pub fn addString(self: *LexicalAnalyzer, str: []const u8) ![]const u8 {
         const owned = try self.allocator.dupe(u8, str);
         try self.allocated_strings.append(owned);
-        return owned;
-    }
-
-    pub fn addArray(self: *LexicalAnalyzer, arr: []const TokenLiteral) ![]const TokenLiteral {
-        const owned = try self.allocator.dupe(TokenLiteral, arr);
-        try self.allocated_arrays.append(owned);
         return owned;
     }
 };

@@ -10,7 +10,6 @@ const consteval = @import("consteval.zig");
 pub const ConstantFolder = struct {
     allocator: std.mem.Allocator,
     reporter: *Reporter,
-    optimizations_made: u32 = 0,
     /// Whether a constant expression faulted (overflow, division by zero, a
     /// conversion with no value). Each fault is reported where it happened
     /// and its node left unfolded.
@@ -102,7 +101,7 @@ pub const ConstantFolder = struct {
 
     pub fn foldExpr(self: *ConstantFolder, expr: *ast.Expr) std.mem.Allocator.Error!*ast.Expr {
         switch (expr.data) {
-            .Literal, .Input, .EnumMember, .DefaultArgPlaceholder, .Unreachable, .Break, .This, .TypeExpr, .EnumDecl, .GroupDecl => {
+            .Literal, .EnumMember, .DefaultArgPlaceholder, .Unreachable, .Break, .This, .TypeExpr, .EnumDecl, .GroupDecl => {
                 return expr;
             },
             .Variable => |var_token| {
@@ -110,7 +109,6 @@ pub const ConstantFolder = struct {
                 // where the parent cannot be re-pointed (array elements, opaque
                 // argument lists).
                 if (self.lookupComptime(var_token.lexeme)) |value| {
-                    self.optimizations_made += 1;
                     expr.data = .{ .Literal = value };
                 }
                 return expr;
@@ -150,8 +148,6 @@ pub const ConstantFolder = struct {
                         combined_elements[left_array.len + i] = right_array[i];
                     }
 
-                    self.optimizations_made += 1;
-
                     folded_left.deinit(self.allocator);
                     self.allocator.destroy(folded_left);
                     folded_right.deinit(self.allocator);
@@ -189,15 +185,12 @@ pub const ConstantFolder = struct {
                     if (folded_condition.data == .Literal and folded_condition.data.Literal == .tetra) {
                         if (consteval.holds(folded_condition.data.Literal.tetra)) {
                             if (if_expr.then_branch) |then_branch| {
-                                self.optimizations_made += 1;
                                 return try self.foldExpr(then_branch);
                             }
                         } else {
                             if (if_expr.else_branch) |else_branch| {
-                                self.optimizations_made += 1;
                                 return try self.foldExpr(else_branch);
                             } else {
-                                self.optimizations_made += 1;
                                 const nothing_expr = try self.allocator.create(ast.Expr);
                                 nothing_expr.* = .{
                                     .base = expr.base,
@@ -232,12 +225,6 @@ pub const ConstantFolder = struct {
             .Array => |elements| {
                 for (elements) |element| {
                     _ = try self.foldExpr(element);
-                }
-                return expr;
-            },
-            .Struct => |fields| {
-                for (fields) |field| {
-                    field.value = try self.foldExpr(field.value);
                 }
                 return expr;
             },
@@ -358,14 +345,6 @@ pub const ConstantFolder = struct {
             },
             .Peek => |*peek| {
                 peek.expr = try self.foldExpr(peek.expr);
-                return expr;
-            },
-            .PeekStruct => |*peek_struct| {
-                peek_struct.expr = try self.foldExpr(peek_struct.expr);
-                return expr;
-            },
-            .Print => |*print| {
-                print.expr = try self.foldExpr(print.expr);
                 return expr;
             },
             .InterpolatedString => |template| {
@@ -491,7 +470,6 @@ pub const ConstantFolder = struct {
     fn apply(self: *ConstantFolder, expr: *ast.Expr, outcome: consteval.Outcome) bool {
         switch (outcome) {
             .value => |value| {
-                self.optimizations_made += 1;
                 expr.data = .{ .Literal = value };
                 return true;
             },
@@ -504,11 +482,4 @@ pub const ConstantFolder = struct {
         }
     }
 
-    pub fn resetCounter(self: *ConstantFolder) void {
-        self.optimizations_made = 0;
-    }
-
-    pub fn getOptimizationCount(self: *ConstantFolder) u32 {
-        return self.optimizations_made;
-    }
 };

@@ -1,5 +1,4 @@
 const std = @import("std");
-const ast = @import("../ast/ast.zig");
 const TokenLiteral = @import("./types.zig").TokenLiteral;
 
 pub const TokenType = enum {
@@ -127,7 +126,6 @@ pub const TokenType = enum {
     // literals
     IDENTIFIER, // identifier
     NEWLINE, // newline
-    CONTINUE_LINE, // continue line
 
     // scalar types
     INT, // integer
@@ -153,7 +151,6 @@ pub const TokenType = enum {
     STRUCT_KEYWORD, // 'struct' keyword
     STRUCT_INSTANCE, // struct instance
     GROUP_KEYWORD, // 'group' keyword
-    UNION_KEYWORD, // 'union' keyword
 
     // type helpers
     FIELD_ACCESS, // field access
@@ -187,17 +184,6 @@ pub const Token = struct {
         };
     }
 };
-
-pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
-    return switch (token_type) {
-        .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true },
-        .BYTE => ast.TypeInfo{ .base = .Byte, .is_mutable = true },
-        .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true },
-        .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
-        .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true },
-        .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true },
-    };
-}
 
 pub fn methodNameToTokenType(name: []const u8) ?TokenType {
     if (std.mem.eql(u8, name, "type")) return .TYPE;

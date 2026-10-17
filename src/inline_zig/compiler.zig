@@ -94,33 +94,27 @@ fn arrayInfoFor(t: ast.TypeInfo) ?ArrayInfo {
     };
 }
 
-fn nativeParamType(t: ast.TypeInfo) ?[]const u8 {
+fn nativeType(t: ast.TypeInfo, comptime string_type: []const u8) ?[]const u8 {
     return switch (t.base) {
         .Int => "i64",
         .Float => "f64",
         .Byte => "u8",
         .Tetra => "bool",
         .Nothing => "void",
-        .String => "?[*]const u8",
+        .String => string_type,
         .Array => "?*__DoxaArrayHeader",
         .Enum => "i64",
         else => null,
     };
 }
 
+fn nativeParamType(t: ast.TypeInfo) ?[]const u8 {
+    return nativeType(t, "?[*]const u8");
+}
+
 fn nativeReturnType(t: ast.TypeInfo) ?[]const u8 {
-    return switch (t.base) {
-        .Int => "i64",
-        .Float => "f64",
-        .Byte => "u8",
-        .Tetra => "bool",
-        .Nothing => "void",
-        // String returns cross through the (out_ptr, out_len) pair instead.
-        .String => "void",
-        .Array => "?*__DoxaArrayHeader",
-        .Enum => "i64",
-        else => null,
-    };
+    // String returns cross through the (out_ptr, out_len) pair instead.
+    return nativeType(t, "void");
 }
 
 /// The enum a fallible return (`DoxaError_<path>!<payload>`) names, once analysis

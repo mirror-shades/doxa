@@ -185,12 +185,8 @@ pub fn offsetToPosition(text: []const u8, offset: usize) model.DocumentPosition 
     return model.DocumentPosition{ .line = line, .character = character };
 }
 
-fn isMethodContinuationChar(c: u8) bool {
-    return std.ascii.isAlphabetic(c) or std.ascii.isDigit(c) or c == '_';
-}
-
 fn isMethodChar(c: u8) bool {
-    return c == '@' or isMethodContinuationChar(c);
+    return c == '@' or isIdentChar(c);
 }
 
 fn findMethodStart(text: []const u8, offset: usize) ?usize {
@@ -199,7 +195,7 @@ fn findMethodStart(text: []const u8, offset: usize) ?usize {
     while (current > 0) {
         const prev = text[current - 1];
         if (prev == '@') return current - 1;
-        if (!isMethodContinuationChar(prev)) break;
+        if (!isIdentChar(prev)) break;
         current -= 1;
     }
     if (current < text.len and text[current] == '@') return current;

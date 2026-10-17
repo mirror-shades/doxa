@@ -3,6 +3,7 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const model = @import("model.zig");
+const snippet = @import("../common/snippet.zig");
 
 pub fn packLspTypeString(type_info: *const ast.TypeInfo) []const u8 {
     if (type_info.custom_type) |ct| {
@@ -11,7 +12,7 @@ pub fn packLspTypeString(type_info: *const ast.TypeInfo) []const u8 {
     return @tagName(type_info.base);
 }
 
-fn typeBaseLabel(base: ast.Type) []const u8 {
+pub fn typeBaseLabel(base: ast.Type) []const u8 {
     return switch (base) {
         .Int => "int",
         .Byte => "byte",
@@ -54,7 +55,6 @@ fn writeTypeExpr(writer: *std.Io.Writer, type_expr: ?*const ast.TypeExpr) !void 
             try writer.writeAll("[]");
         },
         .Struct => try writer.writeAll("struct"),
-        .Enum => try writer.writeAll("enum"),
         .Union => |types| {
             for (types, 0..) |t, i| {
                 if (i > 0) try writer.writeAll(" | ");
@@ -78,18 +78,27 @@ pub fn renderTypeInfo(allocator: std.mem.Allocator, type_info: ast.TypeInfo) ![]
 
 /// A one-line signature for a user callable: `foo(a: int, ^b: string) -> bool`.
 pub fn callableSignature(allocator: std.mem.Allocator, callable: *const model.CachedCallable) ![]u8 {
+    return signatureFor(allocator, callable.name, callable.params, callable.return_type);
+}
+
+fn signatureFor(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    params: []const model.CachedParam,
+    return_type: []const u8,
+) ![]u8 {
     var out = std.Io.Writer.Allocating.init(allocator);
     errdefer out.deinit();
     const w = &out.writer;
 
-    try w.print("{s}(", .{callable.name});
-    for (callable.params, 0..) |param, i| {
+    try w.print("{s}(", .{name});
+    for (params, 0..) |param, i| {
         if (i > 0) try w.writeAll(", ");
         try writeCachedParam(w, param);
     }
     try w.writeAll(")");
-    if (callable.return_type.len > 0) {
-        try w.print(" -> {s}", .{callable.return_type});
+    if (return_type.len > 0) {
+        try w.print(" -> {s}", .{return_type});
     }
     return out.toOwnedSlice();
 }
@@ -110,48 +119,22 @@ pub fn cachedParamLabel(allocator: std.mem.Allocator, param: model.CachedParam) 
 }
 
 pub fn callableSnippet(allocator: std.mem.Allocator, callable: *const model.CachedCallable) ![]u8 {
+    return snippetFor(allocator, callable.name, callable.params.len);
+}
+
+fn snippetFor(allocator: std.mem.Allocator, name: []const u8, param_count: usize) ![]u8 {
     var out = std.Io.Writer.Allocating.init(allocator);
     errdefer out.deinit();
-    const w = &out.writer;
-
-    try w.print("{s}(", .{callable.name});
-    for (callable.params, 0..) |_, i| {
-        if (i > 0) try w.writeAll(", ");
-        try w.print("${d}", .{i + 1});
-    }
-    try w.writeAll(")");
+    try snippet.write(&out.writer, name, param_count);
     return out.toOwnedSlice();
 }
 
 pub fn methodSignature(allocator: std.mem.Allocator, method: model.CachedMethod) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(allocator);
-    errdefer out.deinit();
-    const w = &out.writer;
-
-    try w.print("{s}(", .{method.name});
-    for (method.params, 0..) |param, i| {
-        if (i > 0) try w.writeAll(", ");
-        try writeCachedParam(w, param);
-    }
-    try w.writeAll(")");
-    if (method.return_type.len > 0) {
-        try w.print(" -> {s}", .{method.return_type});
-    }
-    return out.toOwnedSlice();
+    return signatureFor(allocator, method.name, method.params, method.return_type);
 }
 
 pub fn methodSnippet(allocator: std.mem.Allocator, method: model.CachedMethod) ![]u8 {
-    var out = std.Io.Writer.Allocating.init(allocator);
-    errdefer out.deinit();
-    const w = &out.writer;
-
-    try w.print("{s}(", .{method.name});
-    for (method.params, 0..) |_, i| {
-        if (i > 0) try w.writeAll(", ");
-        try w.print("${d}", .{i + 1});
-    }
-    try w.writeAll(")");
-    return out.toOwnedSlice();
+    return snippetFor(allocator, method.name, method.params.len);
 }
 
 pub fn inlayTypeText(type_info: *const ast.TypeInfo) []const u8 {

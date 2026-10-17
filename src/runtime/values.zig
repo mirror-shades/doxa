@@ -63,12 +63,15 @@ pub fn asFloat(bits: i64) f64 {
     return @bitCast(bits);
 }
 
-pub fn asByte(bits: i64) u8 {
+fn truncated(bits: i64, comptime mask: u64) u64 {
     const raw: u64 = @bitCast(bits);
-    return @intCast(raw & 0xff);
+    return raw & mask;
+}
+
+pub fn asByte(bits: i64) u8 {
+    return @intCast(truncated(bits, 0xff));
 }
 
 pub fn asTetra(bits: i64) u2 {
-    const raw: u64 = @bitCast(bits);
-    return @intCast(raw & 0x3);
+    return @intCast(truncated(bits, 0x3));
 }

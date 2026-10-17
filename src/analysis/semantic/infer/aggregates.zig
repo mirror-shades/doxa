@@ -72,19 +72,9 @@ pub fn defaultArgPlaceholder(_: *SemanticAnalyzer, _: *ast.Expr, type_info: *ast
     type_info.* = .{ .base = .Nothing };
 }
 
-pub fn input(_: *SemanticAnalyzer, _: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    type_info.* = .{ .base = .String };
-}
-
 pub fn peek(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
     const _peek = expr.data.Peek;
     const expr_type = try infer_type.inferTypeFromExpr(self, _peek.expr);
-    type_info.* = expr_type.*;
-}
-
-pub fn peekStruct(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    const _peek_struct = expr.data.PeekStruct;
-    const expr_type = try infer_type.inferTypeFromExpr(self, _peek_struct.expr);
     type_info.* = expr_type.*;
 }
 
@@ -99,12 +89,6 @@ pub fn interpolatedString(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *
         }
     }
     type_info.* = .{ .base = .String };
-}
-
-pub fn print(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    const print_expr = expr.data.Print;
-    _ = try infer_type.inferTypeFromExpr(self, print_expr.expr);
-    type_info.* = .{ .base = .Nothing };
 }
 
 pub fn structDecl(_: *SemanticAnalyzer, _: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {

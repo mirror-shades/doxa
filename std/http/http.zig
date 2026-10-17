@@ -2332,11 +2332,6 @@ pub fn headerCount(raw_headers: []const u8) i64 {
     return @intCast(count);
 }
 
-pub fn headerNameAt(raw_headers: []const u8, index: i64) []const u8 {
-    if (index < 0) return "";
-    return if (headerAt(raw_headers, @intCast(index))) |header| header.name else "";
-}
-
 pub fn headerValueAt(raw_headers: []const u8, index: i64) []const u8 {
     if (index < 0) return "";
     return if (headerAt(raw_headers, @intCast(index))) |header| header.value else "";

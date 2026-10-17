@@ -15,7 +15,6 @@ const HIRType = HIRTypeModule.HIRType;
 const StructId = HIRTypeModule.StructId;
 const names = @import("names.zig");
 const infer_type = @import("infer_type.zig");
-const graph_mod = @import("../../module/graph.zig");
 
 /// The resolved identity of a named type, or null for an anonymous one.
 fn refOf(type_info: *const ast.TypeInfo) ?TypeRef {
@@ -501,7 +500,6 @@ pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*a
     const flattened = try self.allocator.create(ast.UnionType);
     flattened.* = .{
         .types = unique,
-        .current_type_index = null, // order changed; don't carry index
     };
     return flattened;
 }
@@ -527,20 +525,11 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
     if (unique.len == 1) return unique[0];
 
     const ut = try self.allocator.create(ast.UnionType);
-    ut.* = .{ .types = unique, .current_type_index = null };
+    ut.* = .{ .types = unique };
 
     const out = try ast.TypeInfo.createDefault(self.allocator);
     out.* = .{ .base = .Union, .union_type = ut, .is_mutable = false };
     return out;
-}
-
-pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
-    _ = self;
-    if (union_type_info.base != .Union) return false;
-    if (union_type_info.union_type) |u| {
-        for (u.types) |mt| if (mt.base == .Nothing) return true;
-    }
-    return false;
 }
 
 pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const ast.TypeInfo, target: *const ast.TypeInfo) !*ast.TypeInfo {
@@ -884,7 +873,7 @@ pub fn registerStructType(self: *SemanticAnalyzer, ref: TypeRef, fields: []const
 /// record whose types register after its struct's — a group, whose members a
 /// union field flattens — so this runs once every record is analyzed.
 pub fn lowerStructFieldTypes(self: *SemanticAnalyzer) !void {
-    for (self.struct_table.entries.items) |entry| {
+    for (self.struct_table.table.entries.items) |entry| {
         for (entry.fields) |*field| field.hir_type = try self.typeLowering().lower(field.type_info);
     }
 }

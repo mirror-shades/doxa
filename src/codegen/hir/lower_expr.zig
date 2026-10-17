@@ -65,11 +65,9 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
 
         .Assignment => assignment(l, e),
         .Peek => |p| peek(l, p.expr, p.location),
-        .PeekStruct => |p| peek(l, p.expr, p.location),
-        // `@print` is parsed as an internal call; a default argument is
-        // replaced at its call; the parser builds no `Input`; type-position
+        // A default argument is replaced at its call; type-position
         // expressions never reach a value context the analyzer accepts.
-        .Print, .DefaultArgPlaceholder, .Input, .Struct, .TypeExpr, .ArrayType => unexpected(l, e),
+        .DefaultArgPlaceholder, .TypeExpr, .ArrayType => unexpected(l, e),
     };
 }
 
@@ -108,15 +106,7 @@ fn result(l: *Lowering, e: *ast.Expr, v: ValueId, ty: HIRType) Error!ValueId {
 // ── Leaves ──
 
 fn literal(l: *Lowering, e: *ast.Expr, lit: ast.TokenLiteral) Error!?ValueId {
-    const c: struct { c: ir.Constant, ty: HIRType } = switch (lit) {
-        .int => |v| .{ .c = .{ .int = v }, .ty = .Int },
-        .float => |v| .{ .c = .{ .float = v }, .ty = .Float },
-        .byte => |v| .{ .c = .{ .byte = v }, .ty = .Byte },
-        .string => |v| .{ .c = .{ .string = v }, .ty = .String },
-        .tetra => |v| .{ .c = .{ .tetra = tetra(v) }, .ty = .Tetra },
-        .nothing => .{ .c = .nothing, .ty = .Nothing },
-        .array => return unexpected(l, e),
-    };
+    const c = literalConstant(lit) orelse return unexpected(l, e);
     const v = try l.constant(c.c, c.ty);
     return try l.convert(v, c.ty, try l.g.typeOf(e));
 }
@@ -259,17 +249,13 @@ fn compare(l: *Lowering, bin: ast.Binary, op: ir.CompareOp) Error!?ValueId {
     if (left.isBoxed() or right.isBoxed()) return boxedCompare(l, bin, op, left, right);
     const common: HIRType = if (left == .Float or right == .Float)
         .Float
-    else if (isNumber(left) and isNumber(right) and (left == .Int or right == .Int))
+    else if (left.isNumeric() and right.isNumeric() and (left == .Int or right == .Int))
         .Int
     else
         left;
     const lhs = try l.exprAs(bin.left.?, common) orelse return null;
     const rhs = try l.exprAs(bin.right.?, common) orelse return null;
     return try l.b.define(.{ .cmp = .{ .op = op, .lhs = lhs, .rhs = rhs } }, .cond);
-}
-
-fn isNumber(t: HIRType) bool {
-    return t == .Int or t == .Byte or t == .Float;
 }
 
 /// `box == value` for a value of an enum or an `int` member of the box: equal

@@ -154,86 +154,43 @@ pub fn returnExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Type
     }
 }
 
-pub fn existsExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    const exists = &expr.data.Exists;
-    const array_type = try infer_type.inferTypeFromExpr(self, exists.array);
+const QuantifierKind = enum { exists, forall };
 
-    const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-
-    // The binding's type outlives this call: every read of the bound
-    // name records it as a store target, so it cannot live on this
-    // frame.
-    const bound_var_type = try ast.TypeInfo.createDefault(self.allocator);
-    bound_var_type.* = if (array_type.array_type) |elem_type|
-        elem_type.*
-    else
-        ast.TypeInfo{ .base = .Int };
-
-    self.checkFreshName(quantifier_scope, exists.variable);
-    const bound = quantifier_scope.createValueBinding(
-        exists.variable.lexeme,
-        eval.convertTypeToTokenType(bound_var_type.base),
-        bound_var_type,
-        true,
-    ) catch |err| {
-        if (err == error.DuplicateVariableName) {
-            self.reporter.reportCompileError(
-                getLocationFromBase(expr.base),
-                ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
-                "Duplicate bound variable name '{s}' in exists quantifier",
-                .{exists.variable.lexeme},
-            );
-            self.fatal_error = true;
-            type_info.base = .Nothing;
-            quantifier_scope.deinit();
-            return;
-        } else {
-            quantifier_scope.deinit();
-            return err;
-        }
+fn quantifierName(kind: QuantifierKind) []const u8 {
+    return switch (kind) {
+        .exists => "exists",
+        .forall => "forall",
     };
+}
 
-    exists.storage = bound.storage_id;
+fn quantifierTitle(kind: QuantifierKind) []const u8 {
+    return switch (kind) {
+        .exists => "Exists",
+        .forall => "ForAll",
+    };
+}
 
-    const prev_scope = self.current_scope;
-    self.current_scope = quantifier_scope;
-
-    const condition_type = try infer_type.inferTypeFromExpr(self, exists.condition);
-
-    self.current_scope = prev_scope;
-
-    quantifier_scope.deinit();
-
-    if (array_type.base != .Array) {
-        self.reporter.reportCompileError(
-            getLocationFromBase(expr.base),
-            ErrorCode.INVALID_ARRAY_TYPE,
-            "Exists requires array type, got {s}",
-            .{@tagName(array_type.base)},
-        );
-        self.fatal_error = true;
-        type_info.base = .Nothing;
-        return;
-    }
-
-    if (condition_type.base != .Tetra) {
-        self.reporter.reportCompileError(
-            getLocationFromBase(expr.base),
-            ErrorCode.INVALID_CONDITION_TYPE,
-            "Exists condition must be tetra, got {s}",
-            .{@tagName(condition_type.base)},
-        );
-        self.fatal_error = true;
-        type_info.base = .Nothing;
-        return;
-    }
-
-    type_info.* = .{ .base = .Tetra };
+pub fn existsExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
+    const q = &expr.data.Exists;
+    return checkQuantifier(self, expr, type_info, .exists, q.variable, q.array, q.condition, &q.storage);
 }
 
 pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
-    const for_all = &expr.data.ForAll;
-    const array_type = try infer_type.inferTypeFromExpr(self, for_all.array);
+    const q = &expr.data.ForAll;
+    return checkQuantifier(self, expr, type_info, .forall, q.variable, q.array, q.condition, &q.storage);
+}
+
+fn checkQuantifier(
+    self: *SemanticAnalyzer,
+    expr: *ast.Expr,
+    type_info: *ast.TypeInfo,
+    kind: QuantifierKind,
+    variable: ast.Token,
+    array: *ast.Expr,
+    condition: *ast.Expr,
+    storage: *?u32,
+) SemanticError!void {
+    const array_type = try infer_type.inferTypeFromExpr(self, array);
 
     const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
@@ -246,9 +203,9 @@ pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
     else
         ast.TypeInfo{ .base = .Int };
 
-    self.checkFreshName(quantifier_scope, for_all.variable);
+    self.checkFreshName(quantifier_scope, variable);
     const bound = quantifier_scope.createValueBinding(
-        for_all.variable.lexeme,
+        variable.lexeme,
         eval.convertTypeToTokenType(bound_var_type.base),
         bound_var_type,
         true,
@@ -257,8 +214,8 @@ pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
             self.reporter.reportCompileError(
                 getLocationFromBase(expr.base),
                 ErrorCode.DUPLICATE_BOUND_VARIABLE_NAME,
-                "Duplicate bound variable name '{s}' in forall quantifier",
-                .{for_all.variable.lexeme},
+                "Duplicate bound variable name '{s}' in {s} quantifier",
+                .{ variable.lexeme, quantifierName(kind) },
             );
             self.fatal_error = true;
             type_info.base = .Nothing;
@@ -270,12 +227,12 @@ pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
         }
     };
 
-    for_all.storage = bound.storage_id;
+    storage.* = bound.storage_id;
 
     const prev_scope = self.current_scope;
     self.current_scope = quantifier_scope;
 
-    const condition_type = try infer_type.inferTypeFromExpr(self, for_all.condition);
+    const condition_type = try infer_type.inferTypeFromExpr(self, condition);
 
     self.current_scope = prev_scope;
 
@@ -285,8 +242,8 @@ pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
         self.reporter.reportCompileError(
             getLocationFromBase(expr.base),
             ErrorCode.INVALID_ARRAY_TYPE,
-            "ForAll requires array type, got {s}",
-            .{@tagName(array_type.base)},
+            "{s} requires array type, got {s}",
+            .{ quantifierTitle(kind), @tagName(array_type.base) },
         );
         self.fatal_error = true;
         type_info.base = .Nothing;
@@ -297,8 +254,8 @@ pub fn forAll(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
         self.reporter.reportCompileError(
             getLocationFromBase(expr.base),
             ErrorCode.INVALID_CONDITION_TYPE,
-            "ForAll condition must be tetra, got {s}",
-            .{@tagName(condition_type.base)},
+            "{s} condition must be tetra, got {s}",
+            .{ quantifierTitle(kind), @tagName(condition_type.base) },
         );
         self.fatal_error = true;
         type_info.base = .Nothing;

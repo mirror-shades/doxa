@@ -65,4 +65,9 @@ pub const HIRType = union(enum) {
     pub fn isBoxed(self: HIRType) bool {
         return self == .Union or self == .Group;
     }
+
+    /// A numeric scalar: `int`, `byte`, or `float`.
+    pub fn isNumeric(self: HIRType) bool {
+        return self == .Int or self == .Byte or self == .Float;
+    }
 };

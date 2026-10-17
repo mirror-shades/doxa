@@ -271,7 +271,7 @@ pub fn resolveTypeExpr(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr, module
         .Array => |array| try resolveTypeExpr(self, array.element_type, module),
         .Struct => |fields| for (fields) |field| try resolveTypeExpr(self, field.type_expr, module),
         .Union => |types| for (types) |member_type| try resolveTypeExpr(self, member_type, module),
-        .Basic, .Enum => {},
+        .Basic => {},
     }
 }
 
