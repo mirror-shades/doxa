@@ -537,6 +537,14 @@ const TestWiring = struct {
 /// `ValueId`, so it keeps no simulation of its own (plan/register-hir.md,
 /// "The emitter"): it declares no `…Stack…` or `…Merge…` state and no
 /// `push…`/`pop…` function.
+///
+/// Effects are the analyzer's too: whether a body writes through a parameter,
+/// or lends a local, is recorded once in analysis
+/// (`src/analysis/semantic/effects.zig`), and codegen reads it. Deriving such a
+/// fact means walking a body before lowering it, and any walk of a body visits
+/// its statements. So under `src/codegen/` only the statement lowering
+/// (`hir/lower_control.zig`) declares a function taking an `ast.Stmt`; the
+/// lowering visits each statement once, when it emits it.
 const TypeAuthority = struct {
     step: std.Build.Step,
 
@@ -576,6 +584,7 @@ const TypeAuthority = struct {
     /// Tokenizes `source`, so comments and string contents never count.
     fn scan(step: *std.Build.Step, path: []const u8, source: [:0]const u8) !void {
         const emitter = std.mem.startsWith(u8, path, "src/codegen/llvm/");
+        const lowers_statements = std.mem.eql(u8, path, "src/codegen/hir/lower_control.zig");
         var tokens: std.zig.Tokenizer = .init(source);
         // The outermost function whose body the scan is in, and the brace
         // depth of that body; a declared function whose body is still ahead.
@@ -583,13 +592,33 @@ const TypeAuthority = struct {
         var function_depth: usize = 0;
         var declared: ?[]const u8 = null;
         var depth: usize = 0;
+        // The parenthesis depth inside a declared function's parameter list;
+        // 0 outside one.
+        var params: usize = 0;
         var previous: std.zig.Token.Tag = .invalid;
+        // The text of the token before `previous`, and of `previous`.
+        var before_previous_text: []const u8 = "";
+        var previous_text: []const u8 = "";
         while (true) {
             const token = tokens.next();
-            defer previous = token.tag;
             const text = source[token.loc.start..token.loc.end];
+            defer {
+                before_previous_text = previous_text;
+                previous_text = text;
+                previous = token.tag;
+            }
             switch (token.tag) {
                 .eof => break,
+                .l_paren => {
+                    if (params > 0) {
+                        params += 1;
+                    } else if (previous == .identifier and declared != null and std.mem.eql(u8, previous_text, declared.?)) {
+                        params = 1;
+                    }
+                },
+                .r_paren => {
+                    if (params > 0) params -= 1;
+                },
                 .l_brace => {
                     depth += 1;
                     // An inline error set (`error{...}`) is not the body.
@@ -607,6 +636,11 @@ const TypeAuthority = struct {
                 },
                 .semicolon => declared = null, // an extern or a fn type
                 .identifier => {
+                    if (params > 0 and !lowers_statements and previous == .period and
+                        std.mem.eql(u8, text, "Stmt") and std.mem.eql(u8, before_previous_text, "ast"))
+                    {
+                        try step.addError("{s}: `{s}` takes an `ast.Stmt`; codegen walks a body only to lower it, and reads every fact about it from analysis (`effects.zig`)", .{ path, declared.? });
+                    }
                     if (previous == .keyword_fn) {
                         if (std.mem.startsWith(u8, text, "infer")) {
                             try step.addError("{s}: codegen declares `{s}`; a type comes from the analyzer (`typeOf`), never from codegen inference", .{ path, text });
