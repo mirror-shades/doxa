@@ -3,18 +3,24 @@
 //! continues in `b<n>.<k>`, and the label a block ends in is what its
 //! successors' phis name. A block parameter is one `phi`; every value one SSA
 //! name, `%v<n>`, or an inline constant.
+//!
+//! The lowering groups live under `function/`; this file holds the state, the
+//! per-function run, and the helpers every group shares.
 
 const std = @import("std");
 const ir = @import("../hir/register/ir.zig");
-const loops = @import("../hir/register/loops.zig");
 const rt = @import("../../runtime/doxa_rt.zig");
 const layout = @import("layout.zig");
 const int_range = @import("int_range.zig");
 const emit_mod = @import("emit.zig");
 const ranges_mod = @import("ranges.zig");
+const instructions = @import("function/instructions.zig");
+const instrument = @import("function/instrument.zig");
+const copies = @import("function/copies.zig");
+const terminators = @import("function/terminators.zig");
 
 const Emitter = emit_mod.Emitter;
-const Error = emit_mod.Error;
+pub const Error = emit_mod.Error;
 const HIRType = ir.HIRType;
 const ValueId = ir.ValueId;
 const BlockId = ir.BlockId;
@@ -35,20 +41,7 @@ pub fn emitFunction(e: *Emitter, w: *Writer, id: ir.FunctionId, f: *const ir.Fun
     try fx.run(w);
 }
 
-/// Whether a fixed array of type `t` holds heap values a copy must copy too:
-/// strings, boxes, dynamic arrays, described structs, or fixed arrays of
-/// them. Scalars and flat structs are copied with the array's bytes.
-fn holdsHeap(l: *const layout.Layout, t: HIRType) bool {
-    const element = t.Array.element.*;
-    return switch (element) {
-        .String, .Union, .Group => true,
-        .Array => |a| if (a.size != null) holdsHeap(l, element) else true,
-        .Struct => |id| !l.isFlat(id),
-        else => false,
-    };
-}
-
-const FunctionEmitter = struct {
+pub const FunctionEmitter = struct {
     e: *Emitter,
     f: *const ir.Function,
     id: ir.FunctionId,
@@ -101,9 +94,9 @@ const FunctionEmitter = struct {
             try self.entry.writer.print("  store {s} zeroinitializer, ptr {s}\n", .{ layout.doxaType(slot.ty), s.* });
         }
         self.slot_storage = storage;
-        self.inline_only = try self.storedInline();
+        self.inline_only = try copies.storedInline(self);
         // `__doxa_init` is entered once, by the runtime: no call of the program's.
-        if (self.e.instrument.calls and self.id != self.e.module.init) try self.countSite(&self.entry.writer, try self.e.site("call", f, f.span));
+        if (self.e.instrument.calls and self.id != self.e.module.init) try instrument.countSite(self, &self.entry.writer, try self.e.site("call", f, f.span));
         if (self.e.debug) |*d| self.scope = try d.subprogram(f, self.e.module.program.function_names[@intFromEnum(self.id)]);
         // A named slot is declared on its alloca: reads and writes through the
         // slot are then visible without a `#dbg_value`.
@@ -133,14 +126,14 @@ const FunctionEmitter = struct {
             self.w = &self.bodies[b].writer;
             for (block.insts) |*inst| {
                 self.setSpan(inst.span);
-                try self.countLine(inst.span);
-                try self.traceSite(inst);
-                try self.checkReads(inst);
-                try self.instruction(inst);
+                try instrument.countLine(self, inst.span);
+                try instrument.traceSite(self, inst);
+                try instrument.checkReads(self, inst);
+                try instructions.lower(self, inst);
             }
             self.setSpan(block.term_span);
-            try self.countLine(block.term_span);
-            try self.terminator(&block.term);
+            try instrument.countLine(self, block.term_span);
+            try terminators.terminator(self, &block.term);
             self.exit_labels[b] = self.label;
         }
 
@@ -178,83 +171,19 @@ const FunctionEmitter = struct {
 
     // ── Helpers ──
 
-    /// Under `--instrument=lines`, a statement's head counts the statement,
-    /// at its own start. A statement whose head the HIR does not mark (one
-    /// lowering folded into its neighbour) has no counter of its own.
-    fn countLine(self: *FunctionEmitter, span: ir.SrcSpan) Error!void {
-        if (!self.e.instrument.lines or !span.is_stmt) return;
-        try self.countSite(self.w, try self.e.site("line", self.f, self.f.statements[span.stmt]));
-    }
-
-    /// Under `--instrument=memtrace`, name the site whose runtime work this
-    /// instruction is: what it allocates, stores into a container, opens or
-    /// re-homes counts to it, nested allocations included.
-    fn traceSite(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
-        if (!self.e.instrument.memtrace) return;
-        const kind: []const u8 = switch (inst.op) {
-            .scope_enter => "arena",
-            .rehome => "rehome",
-            .clone => "clone",
-            .call_zig => |c| if (self.e.module.zig_takes_arena[@intFromEnum(c.callee)]) "zig" else return,
-            else => if (loops.allocArena(inst.op) != null) "alloc" else if (loops.storeInto(inst.op) != null) "store" else return,
-        };
-        const id = try self.e.site(kind, self.f, inst.span);
-        try self.w.print("  store i32 {d}, ptr @doxa_memtrace_site\n", .{id});
-    }
-
-    /// Under `--instrument=memcheck`, check each heap value `inst` reads
-    /// through (a string's bytes, an array, a struct, a map) before it does:
-    /// a value in memory its arena reclaimed faults here. Passing, storing or
-    /// boxing a pointer reads nothing through it, so those are not checked;
-    /// the read that follows is.
-    fn checkReads(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
-        if (!self.e.instrument.memcheck) return;
-        switch (inst.op) {
-            .debug_value, .store, .global_store, .call, .call_zig, .box, .repack, .unbox, .member_test, .member_index, .constant => return,
-            else => {},
-        }
-        const Visit = struct {
-            fx: *FunctionEmitter,
-            fn operand(ctx: @This(), v: ValueId) Error!void {
-                const t = switch (ctx.fx.typeOf(v)) {
-                    .doxa => |t| t,
-                    else => return,
-                };
-                const ptr = switch (t) {
-                    .String => (try ctx.fx.stringParts(ctx.fx.name(v))).ptr,
-                    .Array, .Struct => ctx.fx.name(v),
-                    else => return,
-                };
-                const site = try ctx.fx.e.faultSite(.use_after_reclaim, ctx.fx.span);
-                try ctx.fx.line("call void @doxa_memcheck(ptr {s}, ptr {s})", .{ ptr, site });
-            }
-        };
-        try ir.forEachOperand(&inst.op, Visit{ .fx = self }, Visit.operand);
-    }
-
-    /// Increment site `id`'s counter, written to `w`. The increment carries
-    /// no location: the statement's key instruction is still the next one
-    /// with a line.
-    fn countSite(self: *FunctionEmitter, w: *Writer, id: u32) Error!void {
-        const counter = try std.fmt.allocPrint(self.e.alloc, "getelementptr inbounds (i64, ptr @.doxa.counts, i64 {d})", .{id});
-        const old = try self.temp();
-        const new = try self.temp();
-        try w.print("  {s} = load i64, ptr {s}, align 8\n  {s} = add i64 {s}, 1\n  store i64 {s}, ptr {s}, align 8\n", .{ old, counter, new, old, new, counter });
-    }
-
-    fn name(self: *const FunctionEmitter, v: ValueId) []const u8 {
+    pub fn name(self: *const FunctionEmitter, v: ValueId) []const u8 {
         return self.names[@intFromEnum(v)];
     }
 
-    fn typeOf(self: *const FunctionEmitter, v: ValueId) ir.Type {
+    pub fn typeOf(self: *const FunctionEmitter, v: ValueId) ir.Type {
         return self.f.typeOf(v);
     }
 
-    fn doxaOf(self: *const FunctionEmitter, v: ValueId) HIRType {
+    pub fn doxaOf(self: *const FunctionEmitter, v: ValueId) HIRType {
         return self.f.typeOf(v).doxa;
     }
 
-    fn temp(self: *FunctionEmitter) Error![]const u8 {
+    pub fn temp(self: *FunctionEmitter) Error![]const u8 {
         defer self.next_temp += 1;
         return std.fmt.allocPrint(self.e.alloc, "%t{d}", .{self.next_temp});
     }
@@ -267,7 +196,7 @@ const FunctionEmitter = struct {
     }
 
     /// End an instruction's line, with its location under `-g`.
-    fn eol(self: *FunctionEmitter) Error!void {
+    pub fn eol(self: *FunctionEmitter) Error!void {
         const scope = self.scope orelse return self.w.writeAll("\n");
         var key: Location = .{ .line = self.span.line, .column = self.span.column, .key_stmt = null };
         if (self.span.artificial) {
@@ -281,20 +210,20 @@ const FunctionEmitter = struct {
         try self.w.print(", !dbg !{d}\n", .{entry.value_ptr.*});
     }
 
-    fn line(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error!void {
+    pub fn line(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error!void {
         try self.w.print("  " ++ fmt, args);
         try self.eol();
     }
 
     /// Define the result of `inst` as `rhs`.
-    fn def(self: *FunctionEmitter, inst: *const ir.Inst, comptime fmt: []const u8, args: anytype) Error!void {
+    pub fn def(self: *FunctionEmitter, inst: *const ir.Inst, comptime fmt: []const u8, args: anytype) Error!void {
         try self.w.print("  {s} = ", .{self.name(inst.result.?)});
         try self.w.print(fmt, args);
         try self.eol();
     }
 
     /// A fresh temporary defined as `rhs`.
-    fn tmp(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error![]const u8 {
+    pub fn tmp(self: *FunctionEmitter, comptime fmt: []const u8, args: anytype) Error![]const u8 {
         const t = try self.temp();
         try self.w.print("  {s} = " ++ fmt, .{t} ++ args);
         try self.eol();
@@ -302,24 +231,24 @@ const FunctionEmitter = struct {
     }
 
     /// Start a new LLVM block continuing the current HIR block.
-    fn split(self: *FunctionEmitter, comptime tag: []const u8) Error![]const u8 {
+    pub fn split(self: *FunctionEmitter, comptime tag: []const u8) Error![]const u8 {
         defer self.next_split += 1;
         return std.fmt.allocPrint(self.e.alloc, "b{d}." ++ tag ++ ".{d}", .{ @intFromEnum(self.block), self.next_split });
     }
 
-    fn enter(self: *FunctionEmitter, label: []const u8) Error!void {
+    pub fn enter(self: *FunctionEmitter, label: []const u8) Error!void {
         try self.w.print("{s}:\n", .{label});
         self.label = label;
     }
 
     /// An alloca in the entry block.
-    fn alloca(self: *FunctionEmitter, ty: []const u8) Error![]const u8 {
+    pub fn alloca(self: *FunctionEmitter, ty: []const u8) Error![]const u8 {
         const t = try self.temp();
         try self.entry.writer.print("  {s} = alloca {s}, align 8\n", .{ t, ty });
         return t;
     }
 
-    fn stringSlots(self: *FunctionEmitter) Error!struct { ptr: []const u8, len: []const u8 } {
+    pub fn stringSlots(self: *FunctionEmitter) Error!struct { ptr: []const u8, len: []const u8 } {
         if (self.str_slots) |s| return .{ .ptr = s.ptr, .len = s.len };
         const p = try self.alloca("ptr");
         const l = try self.alloca("i64");
@@ -329,7 +258,7 @@ const FunctionEmitter = struct {
 
     /// Call a runtime function that writes a string through `(out_ptr,
     /// out_len)` after `args`, and assemble the `%DoxaString`.
-    fn stringCall(self: *FunctionEmitter, func: []const u8, comptime args_fmt: []const u8, args: anytype) Error![]const u8 {
+    pub fn stringCall(self: *FunctionEmitter, func: []const u8, comptime args_fmt: []const u8, args: anytype) Error![]const u8 {
         const slots = try self.stringSlots();
         try self.w.print("  call void @{s}(" ++ args_fmt, .{func} ++ args);
         try self.w.print("{s}ptr {s}, ptr {s})", .{ if (args_fmt.len == 0) "" else ", ", slots.ptr, slots.len });
@@ -337,30 +266,30 @@ const FunctionEmitter = struct {
         return self.loadString(slots.ptr, slots.len);
     }
 
-    fn loadString(self: *FunctionEmitter, ptr_slot: []const u8, len_slot: []const u8) Error![]const u8 {
+    pub fn loadString(self: *FunctionEmitter, ptr_slot: []const u8, len_slot: []const u8) Error![]const u8 {
         const p = try self.tmp("load ptr, ptr {s}", .{ptr_slot});
         const l = try self.tmp("load i64, ptr {s}", .{len_slot});
         return self.makeString(p, l);
     }
 
-    fn makeString(self: *FunctionEmitter, p: []const u8, l: []const u8) Error![]const u8 {
+    pub fn makeString(self: *FunctionEmitter, p: []const u8, l: []const u8) Error![]const u8 {
         const s0 = try self.tmp("insertvalue %DoxaString undef, ptr {s}, 0", .{p});
         return self.tmp("insertvalue %DoxaString {s}, i64 {s}, 1", .{ s0, l });
     }
 
-    const Parts = struct { ptr: []const u8, len: []const u8 };
+    pub const Parts = struct { ptr: []const u8, len: []const u8 };
 
     /// End the current block in a `kind` fault at the current span, with the
     /// site's text (a message, or text that failed to parse) and the two
     /// numbers an out-of-bounds fault reports.
-    fn fault(self: *FunctionEmitter, kind: rt.FaultKind, text: ?Parts, aux0: []const u8, aux1: []const u8) Error!void {
+    pub fn fault(self: *FunctionEmitter, kind: rt.FaultKind, text: ?Parts, aux0: []const u8, aux1: []const u8) Error!void {
         const site = try self.e.faultSite(kind, self.span);
         const t = text orelse Parts{ .ptr = "null", .len = "0" };
         try self.line("call void @doxa_fault(ptr {s}, ptr {s}, i64 {s}, i64 {s}, i64 {s})", .{ site, t.ptr, t.len, aux0, aux1 });
         try self.line("unreachable", .{});
     }
 
-    fn stringParts(self: *FunctionEmitter, s: []const u8) Error!Parts {
+    pub fn stringParts(self: *FunctionEmitter, s: []const u8) Error!Parts {
         return .{
             .ptr = try self.tmp("extractvalue %DoxaString {s}, 0", .{s}),
             .len = try self.tmp("extractvalue %DoxaString {s}, 1", .{s}),
@@ -369,7 +298,7 @@ const FunctionEmitter = struct {
 
     /// `v`, a `%DoxaValue`, in memory, for a runtime call that takes it by
     /// address.
-    fn spillValue(self: *FunctionEmitter, v: []const u8) Error![]const u8 {
+    pub fn spillValue(self: *FunctionEmitter, v: []const u8) Error![]const u8 {
         const slot = try self.alloca("%DoxaValue");
         try self.line("store %DoxaValue {s}, ptr {s}", .{ v, slot });
         return slot;
@@ -393,206 +322,9 @@ const FunctionEmitter = struct {
         };
     }
 
-    // ── Instructions ──
-
-    fn instruction(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
-        switch (inst.op) {
-            .constant => {},
-            .arith => |a| try self.arith(inst, a.op, a.lhs, a.rhs),
-            .neg => |u| switch (self.doxaOf(u.operand)) {
-                .Float => try self.def(inst, "fneg double {s}", .{self.name(u.operand)}),
-                .Int => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(.Sub, .Int, "0", self.name(u.operand), .exact(0), self.ranges[@intFromEnum(u.operand)]),
-                .Byte => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(.Sub, .Byte, "0", self.name(u.operand), .exact(0), self.ranges[@intFromEnum(u.operand)]),
-                else => return self.e.faultf("negates a {s}", .{@tagName(self.doxaOf(u.operand))}),
-            },
-            .convert => |u| try self.convert(inst, u.operand),
-            .cmp => |c| try self.compare(inst, c.op, c.lhs, c.rhs),
-            .tetra_binary => |t| {
-                const lut = switch (t.op) {
-                    .@"and" => "@tetra_and_lut",
-                    .@"or" => "@tetra_or_lut",
-                    .iff => "@tetra_iff_lut",
-                    .xor => "@tetra_xor_lut",
-                    .nand => "@tetra_nand_lut",
-                    .nor => "@tetra_nor_lut",
-                    .implies => "@tetra_implies_lut",
-                };
-                const l = try self.tmp("zext i2 {s} to i64", .{self.name(t.lhs)});
-                const r = try self.tmp("zext i2 {s} to i64", .{self.name(t.rhs)});
-                const slot = try self.tmp("getelementptr inbounds [4 x [4 x i8]], ptr {s}, i64 0, i64 {s}, i64 {s}", .{ lut, l, r });
-                const byte = try self.tmp("load i8, ptr {s}", .{slot});
-                try self.def(inst, "trunc i8 {s} to i2", .{byte});
-            },
-            // not: false <-> true; `both` and `neither` are their own
-            // negation (`docs/tetras.md`: not `both` still holds).
-            .tetra_not => |u| {
-                const two_valued = try self.tmp("icmp ult i2 {s}, -2", .{self.name(u.operand)});
-                const flip = try self.tmp("zext i1 {s} to i2", .{two_valued});
-                try self.def(inst, "xor i2 {s}, {s}", .{ self.name(u.operand), flip });
-            },
-            .tetra_from_cond => |u| try self.def(inst, "zext i1 {s} to i2", .{self.name(u.operand)}),
-            // `true` (1) and `both` (2) hold: exactly the values whose two bits differ.
-            .tetra_holds => |u| {
-                const hi = try self.tmp("lshr i2 {s}, 1", .{self.name(u.operand)});
-                const differ = try self.tmp("xor i2 {s}, {s}", .{ hi, self.name(u.operand) });
-                try self.def(inst, "trunc i2 {s} to i1", .{differ});
-            },
-            .cond_not => |u| try self.def(inst, "xor i1 {s}, true", .{self.name(u.operand)}),
-            .cond_binary => |c| try self.def(inst, "{s} i1 {s}, {s}", .{ if (c.op == .@"and") "and" else "or", self.name(c.lhs), self.name(c.rhs) }),
-
-            .box => |u| try self.box(inst, u.operand),
-            .unbox => |u| try self.unbox(inst, u.operand),
-            .repack => |u| try self.repack(inst, u.operand),
-            .member_test => |m| try self.memberTest(inst, m.operand, m.members),
-            .member_index => |u| {
-                const reserved = try self.tmp("extractvalue %DoxaValue {s}, 1", .{self.name(u.operand)});
-                const index = try self.tmp("and i32 {s}, {d}", .{ reserved, rt.DoxaBoxMeta.member_index_mask });
-                try self.def(inst, "zext i32 {s} to i64", .{index});
-            },
-
-            .str_concat => |s| {
-                const a = try self.stringParts(self.name(s.lhs));
-                const b = try self.stringParts(self.name(s.rhs));
-                try self.defString(inst, try self.stringCall("doxa_str_concat", "ptr {s}, ptr {s}, i64 {s}, ptr {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, b.ptr, b.len }));
-            },
-            .str_len => |u| try self.def(inst, "extractvalue %DoxaString {s}, 1", .{self.name(u.operand)}),
-            .str_substring => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                try self.defString(inst, try self.stringCall("doxa_substring", "ptr {s}, ptr {s}, i64 {s}, i64 {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, self.name(s.start), self.name(s.length) }));
-            },
-            .str_last, .str_drop_last => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                const rest = try self.alloca("%DoxaString");
-                const last = try self.alloca("%DoxaString");
-                _ = try self.tmp("call i8 @doxa_str_pop(ptr {s}, ptr {s}, i64 {s}, ptr {s}, ptr {s})", .{ self.name(s.arena), a.ptr, a.len, rest, last });
-                try self.def(inst, "load %DoxaString, ptr {s}", .{if (inst.op == .str_last) last else rest});
-            },
-            .str_find => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                const b = try self.stringParts(self.name(s.needle));
-                try self.def(inst, "call i64 @doxa_find_str(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ a.ptr, a.len, b.ptr, b.len });
-            },
-            .str_insert => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                const b = try self.stringParts(self.name(s.insert));
-                try self.defString(inst, try self.stringCall("doxa_str_insert", "ptr {s}, ptr {s}, i64 {s}, i64 {s}, ptr {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, self.name(s.index), b.ptr, b.len }));
-            },
-            .str_remove => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                const rest = try self.alloca("%DoxaString");
-                const removed = try self.alloca("%DoxaString");
-                _ = try self.tmp("call i8 @doxa_str_remove(ptr {s}, ptr {s}, i64 {s}, i64 {s}, ptr {s}, ptr {s})", .{ self.name(s.arena), a.ptr, a.len, self.name(s.index), rest, removed });
-                try self.def(inst, "load %DoxaString, ptr {s}", .{rest});
-            },
-            .str_char => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                try self.boundsCheck(s.index, a.len, null, .element);
-                const at = try self.tmp("getelementptr inbounds i8, ptr {s}, i64 {s}", .{ a.ptr, self.name(s.index) });
-                const byte = try self.tmp("load i8, ptr {s}", .{at});
-                try self.defString(inst, try self.stringCall("doxa_char_to_string", "ptr {s}, i8 {s}", .{ self.name(s.arena), byte }));
-            },
-            .str_to_int, .str_to_float, .str_to_byte => |u| {
-                const a = try self.stringParts(self.name(u.operand));
-                const kind: rt.FaultKind = switch (inst.op) {
-                    .str_to_int => .parse_int,
-                    .str_to_float => .parse_float,
-                    else => .parse_byte,
-                };
-                const site = try self.e.faultSite(kind, self.span);
-                switch (inst.op) {
-                    .str_to_int => try self.def(inst, "call i64 @doxa_int_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site }),
-                    .str_to_float => try self.def(inst, "call double @doxa_float_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site }),
-                    else => {
-                        const wide = try self.tmp("call i64 @doxa_byte_from_string(ptr {s}, i64 {s}, ptr {s})", .{ a.ptr, a.len, site });
-                        try self.def(inst, "trunc i64 {s} to i8", .{wide});
-                    },
-                }
-            },
-            .str_pack => |s| try self.defString(inst, try self.stringCall("doxa_pack_bytes", "ptr {s}, ptr {s}", .{ self.name(s.arena), self.name(s.bytes) })),
-            .str_unpack => |s| {
-                const a = try self.stringParts(self.name(s.string));
-                try self.def(inst, "call ptr @doxa_unpack_bytes(ptr {s}, ptr {s}, i64 {s})", .{ self.name(s.arena), a.ptr, a.len });
-            },
-            .to_string => |s| try self.defString(inst, try self.toString(self.name(s.arena), s.operand)),
-
-            .array_new => |a| try self.arrayNew(inst, a.arena, a.length),
-            .array_from_fixed => |a| try self.arrayFromFixed(inst, a.arena, a.operand),
-            .array_range => |a| try self.def(inst, "call ptr @doxa_array_range(ptr {s}, i64 {s}, i64 {s})", .{ self.name(a.arena), self.name(a.start), self.name(a.end) }),
-            .array_get => |a| try self.arrayGet(inst, a.array, a.index),
-            .array_set => |a| try self.arraySet(a.array, a.index, a.value),
-            .array_len => |u| {
-                const t = self.doxaOf(u.operand);
-                if (t.Array.size) |n| {
-                    try self.def(inst, "add i64 0, {d}", .{n});
-                } else {
-                    const slot = try self.tmp("getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 1", .{self.name(u.operand)});
-                    try self.def(inst, "load i64, ptr {s}", .{slot});
-                }
-            },
-            .array_push => |a| {
-                const len = try self.arrayLen(self.name(a.array));
-                try self.arraySetDynamic(self.name(a.array), len, a.value);
-            },
-            .array_pop => |u| try self.arrayPop(inst, u.operand),
-            .array_insert => |a| try self.arrayInsert(a.array, a.index, a.value),
-            .array_remove => |a| try self.arrayRemove(inst, a.array, a.index),
-            .array_clear => |u| try self.line("call void @doxa_array_clear(ptr {s})", .{self.name(u.operand)}),
-            .array_slice => |a| try self.def(inst, "call ptr @doxa_array_slice(ptr {s}, ptr {s}, i64 {s}, i64 {s})", .{ self.name(a.arena), self.name(a.array), self.name(a.start), self.name(a.length) }),
-            .array_concat => |a| try self.def(inst, "call ptr @doxa_array_concat(ptr {s}, ptr {s}, ptr {s})", .{ self.name(a.arena), self.name(a.lhs), self.name(a.rhs) }),
-            .array_copy_to_fixed => |c| try self.arrayCopyToFixed(c.fixed, c.array, c.arena),
-            .array_find => |a| {
-                const element = self.doxaOf(a.array).Array.element.*;
-                if (element == .String) {
-                    const n = try self.stringParts(self.name(a.value));
-                    try self.def(inst, "call i64 @doxa_find_array_str(ptr {s}, ptr {s}, i64 {s})", .{ self.name(a.array), n.ptr, n.len });
-                } else {
-                    const bits = try self.storageBits(self.name(a.value), element);
-                    try self.def(inst, "call i64 @doxa_find_array(ptr {s}, i64 {s})", .{ self.name(a.array), bits });
-                }
-            },
-
-
-            .struct_new => |s| try self.structNew(inst, s.arena, s.fields),
-            .field_get => |g| try self.fieldGet(inst, g.object, g.index),
-            .field_set => |s| try self.fieldSet(s.object, s.index, s.value),
-            .arena_of => |u| try self.arenaOf(inst, u.operand),
-
-            // A slot's address is its alloca.
-            .slot_addr => |s| self.names[@intFromEnum(inst.result.?)] = self.slot_storage[@intFromEnum(s)],
-            .load => |u| try self.def(inst, "load {s}, ptr {s}", .{ layout.doxaType(self.typeOf(u.operand).ref), self.name(u.operand) }),
-            .store => |s| try self.line("store {s} {s}, ptr {s}", .{ layout.doxaType(self.doxaOf(s.value)), self.name(s.value), self.name(s.ref) }),
-            .global_load => |g| try self.def(inst, "load {s}, ptr {s}", .{ layout.doxaType(self.e.module.program.globals[@intFromEnum(g)].ty), try self.e.globalSymbol(g) }),
-            .global_addr => |g| self.names[@intFromEnum(inst.result.?)] = try self.e.globalSymbol(g.global),
-            .global_store => |g| try self.line("store {s} {s}, ptr {s}", .{ layout.doxaType(self.e.module.program.globals[@intFromEnum(g.global)].ty), self.name(g.value), try self.e.globalSymbol(g.global) }),
-
-            .root_arena => try self.def(inst, "call ptr @doxa_scope_root()", .{}),
-            .scope_enter => |s| try self.def(inst, "call ptr @doxa_scope_enter(ptr {s})", .{self.name(s.parent)}),
-            .scope_exit => |s| try self.line("call void @doxa_scope_exit(ptr {s})", .{self.name(s.arena)}),
-            .scope_reset => |s| {
-                try self.line("call void @doxa_scope_reset(ptr {s})", .{self.name(s.arena)});
-                // The reset arena is the same scope, emptied.
-                self.names[@intFromEnum(inst.result.?)] = self.name(s.arena);
-            },
-            .clone, .rehome => |c| if (self.inline_only[@intFromEnum(inst.result.?)]) {
-                // Stored inline, as its bytes: the store copies it.
-                self.names[@intFromEnum(inst.result.?)] = self.name(c.operand);
-            } else try self.copy(inst, c.arena, c.operand, if (inst.op == .clone) .clone else .rehome),
-
-            .call => |c| try self.callDoxa(inst, c.callee, c.args),
-            .call_zig => |c| try self.callZig(inst, c.callee, c.args),
-
-            .print => |u| {
-                const s = try self.stringParts(self.name(u.operand));
-                try self.line("call void @doxa_write_cstr(ptr {s}, i64 {s})", .{ s.ptr, s.len });
-            },
-            .peek => |p| try self.peek(p.operand, p.display, inst.span),
-            .debug_value => |v| try self.debugValue(v.local, v.value),
-        }
-    }
-
     /// `#dbg_value`: the value a named binding holds here. Nothing without
     /// `-g`.
-    fn debugValue(self: *FunctionEmitter, local: ir.LocalId, value: ValueId) Error!void {
+    pub fn debugValue(self: *FunctionEmitter, local: ir.LocalId, value: ValueId) Error!void {
         const d = if (self.e.debug) |*d| d else return;
         const var_node = try d.localVariable(self.f, self.id, local, self.f.typeOf(value), self.scope.?, self.f.locals[@intFromEnum(local)].arg);
         try self.w.print("  call void @llvm.dbg.value(metadata {s}, metadata !{d}, metadata !DIExpression()), !dbg !{d}\n", .{ try self.valueMetadata(value), var_node, try self.debugLocation() });
@@ -623,1196 +355,7 @@ const FunctionEmitter = struct {
         return std.fmt.allocPrint(self.e.alloc, "{s} {s}", .{ layout.llvmType(ty), try self.constantText(inst.op.constant, ty) });
     }
 
-    fn defString(self: *FunctionEmitter, inst: *const ir.Inst, s: []const u8) Error!void {
+    pub fn defString(self: *FunctionEmitter, inst: *const ir.Inst, s: []const u8) Error!void {
         self.names[@intFromEnum(inst.result.?)] = s;
-    }
-
-    // ── Numbers ──
-
-    fn arith(self: *FunctionEmitter, inst: *const ir.Inst, op: ir.ArithOp, lhs: ValueId, rhs: ValueId) Error!void {
-        const l = self.name(lhs);
-        const r = self.name(rhs);
-        switch (self.doxaOf(lhs)) {
-            .Int => {
-                const lr = self.ranges[@intFromEnum(lhs)];
-                const rr = self.ranges[@intFromEnum(rhs)];
-                const result = switch (op) {
-                    .Add, .Sub, .Mul => try self.checkedArith(op, .Int, l, r, lr, rr),
-                    .WrapAdd, .WrapSub, .WrapMul => try self.tmp("{s} i64 {s}, {s}", .{ wrapping(op), l, r }),
-                    .IntDiv => try self.flooredDiv(l, r, int_range.signFacts(lr, rr)),
-                    .Mod => try self.flooredMod(l, r, int_range.signFacts(lr, rr)),
-                    .Div => blk: {
-                        try self.divisorGuard(r, int_range.signFacts(lr, rr));
-                        break :blk try self.tmp("sdiv i64 {s}, {s}", .{ l, r });
-                    },
-                    .Pow => blk: {
-                        self.e.uses_int_pow = true;
-                        break :blk try self.overflowChecked("i64", try self.tmp("call {{ i64, i1 }} @doxa.int.pow(i64 {s}, i64 {s})", .{ l, r }));
-                    },
-                };
-                self.names[@intFromEnum(inst.result.?)] = result;
-            },
-            .Float => switch (op) {
-                .Add => try self.def(inst, "fadd double {s}, {s}", .{ l, r }),
-                .Sub => try self.def(inst, "fsub double {s}, {s}", .{ l, r }),
-                .Mul => try self.def(inst, "fmul double {s}, {s}", .{ l, r }),
-                .Div => try self.def(inst, "fdiv double {s}, {s}", .{ l, r }),
-                .Mod => try self.def(inst, "frem double {s}, {s}", .{ l, r }),
-                .Pow => try self.def(inst, "call double @llvm.pow.f64(double {s}, double {s})", .{ l, r }),
-                .IntDiv => return self.e.faultf("floor-divides floats", .{}),
-                .WrapAdd, .WrapSub, .WrapMul => return self.e.faultf("wraps float arithmetic", .{}),
-            },
-            // A byte is unsigned: leaving `[0, 255]` faults like `int` overflow.
-            .Byte => switch (op) {
-                .Add, .Sub, .Mul => self.names[@intFromEnum(inst.result.?)] = try self.checkedArith(op, .Byte, l, r, self.ranges[@intFromEnum(lhs)], self.ranges[@intFromEnum(rhs)]),
-                .WrapAdd, .WrapSub, .WrapMul => try self.def(inst, "{s} i8 {s}, {s}", .{ wrapping(op), l, r }),
-                .Div, .IntDiv => try self.def(inst, "udiv i8 {s}, {s}", .{ l, r }),
-                .Mod => try self.def(inst, "urem i8 {s}, {s}", .{ l, r }),
-                .Pow => {
-                    self.e.uses_byte_pow = true;
-                    const pair = try self.tmp("call {{ i8, i1 }} @doxa.byte.pow(i8 {s}, i8 {s})", .{ l, r });
-                    self.names[@intFromEnum(inst.result.?)] = try self.overflowChecked("i8", pair);
-                },
-            },
-            else => return self.e.faultf("arithmetic on a {s}", .{@tagName(self.doxaOf(lhs))}),
-        }
-    }
-
-    /// The bare instruction a wrapping op lowers to: modular by definition.
-    fn wrapping(op: ir.ArithOp) []const u8 {
-        return switch (op) {
-            .WrapAdd => "add",
-            .WrapSub => "sub",
-            .WrapMul => "mul",
-            else => unreachable,
-        };
-    }
-
-    /// `add`, `sub` or `mul` on an `int` (signed `i64`) or a `byte` (unsigned
-    /// `i8`): bare when the ranges prove the result fits the type, else checked
-    /// with a fault on overflow or underflow. Wrapping is only ever explicit,
-    /// through `+%`, `-%` and `*%`.
-    fn checkedArith(self: *FunctionEmitter, op: ir.ArithOp, operand_type: HIRType, l: []const u8, r: []const u8, lr: IntRange, rr: IntRange) Error![]const u8 {
-        const bare = switch (op) {
-            .Add => "add",
-            .Sub => "sub",
-            .Mul => "mul",
-            else => unreachable,
-        };
-        const sign, const width = switch (operand_type) {
-            .Int => .{ "s", "i64" },
-            .Byte => .{ "u", "i8" },
-            else => unreachable,
-        };
-        if (int_range.arithCannotOverflow(op, operand_type, lr, rr)) {
-            return self.tmp("{s} {s} {s}, {s}", .{ bare, width, l, r });
-        }
-        const pair = try self.tmp("call {{ {s}, i1 }} @llvm.{s}{s}.with.overflow.{s}({s} {s}, {s} {s})", .{ width, sign, bare, width, width, l, width, r });
-        return self.overflowChecked(width, pair);
-    }
-
-    /// The value of a `{ width, i1 }` result-and-overflow `pair`, faulting
-    /// with `Integer overflow` when the flag is set.
-    fn overflowChecked(self: *FunctionEmitter, width: []const u8, pair: []const u8) Error![]const u8 {
-        const result = try self.tmp("extractvalue {{ {s}, i1 }} {s}, 0", .{ width, pair });
-        const overflowed = try self.tmp("extractvalue {{ {s}, i1 }} {s}, 1", .{ width, pair });
-        const trap = try self.split("ovf.trap");
-        const cont = try self.split("ovf.cont");
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ overflowed, trap, cont });
-        try self.enter(trap);
-        try self.fault(.overflow, null, "0", "0");
-        try self.enter(cont);
-        return result;
-    }
-
-    /// Trap when a divisor the ranges do not prove non-zero is zero:
-    /// `sdiv`/`srem` by zero is undefined in LLVM.
-    fn divisorGuard(self: *FunctionEmitter, divisor: []const u8, facts: int_range.SignFacts) Error!void {
-        if (facts.divisorNonZero()) return;
-        const zero = try self.tmp("icmp eq i64 {s}, 0", .{divisor});
-        const trap = try self.split("div0.trap");
-        const cont = try self.split("div0.cont");
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ zero, trap, cont });
-        try self.enter(trap);
-        try self.fault(.div_by_zero, null, "0", "0");
-        try self.enter(cont);
-    }
-
-    fn correction(self: *FunctionEmitter, remainder: []const u8, dividend: []const u8, divisor: []const u8, dividend_sign_decided: bool) Error![]const u8 {
-        const non_zero = try self.tmp("icmp ne i64 {s}, 0", .{remainder});
-        const sign = if (dividend_sign_decided) dividend else try self.tmp("xor i64 {s}, {s}", .{ dividend, divisor });
-        const negative = try self.tmp("icmp slt i64 {s}, 0", .{sign});
-        return self.tmp("and i1 {s}, {s}", .{ non_zero, negative });
-    }
-
-    /// Floored `%` in the cheapest exact shape the facts allow
-    /// (`int_range.planModulo`).
-    fn flooredMod(self: *FunctionEmitter, dividend: []const u8, divisor: []const u8, facts: int_range.SignFacts) Error![]const u8 {
-        switch (int_range.planModulo(facts)) {
-            .urem_const => |mag| return self.tmp("urem i64 {s}, {d}", .{ dividend, mag }),
-            .urem_const_negated => |mag| {
-                const residue = try self.tmp("urem i64 {s}, {d}", .{ dividend, mag });
-                const non_zero = try self.tmp("icmp ne i64 {s}, 0", .{residue});
-                const adjust = try self.tmp("select i1 {s}, i64 {d}, i64 0", .{ non_zero, mag });
-                return self.tmp("sub i64 {s}, {s}", .{ residue, adjust });
-            },
-            .srem_bare => {
-                try self.divisorGuard(divisor, facts);
-                return self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
-            },
-            .fixup_dividend_sign, .fixup_general => {
-                try self.divisorGuard(divisor, facts);
-                const residue = try self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
-                const cond = try self.correction(residue, dividend, divisor, int_range.planModulo(facts) == .fixup_dividend_sign);
-                const adjust = try self.tmp("select i1 {s}, i64 {s}, i64 0", .{ cond, divisor });
-                return self.tmp("add i64 {s}, {s}", .{ residue, adjust });
-            },
-        }
-    }
-
-    /// Floored `//` (`int_range.planDiv`).
-    fn flooredDiv(self: *FunctionEmitter, dividend: []const u8, divisor: []const u8, facts: int_range.SignFacts) Error![]const u8 {
-        switch (int_range.planDiv(facts)) {
-            .shift_floor => |k| {
-                const residue = try self.tmp("urem i64 {s}, {d}", .{ dividend, @as(u64, 1) << k });
-                const cleared = try self.tmp("sub i64 {s}, {s}", .{ dividend, residue });
-                return self.tmp("ashr i64 {s}, {d}", .{ cleared, k });
-            },
-            .sdiv_bare => {
-                try self.divisorGuard(divisor, facts);
-                return self.tmp("sdiv i64 {s}, {s}", .{ dividend, divisor });
-            },
-            .fixup_dividend_sign, .fixup_general => {
-                try self.divisorGuard(divisor, facts);
-                const quotient = try self.tmp("sdiv i64 {s}, {s}", .{ dividend, divisor });
-                const residue = try self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
-                const cond = try self.correction(residue, dividend, divisor, int_range.planDiv(facts) == .fixup_dividend_sign);
-                const adjust = try self.tmp("zext i1 {s} to i64", .{cond});
-                return self.tmp("sub i64 {s}, {s}", .{ quotient, adjust });
-            },
-        }
-    }
-
-    fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
-        const from = self.doxaOf(operand);
-        const to = self.f.typeOf(inst.result.?).doxa;
-        const v = self.name(operand);
-        switch (to) {
-            .Float => switch (from) {
-                .Int => try self.def(inst, "sitofp i64 {s} to double", .{v}),
-                .Byte => try self.def(inst, "uitofp i8 {s} to double", .{v}),
-                else => return self.e.faultf("converts a {s} to a float", .{@tagName(from)}),
-            },
-            .Int => switch (from) {
-                .Byte => try self.def(inst, "zext i8 {s} to i64", .{v}),
-                .Float => try self.def(inst, "fptosi double {s} to i64", .{v}),
-                else => return self.e.faultf("converts a {s} to an int", .{@tagName(from)}),
-            },
-            .Byte => switch (from) {
-                .Int => try self.def(inst, "trunc i64 {s} to i8", .{v}),
-                .Float => {
-                    const wide = try self.tmp("call i64 @doxa_byte_from_f64(double {s})", .{v});
-                    try self.def(inst, "trunc i64 {s} to i8", .{wide});
-                },
-                else => return self.e.faultf("converts a {s} to a byte", .{@tagName(from)}),
-            },
-            else => return self.e.faultf("converts to a {s}", .{@tagName(to)}),
-        }
-    }
-
-    fn compare(self: *FunctionEmitter, inst: *const ir.Inst, op: ir.CompareOp, lhs: ValueId, rhs: ValueId) Error!void {
-        const l = self.name(lhs);
-        const r = self.name(rhs);
-        const signed = [_][]const u8{ "eq", "ne", "slt", "sle", "sgt", "sge" };
-        const unsigned = [_][]const u8{ "eq", "ne", "ult", "ule", "ugt", "uge" };
-        const ordered = [_][]const u8{ "oeq", "une", "olt", "ole", "ogt", "oge" };
-        const i = @intFromEnum(op);
-        switch (self.doxaOf(lhs)) {
-            .Int, .Enum => try self.def(inst, "icmp {s} i64 {s}, {s}", .{ signed[i], l, r }),
-            .Byte => try self.def(inst, "icmp {s} i8 {s}, {s}", .{ unsigned[i], l, r }),
-            .Tetra => try self.def(inst, "icmp {s} i2 {s}, {s}", .{ signed[i], l, r }),
-            .Float => try self.def(inst, "fcmp {s} double {s}, {s}", .{ ordered[i], l, r }),
-            .Nothing => try self.def(inst, "icmp {s} i1 0, 0", .{signed[i]}),
-            .String => {
-                const a = try self.stringParts(l);
-                const b = try self.stringParts(r);
-                switch (op) {
-                    .Eq => try self.def(inst, "call i1 @doxa_str_eq(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ a.ptr, a.len, b.ptr, b.len }),
-                    .Ne => {
-                        const eq = try self.tmp("call i1 @doxa_str_eq(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ a.ptr, a.len, b.ptr, b.len });
-                        try self.def(inst, "xor i1 {s}, true", .{eq});
-                    },
-                    // Byte-wise lexicographic (`docs/strings.md`).
-                    else => {
-                        const order = try self.tmp("call i32 @doxa_str_cmp(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ a.ptr, a.len, b.ptr, b.len });
-                        try self.def(inst, "icmp {s} i32 {s}, 0", .{ signed[i], order });
-                    },
-                }
-            },
-            else => |t| return self.e.faultf("compares {s} values", .{@tagName(t)}),
-        }
-    }
-
-    // ── Boxes ──
-
-    /// Box a member as `boxed`: its runtime tag, the box header with the
-    /// member's index, and its payload (a scalar's bits, a pointer, or a
-    /// string's pointer and length).
-    fn box(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
-        const boxed = self.f.typeOf(inst.result.?).doxa;
-        const member = self.doxaOf(operand);
-        const index = try self.memberIndex(boxed, member);
-        const header = try self.e.boxHeader(boxed);
-        const payload = try self.payloadWords(self.name(operand), member);
-        const v0 = try self.tmp("insertvalue %DoxaValue undef, i32 {d}, 0", .{@intFromEnum(layout.valueTag(member))});
-        const v1 = try self.tmp("insertvalue %DoxaValue {s}, i32 {d}, 1", .{ v0, header | index });
-        const v2 = try self.tmp("insertvalue %DoxaValue {s}, i64 {s}, 2", .{ v1, payload.bits });
-        try self.def(inst, "insertvalue %DoxaValue {s}, i64 {s}, 3", .{ v2, payload.len });
-    }
-
-    fn memberIndex(self: *FunctionEmitter, boxed: HIRType, member: HIRType) Error!u32 {
-        for (try self.e.boxMembers(boxed), 0..) |m, i| {
-            if (m.eql(member)) return @intCast(i);
-        }
-        return self.e.faultf("boxes a {s}, which its box type does not hold", .{@tagName(member)});
-    }
-
-    const Payload = struct { bits: []const u8, len: []const u8 };
-
-    fn payloadWords(self: *FunctionEmitter, v: []const u8, t: HIRType) Error!Payload {
-        return switch (t) {
-            .String => blk: {
-                const s = try self.stringParts(v);
-                break :blk .{ .bits = try self.tmp("ptrtoint ptr {s} to i64", .{s.ptr}), .len = s.len };
-            },
-            else => .{ .bits = try self.storageBits(v, t), .len = "0" },
-        };
-    }
-
-    /// A value of `t` as one `i64` word: a scalar's bits, a pointer's
-    /// address. What a struct field, a map entry or a box payload stores.
-    fn storageBits(self: *FunctionEmitter, v: []const u8, t: HIRType) Error![]const u8 {
-        return switch (t) {
-            .Int, .Enum => v,
-            .Byte => self.tmp("zext i8 {s} to i64", .{v}),
-            .Tetra => self.tmp("zext i2 {s} to i64", .{v}),
-            .Float => self.tmp("bitcast double {s} to i64", .{v}),
-            .Nothing => "0",
-            .Array, .Struct, .Function => self.tmp("ptrtoint ptr {s} to i64", .{v}),
-            .String, .Union, .Group, .Unknown, .Poison => self.e.faultf("stores a {s} as one word", .{@tagName(t)}),
-        };
-    }
-
-    /// The value of `t` an `i64` word holds: the inverse of `storageBits`.
-    fn fromBits(self: *FunctionEmitter, bits: []const u8, t: HIRType) Error![]const u8 {
-        return switch (t) {
-            .Int, .Enum => bits,
-            .Byte => self.tmp("trunc i64 {s} to i8", .{bits}),
-            .Tetra => self.tmp("trunc i64 {s} to i2", .{bits}),
-            .Float => self.tmp("bitcast i64 {s} to double", .{bits}),
-            .Nothing => "0",
-            .Array, .Struct, .Function => self.tmp("inttoptr i64 {s} to ptr", .{bits}),
-            .String, .Union, .Group, .Unknown, .Poison => self.e.faultf("reads a {s} from one word", .{@tagName(t)}),
-        };
-    }
-
-    fn unbox(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
-        const member = self.f.typeOf(inst.result.?).doxa;
-        const v = self.name(operand);
-        if (member.isBoxed()) {
-            // A narrowing to a smaller box re-packs it.
-            return self.repack(inst, operand);
-        }
-        const bits = try self.tmp("extractvalue %DoxaValue {s}, 2", .{v});
-        if (member == .String) {
-            const p = try self.tmp("inttoptr i64 {s} to ptr", .{bits});
-            const len = try self.tmp("extractvalue %DoxaValue {s}, 3", .{v});
-            const s = try self.makeString(p, len);
-            self.names[@intFromEnum(inst.result.?)] = s;
-            return;
-        }
-        const value = try self.fromBits(bits, member);
-        if (member == .Nothing) {
-            self.names[@intFromEnum(inst.result.?)] = "0";
-            return;
-        }
-        self.names[@intFromEnum(inst.result.?)] = value;
-    }
-
-    /// Re-pack a box for another box type holding the same member: the
-    /// member index is rewritten to the target's index for that member.
-    fn repack(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
-        const source = self.doxaOf(operand);
-        const target = self.f.typeOf(inst.result.?).doxa;
-        const header = try self.e.boxHeader(target);
-        const v = self.name(operand);
-        const reserved = try self.tmp("extractvalue %DoxaValue {s}, 1", .{v});
-        const index = try self.tmp("and i32 {s}, {d}", .{ reserved, rt.DoxaBoxMeta.member_index_mask });
-        var acc: ?[]const u8 = null;
-        const target_members = try self.e.boxMembers(target);
-        for (try self.e.boxMembers(source), 0..) |m, source_index| {
-            const target_index = for (target_members, 0..) |t, ti| {
-                if (t.eql(m)) break ti;
-            } else continue;
-            const word = header | @as(u32, @intCast(target_index));
-            if (acc) |previous| {
-                const is = try self.tmp("icmp eq i32 {s}, {d}", .{ index, source_index });
-                acc = try self.tmp("select i1 {s}, i32 {d}, i32 {s}", .{ is, word, previous });
-            } else {
-                acc = try std.fmt.allocPrint(self.e.alloc, "{d}", .{word});
-            }
-        }
-        const repacked = acc orelse return self.e.faultf("re-packs a box as a type holding none of its members", .{});
-        try self.def(inst, "insertvalue %DoxaValue {s}, i32 {s}, 1", .{ v, repacked });
-    }
-
-    /// Whether a box holds one of `members`.
-    fn memberTest(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId, members: []const u32) Error!void {
-        const reserved = try self.tmp("extractvalue %DoxaValue {s}, 1", .{self.name(operand)});
-        const index = try self.tmp("and i32 {s}, {d}", .{ reserved, rt.DoxaBoxMeta.member_index_mask });
-        var acc: []const u8 = "false";
-        for (members, 0..) |m, i| {
-            const is = try self.tmp("icmp eq i32 {s}, {d}", .{ index, m });
-            acc = if (i == 0) is else try self.tmp("or i1 {s}, {s}", .{ acc, is });
-        }
-        self.names[@intFromEnum(inst.result.?)] = acc;
-    }
-
-    // ── Text ──
-
-    /// The text of a value, in arena `arena`.
-    fn toString(self: *FunctionEmitter, arena: []const u8, operand: ValueId) Error![]const u8 {
-        const v = self.name(operand);
-        return switch (self.doxaOf(operand)) {
-            .String => v,
-            .Int => self.stringCall("doxa_int_to_string", "ptr {s}, i64 {s}", .{ arena, v }),
-            .Float => self.stringCall("doxa_float_to_string", "ptr {s}, double {s}", .{ arena, v }),
-            .Byte => self.stringCall("doxa_byte_to_string", "ptr {s}, i64 {s}", .{ arena, try self.tmp("zext i8 {s} to i64", .{v}) }),
-            .Tetra => self.stringCall("doxa_tetra_to_string", "ptr {s}, i64 {s}", .{ arena, try self.tmp("zext i2 {s} to i64", .{v}) }),
-            .Nothing => self.stringCall("doxa_nothing_to_string", "ptr {s}", .{arena}),
-            .Enum => |id| self.stringCall("doxa_enum_to_string", "ptr {s}, ptr {s}, i64 {s}", .{ arena, try self.e.enumDesc(id), v }),
-            .Struct => self.stringCall("doxa_struct_to_string", "ptr {s}, ptr {s}", .{ arena, v }),
-            .Array => |a| if (a.size != null)
-                self.e.faultf("renders a fixed array; the generator converts it first", .{})
-            else
-                self.stringCall("doxa_array_to_string", "ptr {s}, ptr {s}", .{ arena, v }),
-            .Union, .Group => self.stringCall("doxa_value_to_string", "ptr {s}, ptr {s}", .{ arena, try self.spillValue(v) }),
-            .Function => self.e.stringConstant("<function>"),
-            .Unknown, .Poison => unreachable,
-        };
-    }
-
-    // ── Arrays ──
-
-    fn arrayLen(self: *FunctionEmitter, array: []const u8) Error![]const u8 {
-        const slot = try self.tmp("getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 1", .{array});
-        return self.tmp("load i64, ptr {s}", .{slot});
-    }
-
-    fn arrayNew(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, length: ?ValueId) Error!void {
-        const ty = self.f.typeOf(inst.result.?).doxa;
-        const element = ty.Array.element.*;
-        if (ty.Array.size != null) {
-            // A fixed array is a zeroed flat buffer in its arena.
-            const bytes = layout.fixedBytes(&self.e.layout, ty);
-            try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ self.name(arena), bytes });
-            try self.line("call void @llvm.memset.p0.i64(ptr align 8 {s}, i8 0, i64 {d}, i1 false)", .{ self.name(inst.result.?), bytes });
-            try self.defaultStructs(self.name(inst.result.?), self.name(arena), ty);
-            return;
-        }
-        try self.def(inst, "call ptr @doxa_array_new(ptr {s}, i64 {d}, i64 {d}, i64 {s})", .{
-            self.name(arena), layout.elementSize(element), layout.elementTag(element), self.name(length.?),
-        });
-        const words = self.e.layout.skippedWords(element);
-        if (words != 0) try self.line("call void @doxa_array_set_elem_words(ptr {s}, i64 {d})", .{ self.name(inst.result.?), words });
-    }
-
-    /// A fixed array of a struct with a descriptor holds pointers, each to a
-    /// zeroed struct of its own, registered in `arena`.
-    /// Nested fixed arrays are inline, so the struct pointers of every
-    /// dimension are one contiguous run.
-    fn defaultStructs(self: *FunctionEmitter, buffer: []const u8, arena: []const u8, ty: HIRType) Error!void {
-        var count: u64 = 1;
-        var cursor = ty;
-        while (cursor == .Array and cursor.Array.size != null) : (cursor = cursor.Array.element.*) count *= cursor.Array.size.?;
-        if (cursor != .Struct or self.e.layout.isFlat(cursor.Struct)) return;
-        const template = try self.defaultStruct(arena, cursor.Struct);
-        try self.line("call void @doxa_fixed_structs_default(ptr {s}, ptr {s}, i64 {d}, ptr {s})", .{ arena, buffer, count, template });
-    }
-
-    /// A struct's default value, built in `arena`: zero for a scalar, `""`
-    /// for a string, and `nothing` boxed for a union or group field — the
-    /// member a declaration without an initializer holds.
-    fn defaultStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId) Error![]const u8 {
-        const field_types = self.e.layout.struct_fields[id];
-        const object = try self.zeroedStruct(arena, id);
-        for (field_types, 0..) |t, i| {
-            if (!t.isBoxed()) continue;
-            const header = try self.e.boxHeader(t);
-            const index = self.memberIndex(t, .Nothing) catch return self.e.faultf("a {s} field without `nothing` has no default", .{@tagName(t)});
-            const cell = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 24, i64 8)", .{arena});
-            try self.line("store %DoxaValue {{ i32 {d}, i32 {d}, i64 0, i64 0 }}, ptr {s}", .{ @intFromEnum(rt.DoxaTag.Nothing), header | index, cell });
-            const bits = try self.tmp("ptrtoint ptr {s} to i64", .{cell});
-            try self.line("store i64 {s}, ptr {s}", .{ bits, try self.fieldPtr(object, id, layout.fieldOffset(field_types, @intCast(i))) });
-        }
-        return object;
-    }
-
-    /// A zeroed struct in `arena`. A described struct comes from the runtime
-    /// behind its header (its descriptor and owning arena); a
-    /// descriptor-skipped one is its bare words.
-    fn zeroedStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId) Error![]const u8 {
-        if (!self.e.layout.skip_descriptor[id]) {
-            return self.tmp("call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ arena, try self.e.structDesc(id) });
-        }
-        const bytes = @as(u64, @max(1, layout.structWords(self.e.layout.struct_fields[id]))) * 8;
-        const object = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ arena, bytes });
-        try self.line("call void @llvm.memset.p0.i64(ptr align 8 {s}, i8 0, i64 {d}, i1 false)", .{ object, bytes });
-        return object;
-    }
-
-    fn arrayFromFixed(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, operand: ValueId) Error!void {
-        const from = self.doxaOf(operand);
-        // Dimensions, outermost first, and the innermost element.
-        var sizes: std.ArrayListUnmanaged(u64) = .empty;
-        var cursor = from;
-        while (cursor == .Array and cursor.Array.size != null) : (cursor = cursor.Array.element.*) {
-            try sizes.append(self.e.alloc, cursor.Array.size.?);
-        }
-        const element = cursor;
-        if (element == .Struct and self.e.layout.isFlat(element.Struct)) {
-            if (sizes.items.len != 1) return self.e.faultf("converts a nested fixed array of flat structs", .{});
-            try self.def(inst, "call ptr @doxa_array_from_fixed_structs(ptr {s}, ptr {s}, i64 {d}, i64 {d})", .{
-                self.name(arena), self.name(operand), sizes.items[0], self.e.layout.structWordsOf(element.Struct),
-            });
-            return;
-        }
-        const dims = try self.alloca(try std.fmt.allocPrint(self.e.alloc, "[{d} x i64]", .{sizes.items.len}));
-        for (sizes.items, 0..) |n, i| {
-            const at = try self.tmp("getelementptr inbounds [{d} x i64], ptr {s}, i64 0, i64 {d}", .{ sizes.items.len, dims, i });
-            try self.line("store i64 {d}, ptr {s}", .{ n, at });
-        }
-        try self.def(inst, "call ptr @doxa_array_from_fixed(ptr {s}, ptr {s}, ptr {s}, i64 {d}, i64 {d}, i64 {d})", .{
-            self.name(arena), self.name(operand), dims, sizes.items.len, layout.elementSize(element), layout.elementTag(element),
-        });
-    }
-
-    /// Copy `array`'s elements back into the fixed array `fixed`, as many as
-    /// both hold: the inverse of `array.from_fixed`.
-    fn arrayCopyToFixed(self: *FunctionEmitter, fixed: ValueId, array: ValueId, arena: ValueId) Error!void {
-        try self.copyBackElements(fixed, array);
-        // The elements arrive as the callee left them, wherever it placed
-        // them: each heap one is then copied into the fixed array's arena.
-        const t = self.doxaOf(fixed);
-        if (holdsHeap(&self.e.layout, t)) try self.deepenFixed(self.name(fixed), t, self.name(arena));
-    }
-
-    fn copyBackElements(self: *FunctionEmitter, fixed: ValueId, array: ValueId) Error!void {
-        const t = self.doxaOf(fixed);
-        var sizes: std.ArrayListUnmanaged(u64) = .empty;
-        var cursor = t;
-        while (cursor == .Array and cursor.Array.size != null) : (cursor = cursor.Array.element.*) {
-            try sizes.append(self.e.alloc, cursor.Array.size.?);
-        }
-        const element = cursor;
-        if (element == .Struct and self.e.layout.isFlat(element.Struct)) {
-            if (sizes.items.len != 1) return self.e.faultf("copies into a nested fixed array of flat structs", .{});
-            try self.line("call void @doxa_array_copy_to_fixed_structs(ptr {s}, ptr {s}, i64 {d}, i64 {d})", .{ self.name(array), self.name(fixed), sizes.items[0], self.e.layout.structWordsOf(element.Struct) });
-            return;
-        }
-        const dims = try self.alloca(try std.fmt.allocPrint(self.e.alloc, "[{d} x i64]", .{sizes.items.len}));
-        for (sizes.items, 0..) |n, i| {
-            const at = try self.tmp("getelementptr inbounds [{d} x i64], ptr {s}, i64 0, i64 {d}", .{ sizes.items.len, dims, i });
-            try self.line("store i64 {d}, ptr {s}", .{ n, at });
-        }
-        try self.line("call void @doxa_array_copy_to_fixed(ptr {s}, ptr {s}, ptr {s}, i64 {d}, i64 {d})", .{ self.name(array), self.name(fixed), dims, sizes.items.len, layout.elementSize(element) });
-    }
-
-    /// The address of element `index` of `array`.
-    /// Which indexes a bounds check admits: an element's, `0 <= i < length`,
-    /// or an insertion point's, `0 <= i <= length`.
-    const Bound = enum { element, insertion };
-
-    /// Fault unless `index` is in bounds for `length` (`fixed`, when the
-    /// length is a constant). One unsigned compare also rejects a negative
-    /// index. Out-of-bounds access is defined in every mode
-    /// (`docs/performance.md`); the check is dropped only where the ranges
-    /// prove the index in bounds.
-    fn boundsCheck(self: *FunctionEmitter, index: ValueId, length: []const u8, fixed: ?u64, bound: Bound) Error!void {
-        const r = self.ranges[@intFromEnum(index)];
-        if (fixed) |n| {
-            const limit: i64 = @intCast(if (bound == .element) n else n + 1);
-            if (r.lo >= 0 and r.hi < limit) return;
-        }
-        const i = self.name(index);
-        const out = try self.tmp("icmp {s} i64 {s}, {s}", .{ if (bound == .element) "uge" else "ugt", i, length });
-        const fault_label = try self.split("oob.fault");
-        const cont = try self.split("oob.cont");
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ out, fault_label, cont });
-        try self.enter(fault_label);
-        try self.fault(.index_out_of_bounds, null, i, length);
-        try self.enter(cont);
-    }
-
-    /// The bounds check of an element access to `array` at `index`.
-    fn elementCheck(self: *FunctionEmitter, array: ValueId, index: ValueId) Error!void {
-        const t = self.doxaOf(array);
-        if (t.Array.size) |n| {
-            return self.boundsCheck(index, try std.fmt.allocPrint(self.e.alloc, "{d}", .{n}), n, .element);
-        }
-        return self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .element);
-    }
-
-    fn elementPtr(self: *FunctionEmitter, array: ValueId, index: []const u8) Error![]const u8 {
-        const t = self.doxaOf(array);
-        if (t.Array.size != null) {
-            return self.tmp("getelementptr inbounds {s}, ptr {s}, i64 0, i64 {s}", .{ try layout.fixedStorageType(self.e.alloc, &self.e.layout, t), self.name(array), index });
-        }
-        const data_slot = try self.tmp("getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 0", .{self.name(array)});
-        const data = try self.tmp("load ptr, ptr {s}", .{data_slot});
-        return self.tmp("getelementptr inbounds {s}, ptr {s}, i64 {s}", .{ layout.elementStorageType(t.Array.element.*), data, index });
-    }
-
-    /// The address is computed in the IR, behind an in-IR bounds check, so
-    /// LLVM can hoist, unroll and vectorize the loop.
-    fn arrayGet(self: *FunctionEmitter, inst: *const ir.Inst, array: ValueId, index: ValueId) Error!void {
-        try self.elementCheck(array, index);
-        const t = self.doxaOf(array);
-        const element = t.Array.element.*;
-        const at = try self.elementPtr(array, self.name(index));
-        const fixed = t.Array.size != null;
-        // An inline element — a nested fixed array, a flat struct — is its
-        // address.
-        if (fixed and ((element == .Array and element.Array.size != null) or (element == .Struct and self.e.layout.isFlat(element.Struct)))) {
-            self.names[@intFromEnum(inst.result.?)] = at;
-            return;
-        }
-        switch (element) {
-            .Tetra => {
-                const byte = try self.tmp("load i8, ptr {s}", .{at});
-                try self.def(inst, "trunc i8 {s} to i2", .{byte});
-            },
-            .Nothing => self.names[@intFromEnum(inst.result.?)] = "0",
-            else => try self.def(inst, "load {s}, ptr {s}", .{ layout.elementStorageType(element), at }),
-        }
-    }
-
-    fn arraySet(self: *FunctionEmitter, array: ValueId, index: ValueId, value: ValueId) Error!void {
-        try self.elementCheck(array, index);
-        const t = self.doxaOf(array);
-        if (t.Array.size == null) return self.arraySetDynamic(self.name(array), self.name(index), value);
-        const element = t.Array.element.*;
-        const at = try self.elementPtr(array, self.name(index));
-        const v = self.name(value);
-        if (element == .Array and element.Array.size != null) {
-            try self.line("call void @llvm.memcpy.p0.p0.i64(ptr {s}, ptr {s}, i64 {d}, i1 false)", .{ at, v, layout.fixedBytes(&self.e.layout, element) });
-        } else if (element == .Struct and self.e.layout.isFlat(element.Struct)) {
-            try self.line("call void @llvm.memcpy.p0.p0.i64(ptr {s}, ptr {s}, i64 {d}, i1 false)", .{ at, v, @as(u64, self.e.layout.structWordsOf(element.Struct)) * 8 });
-        } else switch (element) {
-            .Tetra => try self.line("store i8 {s}, ptr {s}", .{ try self.tmp("zext i2 {s} to i8", .{v}), at }),
-            .Nothing => {},
-            else => try self.line("store {s} {s}, ptr {s}", .{ layout.elementStorageType(element), v, at }),
-        }
-    }
-
-    /// An element store into a dynamic array goes through the runtime, which
-    /// grows the array and re-homes a heap element into the array's arena.
-    fn arraySetDynamic(self: *FunctionEmitter, array: []const u8, index: []const u8, value: ValueId) Error!void {
-        const element = self.doxaOf(value);
-        const v = self.name(value);
-        switch (element) {
-            .String => {
-                const s = try self.stringParts(v);
-                try self.line("call void @doxa_array_set_str(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ array, index, s.ptr, s.len });
-            },
-            .Union, .Group => try self.line("call void @doxa_array_set_value(ptr {s}, i64 {s}, ptr {s})", .{ array, index, try self.spillValue(v) }),
-            else => try self.line("call void @doxa_array_set_i64(ptr {s}, i64 {s}, i64 {s})", .{ array, index, try self.storageBits(v, element) }),
-        }
-    }
-
-    fn arrayPop(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) Error!void {
-        const array = self.name(operand);
-        const len = try self.arrayLen(array);
-        const empty = try self.tmp("icmp eq i64 {s}, 0", .{len});
-        const fault_label = try self.split("pop.fault");
-        const cont = try self.split("pop.cont");
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ empty, fault_label, cont });
-        try self.enter(fault_label);
-        try self.fault(.pop_empty, null, "0", "0");
-        try self.enter(cont);
-        const last = try self.tmp("sub i64 {s}, 1", .{len});
-        try self.arrayRemoveAt(inst, operand, last);
-    }
-
-    fn arrayRemove(self: *FunctionEmitter, inst: *const ir.Inst, array: ValueId, index: ValueId) Error!void {
-        try self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .element);
-        try self.arrayRemoveAt(inst, array, self.name(index));
-    }
-
-    fn arrayRemoveAt(self: *FunctionEmitter, inst: *const ir.Inst, array: ValueId, index: []const u8) Error!void {
-        const element = self.doxaOf(array).Array.element.*;
-        const a = self.name(array);
-        switch (element) {
-            .String => {
-                const slots = try self.stringSlots();
-                try self.line("call void @doxa_array_remove_str(ptr {s}, i64 {s}, ptr {s}, ptr {s})", .{ a, index, slots.ptr, slots.len });
-                self.names[@intFromEnum(inst.result.?)] = try self.loadString(slots.ptr, slots.len);
-            },
-            .Union, .Group => {
-                const slot = try self.alloca("%DoxaValue");
-                try self.line("call void @doxa_array_remove_value(ptr {s}, i64 {s}, ptr {s})", .{ a, index, slot });
-                try self.def(inst, "load %DoxaValue, ptr {s}", .{slot});
-            },
-            else => {
-                const bits = try self.tmp("call i64 @doxa_array_remove(ptr {s}, i64 {s})", .{ a, index });
-                self.names[@intFromEnum(inst.result.?)] = try self.fromBits(bits, element);
-            },
-        }
-    }
-
-    fn arrayInsert(self: *FunctionEmitter, array: ValueId, index: ValueId, value: ValueId) Error!void {
-        try self.boundsCheck(index, try self.arrayLen(self.name(array)), null, .insertion);
-        const element = self.doxaOf(value);
-        const a = self.name(array);
-        const i = self.name(index);
-        const v = self.name(value);
-        switch (element) {
-            .String => {
-                const s = try self.stringParts(v);
-                try self.line("call void @doxa_array_insert_str(ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ a, i, s.ptr, s.len });
-            },
-            .Union, .Group => try self.line("call void @doxa_array_insert_value(ptr {s}, i64 {s}, ptr {s})", .{ a, i, try self.spillValue(v) }),
-            else => try self.line("call void @doxa_array_insert(ptr {s}, i64 {s}, i64 {s})", .{ a, i, try self.storageBits(v, element) }),
-        }
-    }
-
-    // ── Structs ──
-
-    fn structType(self: *FunctionEmitter, id: ir.StructId) Error![]const u8 {
-        return std.fmt.allocPrint(self.e.alloc, "[{d} x i64]", .{@max(1, self.e.layout.structWordsOf(id))});
-    }
-
-    fn fieldPtr(self: *FunctionEmitter, object: []const u8, id: ir.StructId, word: u32) Error![]const u8 {
-        return self.tmp("getelementptr inbounds {s}, ptr {s}, i64 0, i64 {d}", .{ try self.structType(id), object, word });
-    }
-
-    fn structNew(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, fields: []const ValueId) Error!void {
-        const id = self.f.typeOf(inst.result.?).doxa.Struct;
-        const field_types = self.e.layout.struct_fields[id];
-        if (self.e.layout.skip_descriptor[id]) {
-            const words = @max(1, layout.structWords(field_types));
-            try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ self.name(arena), words * 8 });
-        } else {
-            try self.def(inst, "call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ self.name(arena), try self.e.structDesc(id) });
-        }
-        const object = self.name(inst.result.?);
-        for (fields, field_types, 0..) |v, t, i| {
-            try self.storeField(object, self.name(arena), id, @intCast(i), t, self.name(v));
-        }
-    }
-
-    /// Store `v` into field `index` of `object`, which lives in `scope`: a
-    /// string is copied there, a box is given a cell there.
-    fn storeField(self: *FunctionEmitter, object: []const u8, scope: []const u8, id: ir.StructId, index: u32, t: HIRType, v: []const u8) Error!void {
-        const field_types = self.e.layout.struct_fields[id];
-        const word = layout.fieldOffset(field_types, index);
-        switch (t) {
-            .String => {
-                const s = try self.stringParts(v);
-                try self.line("store ptr {s}, ptr {s}", .{ s.ptr, try self.fieldPtr(object, id, word) });
-                try self.line("store i64 {s}, ptr {s}", .{ s.len, try self.fieldPtr(object, id, word + 1) });
-            },
-            .Union, .Group => {
-                const cell = try self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 24, i64 8)", .{scope});
-                try self.line("store %DoxaValue {s}, ptr {s}", .{ v, cell });
-                const bits = try self.tmp("ptrtoint ptr {s} to i64", .{cell});
-                try self.line("store i64 {s}, ptr {s}", .{ bits, try self.fieldPtr(object, id, word) });
-            },
-            else => try self.line("store i64 {s}, ptr {s}", .{ try self.storageBits(v, t), try self.fieldPtr(object, id, word) }),
-        }
-    }
-
-    fn fieldGet(self: *FunctionEmitter, inst: *const ir.Inst, object: ValueId, index: u32) Error!void {
-        const id = self.doxaOf(object).Struct;
-        const t = self.e.layout.struct_fields[id][index];
-        const word = layout.fieldOffset(self.e.layout.struct_fields[id], index);
-        const o = self.name(object);
-        switch (t) {
-            .String => {
-                const p = try self.tmp("load ptr, ptr {s}", .{try self.fieldPtr(o, id, word)});
-                const l = try self.tmp("load i64, ptr {s}", .{try self.fieldPtr(o, id, word + 1)});
-                self.names[@intFromEnum(inst.result.?)] = try self.makeString(p, l);
-            },
-            .Union, .Group => {
-                const bits = try self.tmp("load i64, ptr {s}", .{try self.fieldPtr(o, id, word)});
-                const cell = try self.tmp("inttoptr i64 {s} to ptr", .{bits});
-                try self.def(inst, "load %DoxaValue, ptr {s}", .{cell});
-            },
-            else => {
-                const bits = try self.tmp("load i64, ptr {s}", .{try self.fieldPtr(o, id, word)});
-                self.names[@intFromEnum(inst.result.?)] = try self.fromBits(bits, t);
-            },
-        }
-    }
-
-    /// Which copies (`clone`, `rehome`) are only stored inline into fixed
-    /// arrays as bytes holding no heap value (a flat struct, a fixed array
-    /// of scalars): the store's byte copy is the copy, so none is made.
-    fn storedInline(self: *FunctionEmitter) Error![]const bool {
-        const f = self.f;
-        const inline_use = try self.e.alloc.alloc(bool, f.values.len);
-        const other_use = try self.e.alloc.alloc(bool, f.values.len);
-        @memset(inline_use, false);
-        @memset(other_use, false);
-        const Mark = struct {
-            other: []bool,
-            fn use(ctx: @This(), v: ValueId) error{}!void {
-                ctx.other[@intFromEnum(v)] = true;
-            }
-        };
-        const mark = Mark{ .other = other_use };
-        for (f.blocks) |block| {
-            for (block.insts) |inst| switch (inst.op) {
-                .debug_value => {},
-                .array_set => |s| {
-                    if (self.isInlineBytes(s.array)) inline_use[@intFromEnum(s.value)] = true else other_use[@intFromEnum(s.value)] = true;
-                    other_use[@intFromEnum(s.array)] = true;
-                    other_use[@intFromEnum(s.index)] = true;
-                },
-                else => ir.forEachOperand(&inst.op, mark, Mark.use) catch unreachable,
-            };
-            ir.forEachTermOperand(&block.term, mark, Mark.use) catch unreachable;
-        }
-        const only = try self.e.alloc.alloc(bool, f.values.len);
-        for (only, inline_use, other_use) |*o, i, x| o.* = i and !x;
-        return only;
-    }
-
-    /// Whether the fixed array `array` stores its elements inline as bytes
-    /// that hold no heap value.
-    fn isInlineBytes(self: *FunctionEmitter, array: ValueId) bool {
-        const t = self.doxaOf(array);
-        if (t != .Array or t.Array.size == null) return false;
-        const element = t.Array.element.*;
-        return switch (element) {
-            .Struct => |id| self.e.layout.isFlat(id),
-            .Array => |a| a.size != null and !holdsHeap(&self.e.layout, element),
-            else => false,
-        };
-    }
-
-    /// Replace every heap element of the fixed array at `base`, of type `t`,
-    /// with a copy in `arena`: what makes a copy of the array its own.
-    fn deepenFixed(self: *FunctionEmitter, base: []const u8, t: HIRType, arena: []const u8) Error!void {
-        const element = t.Array.element.*;
-        const storage = try layout.fixedStorageType(self.e.alloc, &self.e.layout, t);
-        const counter = try self.alloca("i64");
-        try self.line("store i64 0, ptr {s}", .{counter});
-        const head = try self.split("deepen.head");
-        const body = try self.split("deepen.body");
-        const done = try self.split("deepen.done");
-        try self.line("br label %{s}", .{head});
-        try self.enter(head);
-        const i = try self.tmp("load i64, ptr {s}", .{counter});
-        const more = try self.tmp("icmp ult i64 {s}, {d}", .{ i, t.Array.size.? });
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ more, body, done });
-        try self.enter(body);
-        const at = try self.tmp("getelementptr inbounds {s}, ptr {s}, i64 0, i64 {s}", .{ storage, base, i });
-        switch (element) {
-            .Array => |inner| if (inner.size != null) {
-                try self.deepenFixed(at, element, arena);
-            } else {
-                try self.deepenPointer(at, "doxa_array_clone", arena);
-            },
-            .Struct => try self.deepenPointer(at, "doxa_struct_clone", arena),
-            .String => {
-                const s = try self.stringParts(try self.tmp("load %DoxaString, ptr {s}", .{at}));
-                const copied = try self.stringCall("doxa_str_clone", "ptr {s}, ptr {s}, i64 {s}", .{ arena, s.ptr, s.len });
-                try self.line("store %DoxaString {s}, ptr {s}", .{ copied, at });
-            },
-            .Union, .Group => try self.line("call void @doxa_clone_doxa_value(ptr {s}, ptr {s})", .{ arena, at }),
-            else => unreachable, // `holdsHeap` admits no other
-        }
-        const next = try self.tmp("add i64 {s}, 1", .{i});
-        try self.line("store i64 {s}, ptr {s}", .{ next, counter });
-        try self.line("br label %{s}", .{head});
-        try self.enter(done);
-    }
-
-    /// Replace the pointer at `at`, unless null, with `copy(arena, it)`.
-    fn deepenPointer(self: *FunctionEmitter, at: []const u8, comptime copy_fn: []const u8, arena: []const u8) Error!void {
-        const p = try self.tmp("load ptr, ptr {s}", .{at});
-        const none = try self.tmp("icmp eq ptr {s}, null", .{p});
-        const copy_label = try self.split("deepen.copy");
-        const skip = try self.split("deepen.skip");
-        try self.line("br i1 {s}, label %{s}, label %{s}", .{ none, skip, copy_label });
-        try self.enter(copy_label);
-        const copied = try self.tmp("call ptr @" ++ copy_fn ++ "(ptr {s}, ptr {s})", .{ arena, p });
-        try self.line("store ptr {s}, ptr {s}", .{ copied, at });
-        try self.line("br label %{s}", .{skip});
-        try self.enter(skip);
-    }
-
-    /// The arena a container lives in: an array header's `scope`, or the
-    /// word before a described struct's fields (`StructHeader.scope`). A
-    /// fixed array's the arena pass names statically, so none reaches here.
-    fn arenaOf(self: *FunctionEmitter, inst: *const ir.Inst, container: ValueId) Error!void {
-        const c = self.name(container);
-        const at = switch (self.doxaOf(container)) {
-            .Array => |a| if (a.size != null)
-                return self.e.faultf("names the arena of a fixed array the arena pass did not settle", .{})
-            else
-                try self.tmp("getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 5", .{c}),
-            .Struct => try self.tmp("getelementptr inbounds i8, ptr {s}, i64 -8", .{c}),
-            else => unreachable, // the verifier admits only these
-        };
-        try self.def(inst, "load ptr, ptr {s}, align 8", .{at});
-    }
-
-    /// A field store after construction. The value is already placed in the
-    /// struct's arena; a union field's cell is allocated there too, which a
-    /// struct with a heap field keeps in its header.
-    fn fieldSet(self: *FunctionEmitter, object: ValueId, index: u32, value: ValueId) Error!void {
-        const id = self.doxaOf(object).Struct;
-        const t = self.e.layout.struct_fields[id][index];
-        const o = self.name(object);
-        const scope = switch (t) {
-            .Union, .Group => blk: {
-                const at = try self.tmp("getelementptr inbounds i8, ptr {s}, i64 -8", .{o});
-                break :blk try self.tmp("load ptr, ptr {s}, align 8", .{at});
-            },
-            else => "null",
-        };
-        try self.storeField(o, scope, id, index, t, self.name(value));
-    }
-
-    // ── Copies ──
-
-    const Copy = enum { clone, rehome };
-
-    /// A copy of a heap value in `arena`: always (`clone`), or only when it
-    /// does not already live in `arena` or an ancestor (`rehome`). A string
-    /// carries no arena of its own, so its `rehome` is a clone; a map is not
-    /// copied.
-    fn copy(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, operand: ValueId, kind: Copy) Error!void {
-        const a = self.name(arena);
-        const v = self.name(operand);
-        const t = self.doxaOf(operand);
-        switch (t) {
-            .String => {
-                const s = try self.stringParts(v);
-                self.names[@intFromEnum(inst.result.?)] = try self.stringCall("doxa_str_clone", "ptr {s}, ptr {s}, i64 {s}", .{ a, s.ptr, s.len });
-            },
-            .Array => |arr| {
-                if (arr.size != null) {
-                    // A fixed array is copied whole into `arena`, and each
-                    // heap element it holds after it.
-                    const bytes = layout.fixedBytes(&self.e.layout, t);
-                    try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ a, bytes });
-                    try self.line("call void @llvm.memcpy.p0.p0.i64(ptr {s}, ptr {s}, i64 {d}, i1 false)", .{ self.name(inst.result.?), v, bytes });
-                    if (holdsHeap(&self.e.layout, t)) try self.deepenFixed(self.name(inst.result.?), t, a);
-                } else {
-                    try self.def(inst, "call ptr @doxa_array_{s}(ptr {s}, ptr {s})", .{ @tagName(kind), a, v });
-                }
-            },
-            .Struct => |id| {
-                const words = self.e.layout.skippedWords(t);
-                if (words != 0) {
-                    const which = if (kind == .clone) "clone_scalar" else "rehome_scalar";
-                    try self.def(inst, "call ptr @doxa_struct_{s}(ptr {s}, i64 {d}, ptr {s})", .{ which, a, words, v });
-                } else {
-                    _ = id;
-                    try self.def(inst, "call ptr @doxa_struct_{s}(ptr {s}, ptr {s})", .{ @tagName(kind), a, v });
-                }
-            },
-            .Union, .Group => {
-                const slot = try self.spillValue(v);
-                try self.line("call void @doxa_clone_doxa_value(ptr {s}, ptr {s})", .{ a, slot });
-                try self.def(inst, "load %DoxaValue, ptr {s}", .{slot});
-            },
-            // A map lives in the root arena (the verifier's rule 4), so the
-            // arena pass keeps every copy of one as the map itself.
-            else => return self.e.faultf("copies a {s}", .{@tagName(t)}),
-        }
-    }
-
-    // ── Calls ──
-
-    fn callDoxa(self: *FunctionEmitter, inst: *const ir.Inst, callee: ir.FunctionId, args: []const ValueId) Error!void {
-        const sig = self.e.module.program.functions[@intFromEnum(callee)];
-        var text: std.ArrayListUnmanaged(u8) = .empty;
-        for (args, 0..) |a, i| {
-            if (i != 0) try text.appendSlice(self.e.alloc, ", ");
-            try text.print(self.e.alloc, "{s} {s}", .{ layout.llvmType(self.typeOf(a)), self.name(a) });
-        }
-        // With debug info, the call into the entry goes through
-        // `__doxa_enter`, where a backtrace ends (`Emitter.emitEnter`).
-        const enters = self.e.debug != null and self.id == self.e.module.init and callee == self.e.module.entry;
-        const symbol = if (enters) "@__doxa_enter" else try self.e.functionSymbol(callee);
-        if (inst.result) |_| {
-            try self.def(inst, "call {s} {s}({s})", .{ layout.returnType(sig.ret), symbol, text.items });
-        } else {
-            try self.line("call {s} {s}({s})", .{ layout.returnType(sig.ret), symbol, text.items });
-        }
-    }
-
-    fn callZig(self: *FunctionEmitter, inst: *const ir.Inst, callee: ir.ZigFunctionId, args: []const ValueId) Error!void {
-        const sig = self.e.module.program.zig_functions[@intFromEnum(callee)];
-        const symbol = try std.fmt.allocPrint(self.e.alloc, "@{s}", .{self.e.module.program.zig_function_names[@intFromEnum(callee)]});
-        var text: std.ArrayListUnmanaged(u8) = .empty;
-        for (args, sig.roles, 0..) |a, role, i| {
-            if (i != 0) try text.appendSlice(self.e.alloc, ", ");
-            if (role == .caller_arena) {
-                try text.print(self.e.alloc, "ptr {s}", .{self.name(a)});
-                continue;
-            }
-            switch (self.doxaOf(a)) {
-                .String => {
-                    const s = try self.stringParts(self.name(a));
-                    try text.print(self.e.alloc, "ptr {s}, i64 {s}", .{ s.ptr, s.len });
-                },
-                // A tetra crosses as a Zig `bool`: true when it holds.
-                .Tetra => {
-                    const hi = try self.tmp("lshr i2 {s}, 1", .{self.name(a)});
-                    const differ = try self.tmp("xor i2 {s}, {s}", .{ hi, self.name(a) });
-                    try text.print(self.e.alloc, "i1 {s}", .{try self.tmp("trunc i2 {s} to i1", .{differ})});
-                },
-                else => |t| try text.print(self.e.alloc, "{s} {s}", .{ layout.doxaType(t), self.name(a) }),
-            }
-        }
-        const sep = if (text.items.len == 0) "" else ", ";
-        switch (sig.ret) {
-            .Nothing => try self.line("call void {s}({s})", .{ symbol, text.items }),
-            .String => {
-                const slots = try self.stringSlots();
-                try self.line("call void {s}({s}{s}ptr {s}, ptr {s})", .{ symbol, text.items, sep, slots.ptr, slots.len });
-                self.names[@intFromEnum(inst.result.?)] = try self.loadString(slots.ptr, slots.len);
-            },
-            .Tetra => {
-                const b = try self.tmp("call i1 {s}({s})", .{ symbol, text.items });
-                try self.def(inst, "zext i1 {s} to i2", .{b});
-            },
-            .Union => try self.fallibleZig(inst, symbol, text.items, sig.ret),
-            else => try self.def(inst, "call {s} {s}({s})", .{ layout.doxaType(sig.ret), symbol, text.items }),
-        }
-    }
-
-    /// A fallible Zig call (`DoxaError_<path>!<payload>`): the wrapper
-    /// returns -1 on success, else the error's variant, and writes a payload
-    /// through out-parameters. The result is the union, boxed either way.
-    fn fallibleZig(self: *FunctionEmitter, inst: *const ir.Inst, symbol: []const u8, args: []const u8, result_type: HIRType) Error!void {
-        var error_index: u32 = 0;
-        var payload_index: u32 = 0;
-        var payload: HIRType = .Nothing;
-        for (try self.e.boxMembers(result_type), 0..) |m, i| {
-            if (m == .Enum) error_index = @intCast(i) else {
-                payload_index = @intCast(i);
-                payload = m;
-            }
-        }
-        const sep = if (args.len == 0) "" else ", ";
-        var word: []const u8 = "0";
-        var len: []const u8 = "0";
-        const raw = switch (payload) {
-            .Nothing => try self.tmp("call i64 {s}({s})", .{ symbol, args }),
-            .String => blk: {
-                const slots = try self.stringSlots();
-                try self.line("store ptr null, ptr {s}", .{slots.ptr});
-                try self.line("store i64 0, ptr {s}", .{slots.len});
-                const r = try self.tmp("call i64 {s}({s}{s}ptr {s}, ptr {s})", .{ symbol, args, sep, slots.ptr, slots.len });
-                word = try self.tmp("ptrtoint ptr {s} to i64", .{try self.tmp("load ptr, ptr {s}", .{slots.ptr})});
-                len = try self.tmp("load i64, ptr {s}", .{slots.len});
-                break :blk r;
-            },
-            .Array, .Int => blk: {
-                const slot = try self.alloca(if (payload == .Int) "i64" else "ptr");
-                try self.line("store {s} {s}, ptr {s}", .{ if (payload == .Int) "i64" else "ptr", if (payload == .Int) "0" else "null", slot });
-                const r = try self.tmp("call i64 {s}({s}{s}ptr {s})", .{ symbol, args, sep, slot });
-                word = if (payload == .Int) try self.tmp("load i64, ptr {s}", .{slot}) else try self.tmp("ptrtoint ptr {s} to i64", .{try self.tmp("load ptr, ptr {s}", .{slot})});
-                break :blk r;
-            },
-            else => return self.e.faultf("a fallible Zig call has an unsupported {s} payload", .{@tagName(payload)}),
-        };
-        const header = try self.e.boxHeader(result_type);
-        const failed = try self.tmp("icmp ne i64 {s}, -1", .{raw});
-        const tag = try self.tmp("select i1 {s}, i32 {d}, i32 {d}", .{ failed, @intFromEnum(rt.DoxaTag.Enum), @intFromEnum(layout.valueTag(payload)) });
-        const reserved = try self.tmp("select i1 {s}, i32 {d}, i32 {d}", .{ failed, header | error_index, header | payload_index });
-        const bits = try self.tmp("select i1 {s}, i64 {s}, i64 {s}", .{ failed, raw, word });
-        const length = try self.tmp("select i1 {s}, i64 0, i64 {s}", .{ failed, len });
-        const v0 = try self.tmp("insertvalue %DoxaValue undef, i32 {s}, 0", .{tag});
-        const v1 = try self.tmp("insertvalue %DoxaValue {s}, i32 {s}, 1", .{ v0, reserved });
-        const v2 = try self.tmp("insertvalue %DoxaValue {s}, i64 {s}, 2", .{ v1, bits });
-        try self.def(inst, "insertvalue %DoxaValue {s}, i64 {s}, 3", .{ v2, length });
-    }
-
-    // ── Peek ──
-
-    /// `v?`: the location, name and type, then the value, on stderr.
-    fn peek(self: *FunctionEmitter, operand: ValueId, display: ir.PeekDisplay, span: ir.SrcSpan) Error!void {
-        const t = self.doxaOf(operand);
-        const info = try self.alloca("%DoxaPeekInfo");
-        const fields = [_][]const u8{ "file", "name", "type", "members" };
-        const file = try self.e.string(self.e.module.program.files[span.module]);
-        const label = try self.peekLabel(t, display);
-        const values = [_][]const u8{
-            file,
-            if (display.path) |p| try self.e.string(p) else "null",
-            try self.e.string(label),
-            if (display.members) |m| try self.e.nameList(m) else "null",
-        };
-        for (fields, values, 0..) |_, v, i| {
-            const at = try self.tmp("getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 {d}", .{ info, i });
-            try self.line("store ptr {s}, ptr {s}", .{ v, at });
-        }
-        const count: usize = if (display.members) |m| m.len else 0;
-        const active = if (t.isBoxed()) try self.activeMember(self.name(operand), display) else "-1";
-        const ints = [_][]const u8{
-            try std.fmt.allocPrint(self.e.alloc, "{d}", .{count}),
-            active,
-            "1",
-            try std.fmt.allocPrint(self.e.alloc, "{d}", .{span.line}),
-            try std.fmt.allocPrint(self.e.alloc, "{d}", .{span.column}),
-        };
-        for (ints, 4..) |v, i| {
-            const at = try self.tmp("getelementptr inbounds %DoxaPeekInfo, ptr {s}, i32 0, i32 {d}", .{ info, i });
-            try self.line("store i32 {s}, ptr {s}", .{ v, at });
-        }
-        try self.line("call void @doxa_debug_peek(ptr {s})", .{info});
-        try self.printValue(self.name(operand), t);
-        try self.line("call void @doxa_peek_end()", .{});
-    }
-
-    /// The marker slot of the member a box holds: its member index, through
-    /// `member_slots` when written groups collapse members.
-    fn activeMember(self: *FunctionEmitter, v: []const u8, display: ir.PeekDisplay) Error![]const u8 {
-        const reserved = try self.tmp("extractvalue %DoxaValue {s}, 1", .{v});
-        const index = try self.tmp("and i32 {s}, {d}", .{ reserved, rt.DoxaBoxMeta.member_index_mask });
-        const slots = display.member_slots orelse return index;
-        var acc: []const u8 = "-1";
-        for (slots, 0..) |slot, member| {
-            const is = try self.tmp("icmp eq i32 {s}, {d}", .{ index, member });
-            acc = try self.tmp("select i1 {s}, i32 {d}, i32 {s}", .{ is, slot, acc });
-        }
-        return acc;
-    }
-
-    /// The type a peek shows for a value of `t`.
-    fn peekLabel(self: *FunctionEmitter, t: HIRType, display: ir.PeekDisplay) Error![]const u8 {
-        const p = &self.e.module.program;
-        return switch (t) {
-            .Int => "int",
-            .Float => "float",
-            .Byte => "byte",
-            .Tetra => "tetra",
-            .String => "string",
-            .Nothing => "nothing",
-            .Enum => |id| p.enum_names[id],
-            .Struct => |id| p.struct_names[id],
-            .Array => try self.typeText(t),
-            .Union => if (display.members) |m| m[0] else "union",
-            .Group => |gid| p.group_names[gid],
-            .Function => "function",
-            .Unknown, .Poison => unreachable,
-        };
-    }
-
-    fn typeText(self: *FunctionEmitter, t: HIRType) Error![]const u8 {
-        const p = &self.e.module.program;
-        return switch (t) {
-            .Array => |a| std.fmt.allocPrint(self.e.alloc, "{s}[]", .{try self.typeText(a.element.*)}),
-            .Struct => |id| p.struct_names[id],
-            .Enum => "enum",
-            .Union => "union",
-            .Group => |gid| p.group_names[gid],
-            else => try self.peekLabel(t, .{ .path = null }),
-        };
-    }
-
-    fn printValue(self: *FunctionEmitter, v: []const u8, t: HIRType) Error!void {
-        switch (t) {
-            .Int => try self.line("call void @doxa_print_i64(i64 {s})", .{v}),
-            .Float => try self.line("call void @doxa_print_f64(double {s})", .{v}),
-            .Byte => try self.line("call void @doxa_print_byte(i64 {s})", .{try self.tmp("zext i8 {s} to i64", .{v})}),
-            .Tetra => try self.line("call void @doxa_print_tetra(i64 {s})", .{try self.tmp("zext i2 {s} to i64", .{v})}),
-            .String => {
-                const s = try self.stringParts(v);
-                try self.line("call void @doxa_peek_string(ptr {s}, i64 {s})", .{ s.ptr, s.len });
-            },
-            .Nothing => {
-                const text = try self.e.string("nothing");
-                try self.line("call void @doxa_write_cstr(ptr {s}, i64 7)", .{text});
-            },
-            .Enum => |id| try self.line("call void @doxa_print_enum(ptr {s}, i64 {s})", .{ try self.e.enumDesc(id), v }),
-            .Union, .Group => try self.line("call void @doxa_print_value(ptr {s})", .{try self.spillValue(v)}),
-            .Struct => {
-                const bits = try self.tmp("ptrtoint ptr {s} to i64", .{v});
-                const v0 = try self.tmp("insertvalue %DoxaValue undef, i32 {d}, 0", .{@intFromEnum(rt.DoxaTag.Struct)});
-                const v1 = try self.tmp("insertvalue %DoxaValue {s}, i32 0, 1", .{v0});
-                const v2 = try self.tmp("insertvalue %DoxaValue {s}, i64 {s}, 2", .{ v1, bits });
-                const boxed = try self.tmp("insertvalue %DoxaValue {s}, i64 0, 3", .{v2});
-                try self.line("call void @doxa_print_value(ptr {s})", .{try self.spillValue(boxed)});
-            },
-            .Array => |a| {
-                if (a.size != null) return self.e.faultf("peeks a fixed array; the generator converts it first", .{});
-                try self.line("call void @doxa_print_array_hdr(ptr {s})", .{v});
-            },
-            .Function => try self.line("call void @doxa_write_cstr(ptr {s}, i64 10)", .{try self.e.string("<function>")}),
-            .Unknown, .Poison => unreachable,
-        }
-    }
-
-    // ── Terminators ──
-
-    fn terminator(self: *FunctionEmitter, term: *const ir.Terminator) Error!void {
-        switch (term.*) {
-            .jump => |call| try self.line("br label %{s}", .{try self.edge(call)}),
-            .branch => |b| {
-                const then = try self.edge(b.then);
-                const otherwise = if (b.@"else".block == b.then.block and b.then.args.len != 0) try self.trampoline(b.@"else") else try self.edge(b.@"else");
-                try self.line("br i1 {s}, label %{s}, label %{s}", .{ self.name(b.cond), then, otherwise });
-            },
-            .@"switch" => |s| {
-                const ty = layout.doxaType(self.doxaOf(s.operand));
-                try self.w.print("  switch {s} {s}, label %{s} [", .{ ty, self.name(s.operand), try self.edge(s.default) });
-                for (s.cases) |case| try self.w.print(" {s} {d}, label %{s}", .{ ty, case.value, try self.edge(case.target) });
-                try self.w.writeAll(" ]");
-                try self.eol();
-            },
-            .@"return" => |v| if (v) |value| {
-                try self.line("ret {s} {s}", .{ layout.doxaType(self.f.ret), self.name(value) });
-            } else {
-                try self.line("ret void", .{});
-            },
-            .@"unreachable" => try self.fault(.unreachable_code, null, "0", "0"),
-            .panic => |m| try self.fault(.panic, try self.stringParts(self.name(m)), "0", "0"),
-            .exit => |code| {
-                try self.line("call void @doxa_exit(i64 {s})", .{self.name(code)});
-                try self.line("unreachable", .{});
-            },
-            .assert_fail => |a| try self.fault(.assert_fail, if (a.message) |m| try self.stringParts(self.name(m)) else null, "0", "0"),
-        }
-    }
-
-    /// The label control transfers to for `call`, recording its arguments
-    /// for the target's phis.
-    fn edge(self: *FunctionEmitter, call: ir.BlockCall) Error![]const u8 {
-        const target = std.fmt.allocPrint(self.e.alloc, "b{d}", .{@intFromEnum(call.block)}) catch |err| return err;
-        if (call.args.len == 0) return target;
-        const entry = try self.incoming.getOrPut(self.e.alloc, @intFromEnum(call.block));
-        if (!entry.found_existing) entry.value_ptr.* = .empty;
-        try entry.value_ptr.append(self.e.alloc, .{ .label = self.label, .args = call.args });
-        return target;
-    }
-
-    /// An edge to a block this terminator already targets with other
-    /// arguments: a block of its own, so each phi entry names one
-    /// predecessor.
-    fn trampoline(self: *FunctionEmitter, call: ir.BlockCall) Error![]const u8 {
-        const label = try self.split("edge");
-        const entry = try self.incoming.getOrPut(self.e.alloc, @intFromEnum(call.block));
-        if (!entry.found_existing) entry.value_ptr.* = .empty;
-        try entry.value_ptr.append(self.e.alloc, .{ .label = label, .args = call.args });
-        try self.edges.append(self.e.alloc, try std.fmt.allocPrint(self.e.alloc, "{s}:\n  br label %b{d}\n", .{ label, @intFromEnum(call.block) }));
-        return label;
     }
 };
