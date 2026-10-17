@@ -1,0 +1,14 @@
+# Lending a by-value parameter to another file's `^` parameter: a write only
+# if that callee writes through it, decided once every file is analyzed.
+module lenders from "./lib/lenders.doxa"
+
+function reads(a :: int[]) returns int { return lenders.first(^a) }
+function writes(a :: int[]) returns int {
+    lenders.zeroFirst(^a)
+    return a[0]
+}
+
+entry function main() {
+    var a is [1, 2]
+    @print("{reads(a)} {writes(a)} {a[0]}\n")
+}

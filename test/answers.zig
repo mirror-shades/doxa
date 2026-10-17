@@ -32,6 +32,47 @@ pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "k0k1k2" },
 };
 
+pub const expected_by_value_b008_method_results = [_]print_result{
+    .{ .value = "2 1" },
+    .{ .value = "50 1" },
+};
+
+pub const expected_by_value_b008_nested_results = [_]print_result{
+    .{ .value = "1 1" },
+};
+
+pub const expected_by_value_b039_results = [_]print_result{
+    .{ .value = "0 1" },
+};
+
+pub const expected_by_value_write_routes_results = [_]print_result{
+    .{ .value = "field 7 1" },
+    .{ .value = "element 7 1" },
+    .{ .value = "method 2 1" },
+    .{ .value = "nested method 2 1" },
+    .{ .value = "helper method 3 1" },
+    .{ .value = "recursive method 2 1" },
+    .{ .value = "alias re-pass 100 1" },
+    .{ .value = "alias chain 100 1" },
+    .{ .value = "alias rebind 9 1" },
+    .{ .value = "alias loop 0 1" },
+    .{ .value = "intrinsic 4 3" },
+    .{ .value = "intrinsic method 2 3" },
+    .{ .value = "rebind 5 1" },
+};
+
+pub const expected_by_value_cross_module_results = [_]print_result{
+    .{ .value = "1 0 1" },
+};
+
+pub const expected_by_value_read_only_results = [_]print_result{
+    .{ .value = "sum 6" },
+    .{ .value = "method 8 4" },
+    .{ .value = "lend reader 4 1" },
+    .{ .value = "lend rebinder 7 1" },
+    .{ .value = "copy 51 1" },
+};
+
 pub const expected_alias_string_mutation_results = [_]print_result{
     .{ .value = "push hello world" },
     .{ .value = "insert >>hello world" },

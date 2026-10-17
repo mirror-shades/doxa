@@ -1,0 +1,28 @@
+# B008 one path deeper: a method on an element or a nested field of a by-value
+# parameter changes the caller.
+struct C {
+    public n :: int,
+    public method bump() {
+        this.n += 1
+    }
+}
+
+struct W {
+    public c :: C,
+}
+
+function viaElement(a :: C[]) {
+    a[0].bump()
+}
+
+function viaField(w :: W) {
+    w.c.bump()
+}
+
+entry function main() {
+    var a :: C[] is [$C { n is 1 }]
+    var w is $W { c is $C { n is 1 } }
+    viaElement(a)
+    viaField(w)
+    @print("{a[0].n} {w.c.n}\n")
+}

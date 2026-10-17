@@ -1,0 +1,45 @@
+# Bodies that only read a by-value parameter bind the caller's value without
+# copying it (`HeapCopyKind.keep`); the results are the same either way.
+struct C {
+    public n :: int,
+    public method get() returns int { return this.n }
+    # Mutually recursive, and neither writes its receiver.
+    public method even(k :: int) returns int {
+        if k == 0 then return this.n
+        return this.odd(k - 1)
+    }
+    public method odd(k :: int) returns int { return this.even(k) }
+}
+
+function first(^x :: int[]) returns int { return x[0] + @length(x) }
+# Rebinding a `^` parameter replaces the lender's slot, not its array.
+function replace(^x :: int[]) { x is [7] }
+function lendsToReader(a :: int[]) returns int { return first(^a) }
+function lendsToRebinder(a :: int[]) returns int {
+    replace(^a)
+    return a[0]
+}
+
+function sum(a :: int[]) returns int {
+    var total is 0
+    each x in a {
+        total += x
+    }
+    return total
+}
+function viaMethod(c :: C) returns int { return c.get() + c.even(4) }
+function copyThenWrite(a :: int[]) returns int {
+    var b is a
+    b[0] is 50
+    return b[0] + a[0]
+}
+
+entry function main() {
+    var a is [1, 2, 3]
+    var c is $C { n is 4 }
+    @print("sum {sum(a)}\n")
+    @print("method {viaMethod(c)} {c.n}\n")
+    @print("lend reader {lendsToReader(a)} {a[0]}\n")
+    @print("lend rebinder {lendsToRebinder(a)} {a[0]}\n")
+    @print("copy {copyThenWrite(a)} {a[0]}\n")
+}

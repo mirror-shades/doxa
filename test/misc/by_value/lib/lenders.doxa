@@ -1,0 +1,2 @@
+public function first(^x :: int[]) returns int { return x[0] }
+public function zeroFirst(^x :: int[]) { x[0] is 0 }

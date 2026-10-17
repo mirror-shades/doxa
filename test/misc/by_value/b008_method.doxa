@@ -1,0 +1,19 @@
+# B008: a method call on a by-value struct parameter, or a field store into it,
+# changes the callee's copy, never the caller's.
+struct C {
+    public n :: int,
+    public method bump() { this.n += 1 }
+}
+function byValue(c :: C) returns int {
+    c.bump()
+    return c.n
+}
+function byValueField(c :: C) returns int {
+    c.n is 50
+    return c.n
+}
+entry function main() {
+    var c is $C { n is 1 }
+    @print("{byValue(c)} {c.n}\n")
+    @print("{byValueField(c)} {c.n}\n")
+}

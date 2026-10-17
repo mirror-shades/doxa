@@ -1,0 +1,14 @@
+# B039: `each x in ^a` inside a function that takes `a` by value writes
+# through to the caller's array. The callee's copy should change, not the caller's.
+function zero(a :: int[]) returns int {
+    each x in ^a {
+        x is 0
+    }
+    return a[0]
+}
+
+entry function main() {
+    var a is [1, 2, 3]
+    const r is zero(a)
+    @print("{r} {a[0]}\n")
+}

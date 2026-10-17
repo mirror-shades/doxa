@@ -1,0 +1,107 @@
+# A by-value parameter is the callee's own copy: no write route through it
+# reaches the caller (docs/alias.md). Each line prints the callee's view, then
+# the caller's, which must be unchanged.
+struct C {
+    public n :: int,
+    public method bump() { this.n += 1 }
+    # Writes its receiver only through another method.
+    public method bumpTwice() {
+        this.bump()
+        this.bump()
+    }
+    # Mutually recursive with `ping`, writing only at the bottom.
+    public method pong(k :: int) {
+        if k == 0 then this.bump() else this.ping(k - 1)
+    }
+    public method ping(k :: int) { this.pong(k) }
+    public method get() returns int { return this.n }
+}
+
+struct W {
+    public c :: C,
+    public xs :: int[],
+}
+
+function setInc(^x :: int[]) { x[0] is 100 }
+# Writes through its `^` parameter only by lending it on.
+function relay(^x :: int[]) { setInc(^x) }
+# Rebinds its `^` parameter, then writes the new array.
+function rebindThenWrite(^x :: int[]) {
+    x is [8, 8]
+    x[0] is 9
+}
+
+function viaField(c :: C) returns int {
+    c.n is 7
+    return c.n
+}
+function element(a :: int[]) returns int {
+    a[0] is 7
+    return a[0]
+}
+function viaMethod(c :: C) returns int {
+    c.bump()
+    return c.n
+}
+function nestedMethod(w :: W) returns int {
+    w.c.bump()
+    return w.c.n
+}
+function helperMethod(c :: C) returns int {
+    c.bumpTwice()
+    return c.n
+}
+function recursiveMethod(c :: C) returns int {
+    c.ping(3)
+    return c.n
+}
+function aliasRepass(a :: int[]) returns int {
+    setInc(^a)
+    return a[0]
+}
+function aliasChain(a :: int[]) returns int {
+    relay(^a)
+    return a[0]
+}
+function aliasRebind(a :: int[]) returns int {
+    rebindThenWrite(^a)
+    return a[0]
+}
+function aliasLoop(w :: W) returns int {
+    each x in ^w.xs {
+        x is 0
+    }
+    return w.xs[0]
+}
+function intrinsic(a :: int[]) returns int {
+    @push(a, 4)
+    return @length(a)
+}
+function intrinsicMethod(a :: int[]) returns int {
+    a.@pop()
+    return @length(a)
+}
+function rebind(a :: int[]) returns int {
+    a is [9, 9]
+    a[0] is 5
+    return a[0]
+}
+
+entry function main() {
+    var c is $C { n is 1 }
+    var a is [1, 2, 3]
+    var w is $W { c is $C { n is 1 }, xs is [1, 2] }
+    @print("field {viaField(c)} {c.n}\n")
+    @print("element {element(a)} {a[0]}\n")
+    @print("method {viaMethod(c)} {c.n}\n")
+    @print("nested method {nestedMethod(w)} {w.c.n}\n")
+    @print("helper method {helperMethod(c)} {c.n}\n")
+    @print("recursive method {recursiveMethod(c)} {c.n}\n")
+    @print("alias re-pass {aliasRepass(a)} {a[0]}\n")
+    @print("alias chain {aliasChain(a)} {a[0]}\n")
+    @print("alias rebind {aliasRebind(a)} {a[0]}\n")
+    @print("alias loop {aliasLoop(w)} {w.xs[0]}\n")
+    @print("intrinsic {intrinsic(a)} {@length(a)}\n")
+    @print("intrinsic method {intrinsicMethod(a)} {@length(a)}\n")
+    @print("rebind {rebind(a)} {a[0]}\n")
+}

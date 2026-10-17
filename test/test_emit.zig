@@ -630,6 +630,93 @@ test "scope elision: a method and every caller lending it a receiver drop their 
     try testing.expect(std.mem.indexOf(u8, builder, "@doxa_scope_enter") != null);
 }
 
+// A by-value heap parameter is copied on entry only when analysis records a
+// write through it (`analysis/semantic/effects.zig`): a read-only body binds
+// the caller's value, one that writes through it, directly or by calling a
+// method that writes its receiver through a helper, owns a copy.
+const paramWriteSource =
+    \\struct C {
+    \\    public n :: int,
+    \\    public method get() returns int { return this.n }
+    \\    public method bump() { this.n += 1 }
+    \\    public method bumpTwice() {
+    \\        this.bump()
+    \\        this.bump()
+    \\    }
+    \\}
+    \\function reads(c :: C, a :: int[]) returns int {
+    \\    return c.get() + a[0] + @length(a)
+    \\}
+    \\function writesThroughHelper(c :: C) returns int {
+    \\    c.bumpTwice()
+    \\    return c.n
+    \\}
+    \\function pushes(a :: int[]) returns int {
+    \\    @push(a, 1)
+    \\    return @length(a)
+    \\}
+    \\public entry function main() {
+    \\    const c is $C { n is 1 }
+    \\    const a is [1, 2]
+    \\    @print("{reads(c, a)} {writesThroughHelper(c)} {pushes(a)}\n")
+    \\}
+;
+
+test "param effects: a read-only heap parameter is not copied, a written one is" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, paramWriteSource, "--opt=0");
+    defer allocator.free(ir_text);
+
+    const reader = functionBody(ir_text, "reads") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, reader, "_clone") == null);
+    const helper = functionBody(ir_text, "writesThroughHelper") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, helper, "@doxa_struct_clone") != null);
+    const pusher = functionBody(ir_text, "pushes") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, pusher, "@doxa_array_clone") != null);
+}
+
+// Lending a by-value parameter as `^` writes it only if the callee writes
+// through its `^` parameter: one that reads it, or rebinds it (replacing the
+// lender's slot, not its array), leaves the parameter uncopied.
+const paramLendSource =
+    \\function peek(^x :: int[]) returns int { return x[0] + @length(x) }
+    \\function rebinds(^x :: int[]) { x is [7] }
+    \\function writes(^x :: int[]) { x[0] is 7 }
+    \\function relays(^x :: int[]) { writes(^x) }
+    \\function lendsToReader(p :: int[]) returns int { return peek(^p) }
+    \\function lendsToRebinder(p :: int[]) returns int {
+    \\    rebinds(^p)
+    \\    return p[0]
+    \\}
+    \\function lendsToRelay(p :: int[]) returns int {
+    \\    relays(^p)
+    \\    return p[0]
+    \\}
+    \\public entry function main() {
+    \\    const a is [1, 2, 3]
+    \\    @print("{lendsToReader(a)} {lendsToRebinder(a)} {lendsToRelay(a)}\n")
+    \\}
+;
+
+test "param effects: a parameter lent as ^ is copied only if the callee writes through it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, paramLendSource, "--opt=0");
+    defer allocator.free(ir_text);
+
+    for ([_][]const u8{ "lendsToReader", "lendsToRebinder" }) |name| {
+        const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
+        try testing.expect(std.mem.indexOf(u8, body, "_clone") == null);
+    }
+    const relay = functionBody(ir_text, "lendsToRelay") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, relay, "@doxa_array_clone") != null);
+}
+
 test "module: every function carries the tune-cpu attribute group" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

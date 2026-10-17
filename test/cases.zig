@@ -1194,6 +1194,36 @@ const rejected_cases = [_]Case{
         .expect_stderr = "expected an expression",
     },
     .{
+        .name = "by-value: a method on a struct parameter leaves the caller (B008)",
+        .path = "./test/misc/by_value/b008_method.doxa",
+        .expected_print = answers.expected_by_value_b008_method_results[0..],
+    },
+    .{
+        .name = "by-value: a method on an element or nested field leaves the caller (B008)",
+        .path = "./test/misc/by_value/b008_nested.doxa",
+        .expected_print = answers.expected_by_value_b008_nested_results[0..],
+    },
+    .{
+        .name = "by-value: each in ^ of a parameter leaves the caller (B039)",
+        .path = "./test/misc/by_value/b039_each_borrow.doxa",
+        .expected_print = answers.expected_by_value_b039_results[0..],
+    },
+    .{
+        .name = "by-value: no write route through a parameter reaches the caller",
+        .path = "./test/misc/by_value/write_routes.doxa",
+        .expected_print = answers.expected_by_value_write_routes_results[0..],
+    },
+    .{
+        .name = "by-value: lending a parameter to another file's ^ parameter",
+        .path = "./test/misc/by_value/cross_module.doxa",
+        .expected_print = answers.expected_by_value_cross_module_results[0..],
+    },
+    .{
+        .name = "by-value: read-only parameters bind the caller's value",
+        .path = "./test/misc/by_value/read_only.doxa",
+        .expected_print = answers.expected_by_value_read_only_results[0..],
+    },
+    .{
         .name = "alias argument on by-value parameter",
         .path = "./test/misc/alias_argument_not_needed.doxa",
         .mode = .reject,
