@@ -314,3 +314,26 @@ pub fn suggestName(self: *SemanticAnalyzer, name: []const u8) ?[]const u8 {
     const max_acceptable = @max(@as(usize, 2), name.len / 3);
     return if (best_score <= max_acceptable) suggested else null;
 }
+
+/// One name, one meaning: a declaration inside a function, a block or a
+/// pattern may not reuse a name already visible where it appears — an
+/// enclosing local or parameter, or a top-level name of the file (its
+/// declarations, imports and aliases). A sibling scope's binding is not
+/// visible, so it does not conflict. A duplicate within one scope is
+/// `DUPLICATE_VARIABLE`'s, and top-level names are checked against each
+/// other by the loader. The declaration still binds, so its uses resolve.
+pub fn checkFreshName(self: *SemanticAnalyzer, scope: *Scope, name: ast.Token) void {
+    if (scope == self.moduleScope(self.current_module)) return;
+    // A desugaring's own name (a nested `each` index) is no name the
+    // program spells, so it means nothing to the reader.
+    if (name.synthetic) return;
+    const visible = if (scope.parent) |parent| parent.lookupVariable(name.lexeme) != null else false;
+    if (!visible and !self.graph.record(self.current_module).bindings.contains(name.lexeme)) return;
+    self.reporter.reportCompileError(
+        ast.SourceSpan.fromToken(name).location,
+        ErrorCode.SHADOWED_NAME,
+        "'{s}' is already declared where this declaration is visible; a name has one meaning wherever it can be seen",
+        .{name.lexeme},
+    );
+    self.fatal_error = true;
+}
