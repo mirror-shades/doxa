@@ -718,7 +718,8 @@ struct Animal {
     public name :: string,
 }
 
-const zoo :: Animal[] is [
+# `var`: the zoo is pushed to and popped below, and a `const` may not change.
+var zoo :: Animal[] is [
     $Animal { 
         animal_type is Species.LION,
         name is "Fluffy",

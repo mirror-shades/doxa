@@ -259,11 +259,14 @@ test "emit: bounded operands discharge the check even in a checked build" {
     defer allocator.free(ir_text);
 
     // The probe reached codegen: the modulo shape is there.
-    try testing.expect(std.mem.indexOf(u8, ir_text, "urem i64") != null);
+    const body = functionBody(ir_text, "bounded") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, body, "urem i64") != null);
     // But the add's range proved it safe, so no check was emitted. Match the
     // *call* form: the module still declares the intrinsic it may have used.
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call { i64, i1 } @llvm.s") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "call void @doxa_fault(") == null);
+    // Only `bounded` is judged: the standard library it links has checks of
+    // its own (`@byte` of an input byte).
+    try testing.expect(std.mem.indexOf(u8, body, "call { i64, i1 } @llvm.s") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "call void @doxa_fault(") == null);
 }
 
 // ---------------------------------------------------------------------------

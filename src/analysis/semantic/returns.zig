@@ -113,10 +113,12 @@ pub fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, fu
 }
 
 /// Report a function that declares a return type but has a path that reaches
-/// the end of its body. Return values are checked where each `return` is
-/// analyzed (`checkReturnValue`), not here.
+/// the end of its body. Reaching the end is a bare `return`, so a return type
+/// that admits `nothing` may (codegen's `fallOffValue` returns it). Return
+/// values are checked where each `return` is analyzed (`checkReturnValue`),
+/// not here.
 pub fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!void {
-    if (expected_return_type.base == .Nothing) return;
+    if (admitsNothing(&expected_return_type)) return;
     if (try statementsLeave(self, body)) return;
     self.reporter.reportCompileError(
         func_span.location,
