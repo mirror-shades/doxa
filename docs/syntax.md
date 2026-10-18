@@ -317,7 +317,7 @@ function add(a :: int, b :: int) returns int {
 }
 ```
 
-A function that declares `returns` returns on every path: no path may reach the end of its body (E5011). A path ends at a `return`, `unreachable`, `@panic` or `@exit`, at an `if` or `as` whose branches all end, at a `match` that covers its subject and whose arms all end, or at a loop that nothing but a `break` could stop and that holds none.
+A function that declares `returns` returns on every path: no path may reach the end of its body (E5011). Reaching the end is a bare `return`, so a function whose return type includes `nothing` may let a path reach it, and returns `nothing` there. A path ends at a `return`, `unreachable`, `@panic` or `@exit`, at an `if` or `as` whose branches all end, at a `match` that covers its subject and whose arms all end, or at a loop that nothing but a `break` could stop and that holds none.
 
 A function or method without `returns` returns `nothing`. It may `return` early,
 but returning a value from it is an error:
