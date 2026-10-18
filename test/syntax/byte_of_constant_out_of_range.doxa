@@ -1,0 +1,4 @@
+# @byte of a constant outside 0-255 is a constant-expression error.
+entry function main() {
+    @print("{@byte(999)}\n")
+}

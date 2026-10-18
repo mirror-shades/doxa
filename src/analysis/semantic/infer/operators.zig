@@ -278,8 +278,13 @@ pub fn binary(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
             self.reporter.reportCompileError(
                 getLocationFromBase(expr.base),
                 ErrorCode.INCOMPATIBLE_TYPES_FOR_COMPARISON,
-                "Cannot compare {s} with {s} using {s}",
-                .{ @tagName(left_type.base), @tagName(right_type.base), op },
+                "Cannot compare {s} with {s} using {s}{s}",
+                .{
+                    try helpers.typeSpelling(self, left_type),
+                    try helpers.typeSpelling(self, right_type),
+                    op,
+                    if (left == .boxed or right == .boxed) "; narrow it with 'as' or match first" else "",
+                },
             );
             self.fatal_error = true;
             type_info.base = .Nothing;

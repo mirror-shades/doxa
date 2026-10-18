@@ -1,0 +1,5 @@
+# @byte of a float with no byte faults; it never yields 0x00.
+entry function main() {
+    var f is 256.0
+    @print("{@byte(f)}\n")
+}

@@ -1,0 +1,10 @@
+# A union is narrowed before it is compared; a group compares through its member.
+enum IOError { NotFound, Denied }
+enum ParseError { Eof, Bad }
+group Error { IOError, ParseError }
+entry function main() {
+    const g :: Error is IOError.Denied
+    @print("{g == IOError.Denied}\n")
+    var u :: int | string is 3
+    @print("{u == 3}\n")
+}

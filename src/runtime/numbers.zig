@@ -186,10 +186,3 @@ pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64, site: *const fa
     const text = strings.sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     return parseByteText(text) orelse faultUnparsable(site, text);
 }
-
-pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {
-    if (!std.math.isFinite(value)) return 0;
-    const rounded: i64 = @intFromFloat(value);
-    if (rounded >= 0 and rounded <= 255) return rounded;
-    return 0;
-}
