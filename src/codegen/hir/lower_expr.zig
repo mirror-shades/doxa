@@ -548,6 +548,15 @@ fn objectOf(l: *Lowering, object: *ast.Expr, struct_id: ir.StructId) Error!?Valu
 }
 
 fn fieldAccess(l: *Lowering, e: *ast.Expr, fa: ast.FieldAccess) Error!?ValueId {
+    // `Error.IOError.NotFound`, `Error.NotFound`: the member's variant,
+    // widened to the group.
+    if (l.g.resolutionOf(e)) |resolved| {
+        if (resolved == .group_variant) {
+            const id = l.g.semantic.enum_table.idOf(resolved.group_variant).?;
+            const variant = try l.constant(.{ .enum_variant = try variantIndex(l, id, fa.field) }, .{ .Enum = id });
+            return try l.convert(variant, .{ .Enum = id }, try l.g.typeOf(e));
+        }
+    }
     // `Color.Red`, however `Color` is reached, is a variant constant.
     if (l.g.resolutionOf(fa.object)) |resolved| {
         if (resolved == .type) {
@@ -677,7 +686,7 @@ fn functionCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
             const id = try l.g.zigId(symbol);
             break :blk .{ try zigCall(l, id, call_data.arguments), l.g.zigSignature(id).ret };
         },
-        .namespace, .global, .type => return unexpected(l, e),
+        .namespace, .global, .type, .group_variant => return unexpected(l, e),
     };
     return try result(l, e, v orelse return null, ty);
 }
@@ -988,9 +997,12 @@ fn peek(l: *Lowering, e: *ast.Expr, location: Location) Error!?ValueId {
     const shown_type = if (ty == .Array and ty.Array.size != null) try l.dynamicOf(ty) else ty;
     const shown = try l.convert(v, ty, shown_type);
 
-    // A variant read through its enum (`Color.Red`) names no variable.
-    const names_variant = e.data == .FieldAccess and
+    // A variant read through its enum (`Color.Red`) or its group
+    // (`Error.IOError.NotFound`) names no variable.
+    const through_group = if (l.g.resolutionOf(e)) |resolved| resolved == .group_variant else false;
+    const through_enum = e.data == .FieldAccess and
         if (l.g.resolutionOf(e.data.FieldAccess.object)) |resolved| resolved == .type else false;
+    const names_variant = through_group or through_enum;
     var display: ir.PeekDisplay = .{
         .path = if (names_variant) null else try peekPath(l, e),
     };

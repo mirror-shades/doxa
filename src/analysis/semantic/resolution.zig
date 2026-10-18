@@ -24,6 +24,10 @@ pub const Resolution = union(enum) {
     /// A type named in value position: an enum qualifier (`Color` in
     /// `Color.Red`), a struct literal's type, a constructor's receiver.
     type: ast.TypeRef,
+    /// A variant written through its group (`Error.IOError.NotFound`,
+    /// `Error.NotFound`): the enum member declaring it. The value is the
+    /// member's variant, widened to the group.
+    group_variant: ast.TypeRef,
     /// `T.m(...)`: a static method of `T`, or `T.New` (the constructor).
     static_method: Method,
     /// `x.m(...)`: an instance method of `x`'s struct type.
@@ -46,6 +50,7 @@ pub const Resolution = union(enum) {
             .zig_function => |s| symbolEql(s, b.zig_function),
             .global => |s| symbolEql(s, b.global),
             .type => |t| t.eql(b.type),
+            .group_variant => |t| t.eql(b.group_variant),
             .static_method => |m| m.eql(b.static_method),
             .method => |m| m.eql(b.method),
         };

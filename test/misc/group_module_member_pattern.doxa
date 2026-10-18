@@ -1,0 +1,28 @@
+# Regression (B059): a group member declared through a module alias is
+# matched by its module-qualified name. `io.IOErr` names the member, not
+# member `io` with variant `IOErr`, and `io.IOErr.Denied` a variant inside it.
+module io from "./moddata/group_member_mod.doxa"
+
+group AppError { io.IOErr, io.Fail }
+
+function classify(e :: AppError) returns string {
+    return match e {
+        io.IOErr then "io",
+        io.Fail then "fail",
+    }
+}
+
+function variant(e :: AppError) returns string {
+    return match e {
+        io.IOErr.Denied then "denied",
+        io.IOErr.Missing then "missing",
+        io.Fail then "fail",
+    }
+}
+
+entry function main() {
+    const a :: AppError is io.IOErr.Denied
+    const b :: AppError is $io.Fail { line is 3 }
+    const c :: AppError is AppError.Missing
+    @print("{classify(a)} {classify(b)} {variant(a)} {variant(b)} {variant(c)}\n")
+}

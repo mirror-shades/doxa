@@ -630,10 +630,7 @@ fn switchCases(l: *Lowering, cases: []const ast.MatchCase, subject: ValueId, sub
                     // further than the box index can.
                     .type => |ref| blk: {
                         if (pathOf(case, i)) |path| {
-                            if (!path.is_wildcard and path.field_names.len == 0 and path.tokens.len > 1) {
-                                const split = path.split(groupName(l, subject_type));
-                                if (split.variant != null) return null;
-                            }
+                            if (path.variant != null) return null;
                         }
                         break :blk try l.g.membersNamed(subject_type, try l.g.typeForRef(ref));
                     },
@@ -654,10 +651,6 @@ fn switchCases(l: *Lowering, cases: []const ast.MatchCase, subject: ValueId, sub
     }
     const operand = if (subject_type == .Enum) subject else try l.define(.{ .member_index = .{ .operand = subject } }, .Int);
     return .{ .operand = operand, .cases = entries.items, .default = default };
-}
-
-fn groupName(l: *Lowering, ty: HIRType) []const u8 {
-    return if (ty == .Group) l.g.semantic.group_table.displayName(ty.Group).? else "";
 }
 
 /// The type a builtin type pattern names against a box subject (`int`,
@@ -711,8 +704,8 @@ fn patternTest(l: *Lowering, case: ast.MatchCase, i: usize, pattern: ast.Token, 
             // A path naming a variant inside a group's enum member narrows to
             // that variant.
             if (pathOf(case, i)) |path| {
-                if (!path.is_wildcard and path.field_names.len == 0 and subject_type == .Group and named == .Enum) {
-                    if (path.split(groupName(l, subject_type)).variant) |variant| {
+                if (subject_type == .Group and named == .Enum) {
+                    if (path.variant) |variant| {
                         return memberEquals(l, t, subject, named, .{ .enum_variant = try lower_expr.variantIndex(l, named.Enum, variant) });
                     }
                 }

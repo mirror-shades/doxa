@@ -1,0 +1,10 @@
+# `Group.Variant` names a variant only one member declares (groups.md 2.3):
+# both members declare `Eof`, so the member must be named.
+enum IOError { Eof, Denied }
+enum ParseError { Eof, Bad }
+group Error { IOError, ParseError }
+
+entry function main() {
+    const e :: Error is Error.Eof
+    @print("{e == IOError.Eof}\n")
+}

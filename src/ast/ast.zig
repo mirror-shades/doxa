@@ -502,32 +502,12 @@ pub const MatchCase = struct {
         field_storages: []u32 = &.{},
         /// The index, in the arm's `patterns`, of the pattern this path spells.
         pattern: u32,
-
-        pub const Split = struct {
-            member: Token,
-            variant: ?Token,
-        };
-
-        /// Split a dotted match path into the member it names and, unless it is
-        /// a domain wildcard or a destructuring pattern, the variant inside that
-        /// member. The leading token is the group itself when the path is written
-        /// through it (`Error.IOError.NotFound`); otherwise the path starts at the
-        /// member (`IOError.NotFound`). A destructuring path ends at its member
-        /// (`AppError.FileError { path }`), which leaves no variant behind.
-        pub fn split(self: PathPattern, group_name: []const u8) Split {
-            const tokens = self.tokens;
-            if (self.field_names.len > 0) return .{ .member = tokens[tokens.len - 1], .variant = null };
-            if (tokens.len == 1) return .{ .member = tokens[0], .variant = null };
-            const through_group = std.mem.eql(u8, tokens[0].lexeme, group_name);
-            if (through_group) return .{
-                .member = tokens[1],
-                .variant = if (tokens.len >= 3) tokens[2] else null,
-            };
-            return .{
-                .member = tokens[tokens.len - 2],
-                .variant = tokens[tokens.len - 1],
-            };
-        }
+        /// Against a group subject, the variant inside the member the path
+        /// names (`NotFound` in `Error.IOError.NotFound`, `IOError.NotFound`
+        /// and `Error.NotFound`), filled in place by analysis; null when the
+        /// path names a whole member. The member itself is the pattern's
+        /// `Resolved.type`.
+        variant: ?Token = null,
     };
 };
 

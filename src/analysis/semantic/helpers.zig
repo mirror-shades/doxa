@@ -333,30 +333,20 @@ pub fn checkGroupMatchExhaustive(
         coverage[index].enum_coverage = .{ .variants = variants, .covered = covered };
     }
 
+    // The arms' patterns are resolved before the match is checked: the member
+    // an arm names, and the variant inside it, are read off that resolution
+    // (`patterns.resolveMatchPatterns`), never re-derived from the spelling.
     for (match_expr.cases) |case| {
-        // The path patterns decide an arm whenever the case has any; the bare
-        // pattern list repeats their last token.
-        if (case.path_patterns.len > 0) {
-            for (case.path_patterns) |path_pattern| {
-                if (path_pattern.tokens.len == 0) continue;
-                const split = path_pattern.split(group.name);
-                const index = groupMemberIndexOf(members, split.member.lexeme) orelse continue;
-                const reaches_inside = !path_pattern.is_wildcard and
-                    path_pattern.field_names.len == 0 and
-                    split.variant != null;
-                if (!reaches_inside) {
-                    coverage[index].whole = true;
-                } else {
-                    markVariantCovered(&coverage[index], split.variant.?.lexeme);
-                }
-            }
-            continue;
-        }
-
-        for (case.patterns) |pattern| {
-            if (pattern.type == .ELSE or std.mem.eql(u8, pattern.lexeme, "else")) continue;
-            const index = groupMemberIndexOf(members, pattern.lexeme) orelse continue;
-            coverage[index].whole = true;
+        for (case.resolved, 0..) |resolved, i| {
+            const ref = switch (resolved) {
+                .type => |ref| ref,
+                .token, .variant => continue,
+            };
+            const index = groupMemberIndexOf(members, ref) orelse continue;
+            const variant = for (case.path_patterns) |path| {
+                if (path.pattern == i) break path.variant;
+            } else null;
+            if (variant) |v| markVariantCovered(&coverage[index], v.lexeme) else coverage[index].whole = true;
         }
     }
 
@@ -447,9 +437,9 @@ pub fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
     return false;
 }
 
-fn groupMemberIndexOf(members: []const GroupTable.Member, qualifier: []const u8) ?usize {
+fn groupMemberIndexOf(members: []const GroupTable.Member, ref: TypeRef) ?usize {
     for (members, 0..) |member, index| {
-        if (std.mem.eql(u8, member.qualifier, qualifier)) return index;
+        if (member.ref.eql(ref)) return index;
     }
     return null;
 }
