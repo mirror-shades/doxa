@@ -1,0 +1,24 @@
+# Regression (B045): a group member's variant named through the group is a
+# value of the group (groups.md 2.3): `Error.IOError.Denied`, and
+# `Error.Eof` for a variant only one member declares. Either is the same
+# value as the member's own variant (groups.md 3.2), and the same spellings
+# work as match patterns.
+enum IOError { NotFound, Denied }
+enum ParseError { Eof, Bad }
+group Error { IOError, ParseError }
+
+function describe(e :: Error) returns string {
+    return match e {
+        Error.IOError.NotFound then "not found",
+        Error.IOError.Denied then "denied",
+        Error.Eof then "eof",
+        ParseError.Bad then "bad",
+    }
+}
+
+entry function main() {
+    const g :: Error is Error.IOError.Denied
+    const h :: Error is Error.Eof
+    @print("{describe(g)} {describe(h)} {describe(Error.NotFound)} {describe(Error.ParseError.Bad)}\n")
+    @print("{g == IOError.Denied} {h == ParseError.Eof} {g == IOError.NotFound}\n")
+}

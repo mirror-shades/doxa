@@ -109,22 +109,23 @@ pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
 pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const match_expr = expr.data.Match;
     const subject_type = try infer_type.inferTypeFromExpr(self, match_expr.value);
+    const group = helpers.matchSubjectGroup(self, subject_type);
+    const subject_enum: ?ast.TypeRef = blk: {
+        const custom = subject_type.custom_type orelse break :blk null;
+        const ct = (try self.customType(custom.resolved())) orelse break :blk null;
+        break :blk if (ct.kind == .Enum) custom.resolved() else null;
+    };
+    // What each arm's patterns denote is decided once, before the match is
+    // checked against them or any arm is narrowed.
+    for (match_expr.cases) |*case| try self.resolveMatchPatterns(case, group, subject_enum);
     try helpers.checkGroupMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
     try helpers.checkEnumMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
 
     if (match_expr.cases.len > 0) {
-        const group = helpers.matchSubjectGroup(self, subject_type);
-        const subject_enum: ?ast.TypeRef = blk: {
-            const custom = subject_type.custom_type orelse break :blk null;
-            const ct = (try self.customType(custom.resolved())) orelse break :blk null;
-            break :blk if (ct.kind == .Enum) custom.resolved() else null;
-        };
-
         var union_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
         defer union_types.deinit();
 
         for (match_expr.cases) |*case| {
-            try self.resolveMatchPatterns(case, group, subject_enum);
             const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, match_expr.value, discarded);
             try union_types.append(case_type);
         }

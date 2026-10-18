@@ -788,6 +788,16 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_module_qualified_group_results[0..],
     },
     .{
+        .name = "a group member is matched by its module-qualified name",
+        .path = "./test/misc/group_module_member_pattern.doxa",
+        .expected_print = answers.expected_group_module_member_pattern_results[0..],
+    },
+    .{
+        .name = "a group member's variant is a value written through the group",
+        .path = "./test/syntax/group_qualified_access.doxa",
+        .expected_print = answers.expected_group_qualified_access_results[0..],
+    },
+    .{
         .name = "module imported struct members",
         .path = "./test/misc/module_imported_struct_members.doxa",
         .expected_print = answers.expected_module_imported_struct_members_results[0..],
@@ -2151,6 +2161,13 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1033",
         .expect_stderr = "Match on group 'Palette' is not exhaustive: 'FileError' not covered",
+    },
+    .{
+        .name = "a variant two group members declare must be named through its member",
+        .path = "./test/syntax/group_ambiguous_variant_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1039",
+        .expect_stderr = "'Error.Eof' is ambiguous: members 'IOError', 'ParseError' all declare the variant 'Eof'",
     },
     .{
         .name = "group cycle",

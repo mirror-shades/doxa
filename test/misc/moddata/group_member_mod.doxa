@@ -1,0 +1,5 @@
+public enum IOErr { Missing, Denied }
+
+public struct Fail {
+    public line :: int,
+}

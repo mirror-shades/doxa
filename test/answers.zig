@@ -585,6 +585,15 @@ pub const expected_module_qualified_group_results = [_]print_result{
     .{ .value = "group ok" },
 };
 
+pub const expected_group_module_member_pattern_results = [_]print_result{
+    .{ .value = "io fail denied fail missing" },
+};
+
+pub const expected_group_qualified_access_results = [_]print_result{
+    .{ .value = "denied eof not found bad" },
+    .{ .value = "true true false" },
+};
+
 pub const expected_module_imported_struct_members_results = [_]print_result{
     .{ .value = "GET GET GET" },
 };

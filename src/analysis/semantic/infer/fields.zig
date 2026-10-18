@@ -22,6 +22,7 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
         _ = try member_mod.memberOfNamespace(self, expr, namespace, field.field, type_info);
         return;
     }
+    if (try groupVariant(self, expr, type_info)) return;
 
     const object_type = try infer_type.inferTypeFromExpr(self, field.object);
     if (object_type.base == .Error) return;
@@ -113,6 +114,56 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
             type_info.base = .Nothing;
         },
     }
+}
+
+/// `Group.Member.Variant`, or `Group.Variant` for a variant unique across the
+/// group's members (`docs/groups.md` 2.3): the member's variant, a value of
+/// the group. The member is recorded as the access's resolution. False when
+/// `expr` is not written through a group.
+fn groupVariant(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!bool {
+    const field = expr.data.FieldAccess;
+    const location = getLocationFromBase(expr.base);
+    const group, const member = qualified: {
+        if (field.object.data == .FieldAccess) {
+            const qualifier = field.object.data.FieldAccess;
+            if (try groupNamed(self, qualifier.object)) |group| {
+                const member = (try self.groupMemberType(group, qualifier.field.lexeme)) orelse {
+                    self.reporter.reportCompileError(location, ErrorCode.FIELD_NOT_FOUND, "Group '{s}' has no member '{s}'", .{ group.name, qualifier.field.lexeme });
+                    break :qualified .{ group, null };
+                };
+                const enum_member = (try self.customType(member)).?.kind == .Enum;
+                if (!enum_member or !try self.enumDeclares(member, field.field.lexeme)) {
+                    self.reporter.reportCompileError(location, ErrorCode.VARIABLE_NOT_FOUND, "Member '{s}' of group '{s}' has no variant '{s}'", .{ qualifier.field.lexeme, group.name, field.field.lexeme });
+                    break :qualified .{ group, null };
+                }
+                break :qualified .{ group, member };
+            }
+        }
+        const group = (try groupNamed(self, field.object)) orelse return false;
+        // `groupVariantMember` reports a variant no member or several declare.
+        break :qualified .{ group, try self.groupVariantMember(group, field.field) };
+    };
+    const ref = member orelse {
+        self.fatal_error = true;
+        type_info.base = .Nothing;
+        return true;
+    };
+    try names.annotate(self, expr, .{ .group_variant = ref });
+    type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = group } };
+    return true;
+}
+
+/// The group `expr` names in value position, bare or namespace-qualified. A
+/// group binds no value of its own, so a bare name is resolved as a type.
+fn groupNamed(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticError!?ast.TypeRef {
+    const named = switch (expr.data) {
+        .Variable => |tok| try names.resolveTypeName(self, tok.lexeme, self.current_module),
+        .FieldAccess => try member_mod.typeNamed(self, expr),
+        else => null,
+    };
+    const ref = named orelse return null;
+    try self.ensureTypes(ref.module);
+    return if (self.group_table.idOf(ref) != null) ref else null;
 }
 
 pub fn fieldAssignment(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {

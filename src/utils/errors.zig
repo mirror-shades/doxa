@@ -368,6 +368,7 @@ pub const ErrorCode = struct {
     pub const CONSTANT_DIVISION_BY_ZERO = "E1036";
     pub const UNPARSABLE_CONVERSION = "E1037";
     pub const IF_VALUE_REQUIRES_ELSE = "E1038";
+    pub const AMBIGUOUS_GROUP_VARIANT = "E1039";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

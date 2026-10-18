@@ -11,6 +11,7 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const Location = @import("../../utils/reporting.zig").Location;
+const GroupTable = @import("../../common/group_table.zig").GroupTable;
 const names = @import("names.zig");
 const helpers = @import("helpers.zig");
 const returns = @import("returns.zig");
@@ -38,10 +39,10 @@ pub fn resolveMatchPatterns(self: *SemanticAnalyzer, case: *ast.MatchCase, group
         else
             .token;
     }
-    for (case.path_patterns) |path| {
+    for (case.path_patterns) |*path| {
         if (path.tokens.len == 0) continue;
         resolved[path.pattern] = try resolvePathPattern(self, path, group);
-        if (path.field_names.len > 0) try checkDestructure(self, path, resolved[path.pattern]);
+        if (path.field_names.len > 0) try checkDestructure(self, path.*, resolved[path.pattern]);
     }
     case.resolved = resolved;
 }
@@ -154,15 +155,13 @@ pub fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, all
 }
 
 /// What a match path denotes. Against a group subject the path names a
-/// member, split exactly the way codegen splits it: through the group
-/// qualifier when written through it (`Group.Member.Variant`), otherwise
-/// the token ahead of the variant. Otherwise the path spells a type
-/// outright — bare or module-qualified (`std.json.Node`) — or an enum
-/// variant (`ns.Color.Red`), whose enum is everything ahead of the variant.
-pub fn resolvePathPattern(self: *SemanticAnalyzer, path: ast.MatchCase.PathPattern, group: ?TypeRef) ErrorList!ast.MatchCase.Resolved {
+/// member, and possibly a variant inside it, which is recorded on the path
+/// (`groupPath`). Otherwise the path spells a type outright — bare or
+/// module-qualified (`std.json.Node`) — or an enum variant (`ns.Color.Red`),
+/// whose enum is everything ahead of the variant.
+pub fn resolvePathPattern(self: *SemanticAnalyzer, path: *ast.MatchCase.PathPattern, group: ?TypeRef) ErrorList!ast.MatchCase.Resolved {
     if (group) |group_ref| {
-        const split = path.split(group_ref.name);
-        if (try self.groupMemberType(group_ref, split.member.lexeme)) |ref| return .{ .type = ref };
+        if (try groupPath(self, path, group_ref)) |member| return .{ .type = member };
     }
     if (try names.resolveTypeName(self, try joinTokens(self, path.tokens), self.current_module)) |ref| return .{ .type = ref };
     if (path.field_names.len > 0 or path.tokens.len < 2) return .token;
@@ -170,6 +169,52 @@ pub fn resolvePathPattern(self: *SemanticAnalyzer, path: ast.MatchCase.PathPatte
     const ref = (try names.resolveTypeName(self, prefix, self.current_module)) orelse return .token;
     const custom = (try self.customType(ref)) orelse return .token;
     return if (custom.kind == .Enum) .{ .variant = ref } else .token;
+}
+
+/// The member of `group` a match path names, recording on the path the
+/// variant inside it. Written through the group, the path is
+/// `Group.Member`, `Group.Member.Variant`, or `Group.Variant` for a variant
+/// unique across the members (`docs/groups.md` 2.3). Otherwise it starts at
+/// the member, however the member is reached (`IOError`, `io.IOErr`), and
+/// may go on to a variant (`io.IOErr.Denied`). A destructuring or wildcard
+/// path ends at its member.
+fn groupPath(self: *SemanticAnalyzer, path: *ast.MatchCase.PathPattern, group: TypeRef) ErrorList!?TypeRef {
+    // A wildcard path ends in its `*`.
+    const tokens = if (path.is_wildcard) path.tokens[0 .. path.tokens.len - 1] else path.tokens;
+    const whole = path.is_wildcard or path.field_names.len > 0;
+    const through_group = tokens.len >= 2 and if (try names.resolveTypeName(self, tokens[0].lexeme, self.current_module)) |ref| ref.eql(group) else false;
+    if (through_group) {
+        const rest = tokens[1..];
+        if (try self.groupMemberType(group, rest[0].lexeme)) |member| {
+            if (rest.len > 2 or (whole and rest.len > 1)) return null;
+            if (rest.len == 2) path.variant = rest[1];
+            return member;
+        }
+        if (rest.len != 1 or whole) return null;
+        const member = (try groupVariantMember(self, group, rest[0])) orelse return null;
+        path.variant = rest[0];
+        return member;
+    }
+    if (try memberNamed(self, group, tokens)) |member| return member;
+    if (whole or tokens.len < 2) return null;
+    const member = (try memberNamed(self, group, tokens[0 .. tokens.len - 1])) orelse return null;
+    path.variant = tokens[tokens.len - 1];
+    return member;
+}
+
+/// The member of `group` that `tokens` name: its qualifier, or a type name,
+/// bare or module-qualified, that resolves to the member.
+fn memberNamed(self: *SemanticAnalyzer, group: TypeRef, tokens: []const Token) ErrorList!?TypeRef {
+    if (tokens.len == 1) {
+        if (try self.groupMemberType(group, tokens[0].lexeme)) |member| return member;
+    }
+    const ref = (try names.resolveTypeName(self, try joinTokens(self, tokens), self.current_module)) orelse return null;
+    try self.ensureTypes(group.module);
+    const id = self.group_table.idOf(group) orelse return null;
+    for (self.group_table.members(id) orelse &.{}) |member| {
+        if (member.ref.eql(ref)) return member.ref;
+    }
+    return null;
 }
 
 /// The member of `group` written with `qualifier`.
@@ -180,6 +225,55 @@ pub fn groupMemberType(self: *SemanticAnalyzer, group: TypeRef, qualifier: []con
         if (std.mem.eql(u8, member.qualifier, qualifier)) return member.ref;
     }
     return null;
+}
+
+/// The enum member of `group` declaring the variant `name`, for `Group.Variant`
+/// (`docs/groups.md` 2.3). A variant no member declares, or one more than one
+/// member declares, is reported here, and gives null.
+pub fn groupVariantMember(self: *SemanticAnalyzer, group: TypeRef, name: Token) ErrorList!?TypeRef {
+    try self.ensureTypes(group.module);
+    const id = self.group_table.idOf(group) orelse return null;
+    var declaring = std.array_list.Managed(GroupTable.Member).init(self.allocator);
+    defer declaring.deinit();
+    for (self.group_table.members(id) orelse &.{}) |member| {
+        if (member.kind != .Enum) continue;
+        if (try enumDeclares(self, member.ref, name.lexeme)) try declaring.append(member);
+    }
+    const location = ast.SourceSpan.fromToken(name).location;
+    switch (declaring.items.len) {
+        0 => self.reporter.reportCompileError(
+            location,
+            ErrorCode.VARIABLE_NOT_FOUND,
+            "Group '{s}' has no member declaring the variant '{s}'",
+            .{ group.name, name.lexeme },
+        ),
+        1 => return declaring.items[0].ref,
+        else => {
+            var listed = std.array_list.Managed(u8).init(self.allocator);
+            defer listed.deinit();
+            for (declaring.items, 0..) |member, i| {
+                if (i > 0) try listed.appendSlice("', '");
+                try listed.appendSlice(member.qualifier);
+            }
+            self.reporter.reportCompileError(
+                location,
+                ErrorCode.AMBIGUOUS_GROUP_VARIANT,
+                "'{s}.{s}' is ambiguous: members '{s}' all declare the variant '{s}'. Name the member: '{s}.{s}.{s}'",
+                .{ group.name, name.lexeme, listed.items, name.lexeme, group.name, declaring.items[0].qualifier, name.lexeme },
+            );
+        },
+    }
+    self.fatal_error = true;
+    return null;
+}
+
+/// Whether enum `ref` declares the variant `name`.
+pub fn enumDeclares(self: *SemanticAnalyzer, ref: TypeRef, name: []const u8) ErrorList!bool {
+    const custom = (try self.customType(ref)) orelse return false;
+    for (custom.enum_variants orelse &.{}) |variant| {
+        if (std.mem.eql(u8, variant.name, name)) return true;
+    }
+    return false;
 }
 
 pub fn joinTokens(self: *SemanticAnalyzer, tokens: []const ast.Token) ErrorList![]const u8 {

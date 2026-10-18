@@ -86,9 +86,17 @@ group G {
     A,    // enum with variant X
     B,    // enum with variant X
 }
-G.X                              // ERROR: ambiguous — X exists in both A and B
+G.X                              // ERROR: ambiguous — X exists in both A and B (E1039)
 G.A.X                            // OK
 ```
+
+Only the variants of a group's enum members count toward `Group.Variant`. A
+struct member is a type, not a value, so a struct member sharing a variant's
+name makes nothing ambiguous.
+
+The same spellings name members in a match pattern: `Error.IOError.NotFound
+then`, or `Error.NotFound then` when `NotFound` is unique. A group declared in
+another module is reached through it, like any type: `errs.Error.NotFound`.
 
 ---
 
@@ -277,7 +285,7 @@ TypePath        := IDENT ( '.' IDENT )*
 - [ ] Unify the duplicated `CustomTypeInfo` definition across `types/types.zig` and `type_system.zig` into a single source of truth.
 - [x] Implement flattening: when a group member is another group, expand its members into the declaring group's member list with deduplication by type identity.
 - [x] Implement cycle detection by tracking visited group IDs during expansion.
-- [ ] Implement ambiguous-name detection by collecting all variant/field names across expanded members and flagging duplicates.
+- [x] Resolve `Group.Member.Variant` and `Group.Variant` as values of the group, and report a `Group.Variant` more than one enum member declares (`E1039`, `patterns.groupVariantMember`).
 - [x] Add `group_instance: HIRGroup { member_index, payload }` to `HIRValue` for runtime group representation.
 - [x] Implement implicit widening from member types to their enclosing group in the type checker (`typeIsGroupMember`, `typeMatchesUnionMember` in `unifyTypes`).
 - [x] Emit the group tag at every construction site so a member value widens to its group on assignment, return, and call argument (`buildDoxaValue`, `isBoxedMemberType`).
