@@ -81,7 +81,7 @@ Every way a program fails at run time is a *fault*: it writes one line to stderr
 | `@panic(message)` | `Panic at main.doxa:3:5: message` | 1 |
 | `@assert` with a false condition | `Assertion failed at main.doxa:4:5: message` (no `: message` without one) | 1 |
 | Integer `//` or `%` by zero | `Division by zero at main.doxa:2:12` | 1 |
-| `int` or `byte` `+`, `-`, `*` or `**`, or unary `-`, whose result leaves the type: `int` overflow, `255 + 1`, `0 - 1` on a `byte` | `Integer overflow at main.doxa:2:12` | 1 |
+| `int` or `byte` `+`, `-`, `*` or `**`, or unary `-`, whose result leaves the type: `int` overflow, `255 + 1`, `0 - 1` on a `byte`; `@byte` of a number with no byte | `Integer overflow at main.doxa:2:12` | 1 |
 | An array or string index out of bounds, read or written; an `@insert` or `@remove` index out of bounds | `Index out of bounds at main.doxa:5:9: index 7, length 3` | 1 |
 | `@pop` of an empty array | `Pop from an empty array at main.doxa:6:5` | 1 |
 | `@int`, `@float` or `@byte` of text that names no such number | `Not a valid int at main.doxa:2:14: "abc"` | 1 |
@@ -134,7 +134,7 @@ Wrapping arithmetic is never implicit: the operators `+%`, `-%` and `*%` are how
   - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly.
 - `@byte(value)`
   - String conversion path fails at runtime for invalid parse or out-of-range values: a one-character string is that character's code, otherwise decimal, `0x` hex, or a decimal float in 0–255.
-  - Numeric conversion path can clamp/zero out some invalid values (for example, `@byte(999)` currently yields `0x00`).
+  - Numeric conversion path faults for an int outside 0–255 or a float with no byte (truncated toward zero, it leaves 0–255, or it is `inf` or NaN): `Integer overflow at main.doxa:3:14`, exit 1. A constant operand is folded, so `@byte(999)` is the compile error `E1031` instead ([constant folding](math.md)).
 - `@type(value)`
   - Does not currently fail for supported runtime values.
 

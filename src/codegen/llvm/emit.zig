@@ -500,7 +500,6 @@ const prelude =
     \\declare i64 @doxa_int_from_string(ptr, i64, ptr)
     \\declare double @doxa_float_from_string(ptr, i64, ptr)
     \\declare i64 @doxa_byte_from_string(ptr, i64, ptr)
-    \\declare i64 @doxa_byte_from_f64(double)
     \\declare void @doxa_int_to_string(ptr, i64, ptr, ptr)
     \\declare void @doxa_float_to_string(ptr, double, ptr, ptr)
     \\declare void @doxa_byte_to_string(ptr, i64, ptr, ptr)

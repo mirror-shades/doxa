@@ -187,16 +187,38 @@ pub fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) E
             .Float => try self.def(inst, "fptosi double {s} to i64", .{v}),
             else => return self.e.faultf("converts a {s} to an int", .{@tagName(from)}),
         },
+        // A value with no byte faults like byte arithmetic leaving `[0, 255]`.
         .Byte => switch (from) {
-            .Int => try self.def(inst, "trunc i64 {s} to i8", .{v}),
+            .Int => {
+                const range = self.ranges[@intFromEnum(operand)];
+                const fits = range.isNonNegative() and (if (range.konst) |c| c <= 255 else range.hi_known and range.hi <= 255);
+                if (!fits) try byteGuard(self, try self.tmp("icmp ugt i64 {s}, 255", .{v}));
+                try self.def(inst, "trunc i64 {s} to i8", .{v});
+            },
+            // Truncated toward zero, so `(-1, 256)` has a byte; NaN fails
+            // both ordered compares and an infinity one.
             .Float => {
-                const wide = try self.tmp("call i64 @doxa_byte_from_f64(double {s})", .{v});
-                try self.def(inst, "trunc i64 {s} to i8", .{wide});
+                const above = try self.tmp("fcmp ogt double {s}, -1.0", .{v});
+                const below = try self.tmp("fcmp olt double {s}, 256.0", .{v});
+                const fits = try self.tmp("and i1 {s}, {s}", .{ above, below });
+                try byteGuard(self, try self.tmp("xor i1 {s}, true", .{fits}));
+                try self.def(inst, "fptoui double {s} to i8", .{v});
             },
             else => return self.e.faultf("converts a {s} to a byte", .{@tagName(from)}),
         },
         else => return self.e.faultf("converts to a {s}", .{@tagName(to)}),
     }
+}
+
+/// Fault with `Integer overflow` when `outside`, a conversion's verdict that
+/// its operand has no byte, holds.
+fn byteGuard(self: *FunctionEmitter, outside: []const u8) Error!void {
+    const trap = try self.split("byte.trap");
+    const cont = try self.split("byte.cont");
+    try self.line("br i1 {s}, label %{s}, label %{s}", .{ outside, trap, cont });
+    try self.enter(trap);
+    try self.fault(.overflow, null, "0", "0");
+    try self.enter(cont);
 }
 
 pub fn compare(self: *FunctionEmitter, inst: *const ir.Inst, op: ir.CompareOp, lhs: ValueId, rhs: ValueId) Error!void {

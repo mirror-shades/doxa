@@ -135,9 +135,16 @@ Dividing or taking a remainder by zero is a runtime fault (`Division by zero at 
 
 `==`, `!=`, `<`, `<=`, `>` and `>=` compare two numbers or two strings.
 Two tetras, two values of the same enum, or two `nothing`s compare with `==`
-and `!=` only; a union or group value compares through the member it holds.
-Anything else — structs, arrays, functions, values of two different enums, or
-an ordering of tetras or enums — is a compile error (`E1016`).
+and `!=` only. A group value compares through the member it holds, so
+`err == IOError.Denied` tests an error set against one of its members.
+Anything else — structs, arrays, functions, values of two different enums, an
+ordering of tetras or enums, or a union value — is a compile error (`E1016`).
+A union must be narrowed first:
+
+```doxa
+var u :: int | string is 3
+const three is u as int then u == 3 else false
+```
 
 ### Strings
 

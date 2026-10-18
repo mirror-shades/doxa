@@ -1,0 +1,5 @@
+# @byte of an int outside 0-255 faults; it never wraps.
+entry function main() {
+    var n is 999
+    @print("{@byte(n)}\n")
+}
