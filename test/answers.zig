@@ -20,6 +20,25 @@ pub const expected_brainfuck_results = [_]print_result{
     .{ .value = "Output: 0x09" },
 };
 
+pub const expected_control_paths_compile_results = [_]print_result{
+    .{ .value = "str" },
+    .{ .value = "only str arm" },
+    .{ .value = "1 b 3 3 4 21 1 2" },
+};
+
+pub const expected_field_narrowing_results = [_]print_result{
+    .{ .value = "5" },
+    .{ .value = "40" },
+    .{ .value = "3" },
+    .{ .value = "boom!" },
+    .{ .value = "14 abc" },
+    .{ .value = "42" },
+};
+
+pub const expected_method_body_blank_lines_results = [_]print_result{
+    .{ .value = "42" },
+};
+
 pub const expected_fixed_field_array_results = [_]print_result{
     .{ .value = "8 8 false both" },
     .{ .value = "3 0 9 0" },

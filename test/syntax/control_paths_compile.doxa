@@ -1,0 +1,39 @@
+module std from @std()
+# Every path returns, matches cover their subjects, and structs reach themselves
+# only through `| nothing` or an array: all of it compiles (B048-B055).
+enum C { A, B }
+struct N { public v :: int, public next :: N | nothing, public kids :: N[] }
+function viaIf(n :: int) returns int {
+    if n > 0 then return 1 else return 2
+}
+function viaMatch(c :: C) returns string {
+    match c { .A then return "a", .B then return "b", }
+}
+function viaAs(u :: int | string) returns int {
+    u as int then { return u } else { return @length(u) }
+}
+function viaLoop(limit :: int) returns int {
+    var i is 0
+    while true {
+        i += 1
+        if i >= limit then return i
+    }
+}
+function viaPanic(n :: int) returns int {
+    if n > 0 then return n
+    @panic("negative")
+}
+function swap(^a :: int, ^b :: int) { const t is a; a is b; b is t }
+entry function main() {
+    var x is 1
+    var y is 2
+    swap(^x, ^y)
+    var u :: int | string is "q"
+    match u { int then @print("int\n"), string then @print("str\n"), }
+    match u { string then @print("only str arm\n"), }
+    const tail :: N | nothing is nothing
+    const n is $N { v is 1, next is tail, kids is [] }
+    var grow is ["a"]
+    @push(grow, "b")
+    std.io.println("{viaIf(1)} {viaMatch(C.B)} {viaAs("abc")} {viaLoop(3)} {viaPanic(4)} {x}{y} {n.v} {@length(grow)}")
+}

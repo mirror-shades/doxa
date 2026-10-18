@@ -1,0 +1,7 @@
+# A union match whose value is used covers every member or ends in `else`:
+# an uncovered member would leave it without a value (B050).
+function kind(v :: int | string | float) returns string {
+    return match v { int then "i", string then "s" }
+}
+
+entry function main() { @print("[{kind(2.5)}]\n") }

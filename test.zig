@@ -22,5 +22,6 @@ test {
     _ = @import("src/analysis/consteval.zig");
     _ = @import("src/analysis/semantic/helpers.zig");
     _ = @import("src/runtime/scope_arena.zig");
+    _ = @import("src/build/paths.zig");
     _ = @import("src/instrument/report.zig");
 }

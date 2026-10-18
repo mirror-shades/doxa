@@ -1,0 +1,13 @@
+# The same stray token inside a struct method's body.
+struct Counter {
+    public n :: int,
+    public method bump() {
+        this.n += 1
+        entry function inner() { }
+    }
+}
+
+entry function main() {
+    var c is $Counter { n is 0 }
+    c.bump()
+}

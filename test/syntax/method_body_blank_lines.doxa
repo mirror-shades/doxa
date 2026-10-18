@@ -1,0 +1,17 @@
+# A method body may open and close with blank lines, and hold them between
+# statements: the body loop skips them and stops at the closing brace.
+struct Counter {
+    public n :: int,
+    public method bumped() returns int {
+
+        const next is this.n + 1
+
+        return next
+
+    }
+}
+
+entry function main() {
+    const c is $Counter { n is 41 }
+    @print("{c.bumped()}\n")
+}

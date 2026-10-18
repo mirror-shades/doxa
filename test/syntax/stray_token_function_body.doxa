@@ -1,0 +1,8 @@
+# A line in a function body that no statement can start is a parse error at
+# that token. It once looped the parser forever, growing without bound (B056).
+function outer() {
+    @print("a\n")
+    entry function inner() { }
+}
+
+entry function main() { outer() }

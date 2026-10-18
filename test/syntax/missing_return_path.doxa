@@ -1,0 +1,7 @@
+# A path that reaches the end of a function returning `int` is an error, not
+# a fault at run time (B049).
+function f(n :: int) returns int {
+    if n > 0 then return 1
+}
+
+entry function main() { @print("{f(0)}\n") }

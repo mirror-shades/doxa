@@ -1,0 +1,4 @@
+# A struct that holds itself by value can never be built (B055).
+struct N { public v :: int, public next :: N }
+
+entry function main() { @print("ok\n") }

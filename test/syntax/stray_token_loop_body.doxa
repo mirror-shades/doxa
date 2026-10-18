@@ -1,0 +1,7 @@
+# The same stray token inside a loop body.
+entry function main() {
+    for i while i < 2 do i += 1 {
+        @print("a\n")
+        entry function inner() { }
+    }
+}

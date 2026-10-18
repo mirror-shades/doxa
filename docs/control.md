@@ -59,6 +59,7 @@ else @print("{current}\n")
 - **else required**, **then optional**.
 - Same body rules: expression bodies end with ` `, block bodies do not.
 - The tested variable is narrowed in both branches: the **then** branch narrows to the target type, the **else** branch narrows to the remainder (union minus target).
+- A struct field narrows the same way, in place: inside `h.val as int then { … }`, reads of `h.val` are `int`. The struct itself keeps its type, so `h` is still a `Holder` there, and a copy of it (`var k is h`) is an ordinary `Holder`.
 
 Examples:
 
@@ -238,8 +239,8 @@ var msg is match color {
 
 Notes:
 
-- **Narrowing**: a single-pattern arm narrows the subject to the member that arm selected, so its fields, arithmetic and later casts read as that member — the same contract `as` gives its branches. An `else` arm narrows nothing (any member may have arrived) and an arm listing several patterns is not narrowed (any of them could have selected it).
-- **Exhaustiveness**: For enums, prefer covering all variants or add an `else` arm. For unions, cover the needed type arms `else` is optional.
+- **Narrowing**: a single-pattern arm narrows the subject to the member that arm selected, so its fields, arithmetic and later casts read as that member — the same contract `as` gives its branches. The subject may be a variable or a struct field (`match h.val { int then h.val + 1, … }`). An `else` arm narrows nothing (any member may have arrived) and an arm listing several patterns is not narrowed (any of them could have selected it).
+- **Exhaustiveness**: A match on an enum or a group covers every variant or member, or ends in `else` (E1033). A match on a union whose value is used covers every member or ends in `else`, since an uncovered member would leave it without a value; as a statement, it may cover only the members it needs.
 - **Result type**: All arms must produce a compatible result type. For block arms, the last expression is the arm's value.
 
 ### Quick reference

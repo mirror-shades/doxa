@@ -1,0 +1,6 @@
+# A local `const` array may not change, as a global one may not (B048).
+entry function main() {
+    const a is [1, 2]
+    @push(a, 3)
+    @print("{a}\n")
+}

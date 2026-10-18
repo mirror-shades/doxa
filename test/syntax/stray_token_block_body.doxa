@@ -1,0 +1,7 @@
+# The same stray token inside an `if` block, parsed as a block expression.
+entry function main() {
+    if 1 < 2 then {
+        @print("a\n")
+        entry function inner() { }
+    }
+}

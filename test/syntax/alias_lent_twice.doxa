@@ -1,0 +1,9 @@
+# One value lent to two `^` parameters of one call is a borrow error, not an
+# internal one (B052).
+function f(^a :: int[], ^b :: int[]) { @push(a, 1); @push(b, 2) }
+
+entry function main() {
+    var z is [1]
+    f(^z, ^z)
+    @print("{z}\n")
+}

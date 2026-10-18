@@ -1133,20 +1133,20 @@ test "debug info: a compiled macOS binary gets a .dSYM whose UUID matches it" {
     try expectContains(dsym.dwarf, "total");
 }
 
-/// The `probe-*` binary in `tmp`'s `bin/` and the DWARF file of the `.dSYM`
-/// beside it, if there is one.
+/// The `probe-*` binary beside the invocation directory and the DWARF file of
+/// the `.dSYM` beside it, if there is one.
 fn dsymOf(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir) !?struct { binary: []u8, dwarf: []u8 } {
-    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
-    defer bin.close(testing.io);
-    var it = bin.iterate();
+    var dir = try tmp.dir.openDir(testing.io, ".", .{ .iterate = true });
+    defer dir.close(testing.io);
+    var it = dir.iterate();
     while (try it.next(testing.io)) |entry| {
         if (!std.mem.startsWith(u8, entry.name, "probe-") or !std.mem.endsWith(u8, entry.name, ".dSYM")) continue;
         const stem = entry.name[0 .. entry.name.len - ".dSYM".len];
         const dwarf_path = try std.fmt.allocPrint(allocator, "{s}/Contents/Resources/DWARF/{s}", .{ entry.name, stem });
         defer allocator.free(dwarf_path);
-        const dwarf = try bin.readFileAlloc(testing.io, dwarf_path, allocator, .unlimited);
+        const dwarf = try dir.readFileAlloc(testing.io, dwarf_path, allocator, .unlimited);
         errdefer allocator.free(dwarf);
-        return .{ .binary = try bin.readFileAlloc(testing.io, stem, allocator, .unlimited), .dwarf = dwarf };
+        return .{ .binary = try dir.readFileAlloc(testing.io, stem, allocator, .unlimited), .dwarf = dwarf };
     }
     return null;
 }
@@ -1920,16 +1920,17 @@ fn compileProbeOutput(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, so
     return firstOutput(allocator, tmp, ext);
 }
 
-/// The first `probe-*` file with extension `ext` in the output directory.
+/// The first `probe-*` file with extension `ext` beside the invocation
+/// directory.
 fn firstOutput(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, ext: []const u8) ![]u8 {
-    // `-o <stem>` with no directory writes the binary, and its side files,
-    // into `bin/`.
-    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
-    defer bin.close(testing.io);
-    var it = bin.iterate();
+    // `-o <stem>` names the binary, and its side files, beside the invocation
+    // directory.
+    var dir = try tmp.dir.openDir(testing.io, ".", .{ .iterate = true });
+    defer dir.close(testing.io);
+    var it = dir.iterate();
     while (try it.next(testing.io)) |entry| {
         if (std.mem.endsWith(u8, entry.name, ext) and std.mem.startsWith(u8, entry.name, "probe-")) {
-            return bin.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
+            return dir.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
         }
     }
     return error.NoSuchOutput;
@@ -1978,12 +1979,12 @@ fn compileProbeLinux(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, sou
     defer allocator.free(ll);
     if (ext.len != 0) return firstOutput(allocator, tmp, ext);
     // The binary has no extension: the one `probe-*` file without a dot.
-    var bin = try tmp.dir.openDir(testing.io, "bin", .{ .iterate = true });
-    defer bin.close(testing.io);
-    var it = bin.iterate();
+    var dir = try tmp.dir.openDir(testing.io, ".", .{ .iterate = true });
+    defer dir.close(testing.io);
+    var it = dir.iterate();
     while (try it.next(testing.io)) |entry| {
         if (std.mem.startsWith(u8, entry.name, "probe-") and std.mem.indexOfScalar(u8, entry.name, '.') == null) {
-            return bin.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
+            return dir.readFileAlloc(testing.io, entry.name, allocator, .unlimited);
         }
     }
     return error.NoSuchOutput;

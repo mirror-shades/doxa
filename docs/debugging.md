@@ -127,8 +127,10 @@ data for tooling. An instrumented program writes its counts when it ends:
 returning from the entry, at `@exit`, or at a fault. They go to
 `<binary>.profdata`, beside the `<binary>.profmap` the compiler wrote. For
 `doxa run` that is the cache, so `doxa report <stem>` finds both there. For
-`doxa compile -o out/fib`, it is `out/`, read with `doxa report out/fib`. A
-report refuses counts from another build of the program. At `--opt=1` and up,
+`doxa compile -o out/fib`, it is `out/`, read with `doxa report out/fib`; a
+filename with an extension, such as `doxa report fib.exe`, is a path beside the
+invocation directory, just as `./fib` is. A report refuses counts from another
+build of the program. At `--opt=1` and up,
 an inlined function runs no entry of its own, so its calls count toward its
 caller. An instrumented binary is a diagnostic build: never time it.
 

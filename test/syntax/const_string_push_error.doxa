@@ -1,0 +1,6 @@
+# A `const` string may not change: `@push` once compiled and did nothing (B048).
+entry function main() {
+    const s is "ab"
+    @push(s, "c")
+    @print("{s}\n")
+}

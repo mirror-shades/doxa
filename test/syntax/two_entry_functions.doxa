@@ -1,0 +1,3 @@
+# A program has one entry function (B051).
+entry function first() { @print("first\n") }
+entry function second() { @print("second\n") }

@@ -1,0 +1,36 @@
+# A struct field narrows in place, through `as` and through a match arm. The
+# struct keeps its type and identity: only reads of the narrowed field see the
+# narrower type, and a copy made inside the branch is an ordinary struct.
+enum Code { Bad }
+struct Err { public msg :: string }
+group Fault { Code, Err }
+struct Holder { public val :: int | string, public f :: Fault }
+
+entry function main() {
+    var h is $Holder { val is 4, f is $Err { msg is "boom" } }
+
+    # `as` with an inline then, and the block form.
+    @print("{h.val as int then h.val + 1 else -1}\n")
+    h.val as int then { @print("{h.val * 10}\n") } else { @print("no\n") }
+
+    # The else branch narrows the field to the remainder.
+    h.val is "abc"
+    @print("{h.val as int then h.val + 1 else @length(h.val)}\n")
+
+    # A match arm narrows a group-typed field to its member, and a field is
+    # read through it.
+    const g is match h.f { Code then "code", Err then h.f.msg + "!", }
+    @print("{g}\n")
+
+    # A copy made inside the branch does not carry the narrowing.
+    h.val as string then {
+        var k is h
+        k.val is 7
+        @print("{k.val as int then k.val * 2 else -1} {h.val}\n")
+    } else {}
+
+    # A match arm on a union-typed field.
+    h.val is 41
+    const r is match h.val { int then h.val + 1, string then -1, }
+    @print("{r}\n")
+}

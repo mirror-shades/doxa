@@ -1,0 +1,8 @@
+# A match on an enum covers every variant or ends in `else` (B050).
+enum C { A, B, D }
+
+function pick(c :: C) returns int {
+    return match c { .A then 1, .B then 2 }
+}
+
+entry function main() { @print("{pick(C.D)}\n") }
