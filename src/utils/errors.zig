@@ -395,6 +395,8 @@ pub const ErrorCode = struct {
     pub const INVALID_THIS = "E2030";
     pub const NESTING_TOO_DEEP = "E2031";
     pub const KEYWORD_AS_NAME = "E2032";
+    pub const MULTIPLE_ENTRY_POINTS = "E2033";
+    pub const SELF_CONTAINING_STRUCT = "E2034";
 
     // 3xxx - Memory & Ownership
     pub const INVALID_BORROW_SOURCE = "E3005";

@@ -17,6 +17,7 @@ const SemanticAnalyzer = @import("semantic.zig").SemanticAnalyzer;
 const Enclosing = SemanticAnalyzer.Enclosing;
 const ParamRef = @import("semantic.zig").ParamRef;
 const program = @import("program.zig");
+const patterns = @import("patterns.zig");
 
 pub fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, enclosing: ?Enclosing) !void {
     // Create function scope with parameters
@@ -111,17 +112,17 @@ pub fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, fu
     self.enclosing = prev_enclosing;
 }
 
-/// Report a function that declares a return type but has no path to a
-/// `return`. Return values are checked where each `return` is analyzed
-/// (`checkReturnValue`), not here.
+/// Report a function that declares a return type but has a path that reaches
+/// the end of its body. Return values are checked where each `return` is
+/// analyzed (`checkReturnValue`), not here.
 pub fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!void {
     if (expected_return_type.base == .Nothing) return;
-    if (try checkStatementsHaveReturns(self, body)) return;
+    if (try statementsLeave(self, body)) return;
     self.reporter.reportCompileError(
         func_span.location,
         ErrorCode.MISSING_RETURN_VALUE,
-        "Function expects return value of type {s}; add an explicit return",
-        .{@tagName(expected_return_type.base)},
+        "Function expects return value of type {s}, but a path reaches the end of its body; return on every path",
+        .{try helpers.typeSpelling(self, &expected_return_type)},
     );
     self.fatal_error = true;
 }
@@ -162,64 +163,94 @@ pub fn checkBareReturn(self: *SemanticAnalyzer, location: Location) void {
     self.fatal_error = true;
 }
 
-pub fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
-    switch (expr.data) {
-        .Block => |block| {
-            return checkStatementsHaveReturns(self, block.statements);
-        },
-        .If => |if_data| {
-            // Check both branches - if either has returns, the expression has returns
-            var has_returns = false;
-            if (if_data.then_branch) |then_branch| {
-                if (try checkExpressionHasReturns(self, then_branch)) has_returns = true;
-            }
-            if (if_data.else_branch) |else_branch| {
-                if (try checkExpressionHasReturns(self, else_branch)) has_returns = true;
-            }
-            return has_returns;
-        },
-        .Match => |match_expr| {
-            // A `match` carries returns when any arm does; the arms are
-            // where every path out of a `match`-shaped function returns.
-            for (match_expr.cases) |case| {
-                if (try checkExpressionHasReturns(self, case.body)) return true;
-            }
-            return false;
-        },
-        .Cast => |cast| {
-            // `x as T then .. else ..` is the narrowing form of a
-            // conditional: its branches are where those paths return.
-            if (cast.then_branch) |then_branch| {
-                if (try checkExpressionHasReturns(self, then_branch)) return true;
-            }
-            if (cast.else_branch) |else_branch| {
-                if (try checkExpressionHasReturns(self, else_branch)) return true;
-            }
-            return false;
-        },
-        .ReturnExpr => return true,
-        .Unreachable => return true,
-        .Loop => |loop_data| {
-            // For loops, check if the body contains return statements
-            if (loop_data.body.data == .Block) {
-                return checkStatementsHaveReturns(self, loop_data.body.data.Block.statements);
-            } else {
-                return checkExpressionHasReturns(self, loop_data.body);
-            }
-        },
-        else => return false,
-    }
-}
-
-pub fn checkStatementsHaveReturns(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
+/// Whether control never reaches the end of `statements`: one of them leaves
+/// the function on every path. A `break` or `continue` ends the list without
+/// leaving it.
+pub fn statementsLeave(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
     for (statements) |stmt| {
         switch (stmt.data) {
             .Return => return true,
-            .Expression => |expr| {
-                if (expr) |expression| {
-                    if (try checkExpressionHasReturns(self, expression)) return true;
-                }
+            .Break, .Continue => return false,
+            .Expression => |expr| if (expr) |e| {
+                if (try expressionLeaves(self, e)) return true;
             },
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// Whether evaluating `expr` leaves the function on every path: by a
+/// `return`, `unreachable`, `@panic` or `@exit`, by branches that all leave,
+/// or by a loop that never ends.
+fn expressionLeaves(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
+    return switch (expr.data) {
+        .ReturnExpr, .Unreachable => true,
+        .InternalCall => |call| call.method.type == .PANIC or call.method.type == .EXIT,
+        .Grouping => |inner| if (inner) |e| expressionLeaves(self, e) else false,
+        .Block => |block| statementsLeave(self, block.statements),
+        .If => |branch| {
+            const then_branch = branch.then_branch orelse return false;
+            const else_branch = branch.else_branch orelse return false;
+            return try expressionLeaves(self, then_branch) and try expressionLeaves(self, else_branch);
+        },
+        // Without a `then`, the narrowed value goes on past the `as`.
+        .Cast => |narrowing| {
+            const then_branch = narrowing.then_branch orelse return false;
+            const else_branch = narrowing.else_branch orelse return false;
+            return try expressionLeaves(self, then_branch) and try expressionLeaves(self, else_branch);
+        },
+        .Match => |match_expr| {
+            const subject_type = self.getCachedExprType(match_expr.value) orelse return false;
+            if (!try patterns.matchCovers(self, match_expr, subject_type)) return false;
+            for (match_expr.cases) |case| {
+                if (!try expressionLeaves(self, case.body)) return false;
+            }
+            return true;
+        },
+        // A loop that only a `break` could end, and that holds none of its
+        // own, never reaches what follows it.
+        .Loop => |loop| endless(loop) and !breaks(loop.body),
+        else => false,
+    };
+}
+
+/// Whether nothing but a `break` ends `loop`: no condition, or one that always
+/// holds, and no collection or range to run out.
+fn endless(loop: ast.Loop) bool {
+    if (loop.over != null) return false;
+    const condition = loop.condition orelse return true;
+    if (condition.data != .Literal or condition.data.Literal != .tetra) return false;
+    return switch (condition.data.Literal.tetra) {
+        .true, .both => true,
+        .false, .neither => false,
+    };
+}
+
+/// Whether `expr` holds a `break` of the loop whose body it is. A nested
+/// loop's breaks are its own.
+fn breaks(expr: *const ast.Expr) bool {
+    return switch (expr.data) {
+        .Break => true,
+        .Grouping => |inner| if (inner) |e| breaks(e) else false,
+        .Block => |block| statementsBreak(block.statements),
+        .If => |branch| (if (branch.then_branch) |b| breaks(b) else false) or
+            (if (branch.else_branch) |b| breaks(b) else false),
+        .Cast => |narrowing| (if (narrowing.then_branch) |b| breaks(b) else false) or
+            (if (narrowing.else_branch) |b| breaks(b) else false),
+        .Match => |match_expr| for (match_expr.cases) |case| {
+            if (breaks(case.body)) break true;
+        } else false,
+        else => false,
+    };
+}
+
+fn statementsBreak(statements: []const ast.Stmt) bool {
+    for (statements) |stmt| {
+        switch (stmt.data) {
+            .Break => return true,
+            .Expression => |expr| if (expr) |e| if (breaks(e)) return true,
+            .VarDecl => |decl| if (decl.initializer) |e| if (breaks(e)) return true,
             else => {},
         }
     }

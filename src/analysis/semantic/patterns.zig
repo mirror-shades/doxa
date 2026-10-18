@@ -10,7 +10,11 @@ const Variable = Memory.Variable;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+const Location = @import("../../utils/reporting.zig").Location;
 const names = @import("names.zig");
+const helpers = @import("helpers.zig");
+const returns = @import("returns.zig");
+const cast = @import("infer/cast.zig");
 const eval = @import("eval_utils.zig");
 const infer_type = @import("infer_type.zig");
 const TokenImport = @import("../../types/token.zig");
@@ -74,7 +78,7 @@ pub fn checkDestructure(self: *SemanticAnalyzer, path: ast.MatchCase.PathPattern
 
 /// Narrow the matched variable within one match arm, then infer the arm's
 /// body. The arm's patterns were resolved by `resolveMatchPatterns`.
-pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, subject_type: *const ast.TypeInfo, matched_var_name: ?[]const u8, discarded: bool) ErrorList!*ast.TypeInfo {
+pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, subject_type: *const ast.TypeInfo, subject: *const ast.Expr, discarded: bool) ErrorList!*ast.TypeInfo {
     // A per-case scope keeps narrowing from leaking out of the arm.
     const case_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
     defer case_scope.deinit();
@@ -83,58 +87,64 @@ pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase
     self.current_scope = case_scope;
     defer self.current_scope = prev_scope;
 
-    if (matched_var_name) |name| {
-        // An arm narrows the subject only when it lists a single pattern: with
-        // several, any of them could have selected it, so the body sees the
-        // subject as declared. Codegen reads the narrowing from each read of
-        // the subject; nothing re-derives it.
-        const narrows = case.patterns.len == 1;
+    // An arm narrows the subject only when it lists a single pattern: with
+    // several, any of them could have selected it, so the body sees the
+    // subject as declared. A variable or a field path is narrowed in place
+    // (`cast.narrowSubject`); codegen reads the narrowing from each read of
+    // the subject, and nothing re-derives it.
+    const narrows = case.patterns.len == 1;
 
-        if (case.path_patterns.len > 0) {
-            const path = case.path_patterns[0];
-            if (path.tokens.len >= 1) {
-                const member: ?TypeRef = switch (case.resolved[path.pattern]) {
-                    .type => |ref| ref,
-                    .token, .variant => null,
+    if (case.path_patterns.len > 0) {
+        const path = case.path_patterns[0];
+        if (path.tokens.len >= 1) {
+            const member: ?TypeRef = switch (case.resolved[path.pattern]) {
+                .type => |ref| ref,
+                .token, .variant => null,
+            };
+            if (narrows) {
+                if (member) |ref| try cast.narrowSubject(self, case_scope, subject, try narrowedType(self, .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false }));
+            }
+
+            // Struct destructuring binds each field name as a local.
+            // These are the arm's own names, not the subject, so they
+            // bind whatever the subject is and whether or not the arm narrows.
+            if (path.field_names.len > 0) {
+                if (member) |ref| if (self.struct_table.idOf(ref)) |sid| {
+                    const fields = self.struct_table.fields(sid) orelse &.{};
+                    const storages = try self.allocator.alloc(u32, path.field_names.len);
+                    // Every name binds, or none is attached: an
+                    // undeclared field is `checkDestructure`'s error,
+                    // which stops the compile before codegen, and no
+                    // storage of the arm is left unset.
+                    const bound = for (path.field_names, storages) |field_token, *storage| {
+                        const field = for (fields) |f| {
+                            if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
+                        } else break false;
+                        self.checkFreshName(case_scope, field_token);
+                        storage.* = (try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator)).storage_id;
+                    } else true;
+                    if (bound) case.path_patterns[0].field_storages = storages else self.allocator.free(storages);
                 };
-                if (narrows) {
-                    if (member) |ref| (try bindNarrowed(case_scope, name, .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false }, self.allocator)).is_view = true;
-                }
-
-                // Struct destructuring binds each field name as a local.
-                // These are the arm's own names, not the subject, so they
-                // bind whether or not the arm narrows.
-                if (path.field_names.len > 0) {
-                    if (member) |ref| if (self.struct_table.idOf(ref)) |sid| {
-                        const fields = self.struct_table.fields(sid) orelse &.{};
-                        const storages = try self.allocator.alloc(u32, path.field_names.len);
-                        // Every name binds, or none is attached: an
-                        // undeclared field is `checkDestructure`'s error,
-                        // which stops the compile before codegen, and no
-                        // storage of the arm is left unset.
-                        const bound = for (path.field_names, storages) |field_token, *storage| {
-                            const field = for (fields) |f| {
-                                if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
-                            } else break false;
-                            self.checkFreshName(case_scope, field_token);
-                            storage.* = (try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator)).storage_id;
-                        } else true;
-                        if (bound) case.path_patterns[0].field_storages = storages else self.allocator.free(storages);
-                    };
-                }
             }
-        } else if (narrows) {
-            if (try patternType(self, case.patterns[0], case.resolved[0], subject_type)) |narrowed| {
-                (try bindNarrowed(case_scope, name, narrowed, self.allocator)).is_view = true;
-            }
+        }
+    } else if (narrows) {
+        if (try patternType(self, case.patterns[0], case.resolved[0], subject_type)) |narrowed| {
+            try cast.narrowSubject(self, case_scope, subject, try narrowedType(self, narrowed));
         }
     }
 
     // An arm's value is the match's: discarded when the match's is.
     self.discarded_grant = discarded;
     const case_body_type = try infer_type.inferTypeFromExpr(self, case.body);
-    if (matched_var_name) |name| case_scope.propagateUsedToParent(name);
+    if (cast.narrowedViewName(subject)) |name| case_scope.propagateUsedToParent(name);
     return case_body_type;
+}
+
+/// `narrowed`, owned by the analysis allocator so a narrowing can hold it.
+fn narrowedType(self: *SemanticAnalyzer, narrowed: ast.TypeInfo) ErrorList!*ast.TypeInfo {
+    const type_info = try ast.TypeInfo.createDefault(self.allocator);
+    type_info.* = narrowed;
+    return type_info;
 }
 
 pub fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, allocator: std.mem.Allocator) ErrorList!*Variable {
@@ -202,6 +212,63 @@ pub fn patternType(self: *SemanticAnalyzer, pattern: Token, resolved: ast.MatchC
         },
         else => null,
     };
+}
+
+/// Whether the arms of `match_expr` reach every value its subject can hold:
+/// it ends in `else`, its subject is an enum or a group (whose uncovered
+/// members are reported where the match is analyzed, E1033), or its subject
+/// is a union every member of which an arm names.
+pub fn matchCovers(self: *SemanticAnalyzer, match_expr: ast.MatchExpr, subject_type: *const ast.TypeInfo) ErrorList!bool {
+    if (helpers.matchHasElseArm(match_expr)) return true;
+    if (subject_type.base == .Union) return (try uncoveredUnionMember(self, match_expr, subject_type)) == null;
+    if (helpers.matchSubjectGroup(self, subject_type) != null) return true;
+    const custom = subject_type.custom_type orelse return false;
+    const custom_type = (try self.customType(custom.resolved())) orelse return false;
+    return custom_type.kind == .Enum;
+}
+
+/// A match whose value is used has one on every path: over a union, every
+/// member needs an arm or the match an `else`, since an uncovered member
+/// would leave it without a value.
+pub fn checkUnionMatchExhaustive(self: *SemanticAnalyzer, match_expr: ast.MatchExpr, subject_type: *const ast.TypeInfo, location: Location) ErrorList!void {
+    if (subject_type.base != .Union or helpers.matchHasElseArm(match_expr)) return;
+    const missing = (try uncoveredUnionMember(self, match_expr, subject_type)) orelse return;
+    self.reporter.reportCompileError(
+        location,
+        ErrorCode.NON_EXHAUSTIVE_MATCH,
+        "Match on {s} is not exhaustive: {s} is not covered, and the match's value is used. Cover every member or add an 'else' arm",
+        .{ try helpers.typeSpelling(self, subject_type), try helpers.typeSpelling(self, missing) },
+    );
+    self.fatal_error = true;
+}
+
+/// The first member of union `subject_type` that no arm of `match_expr` names.
+fn uncoveredUnionMember(self: *SemanticAnalyzer, match_expr: ast.MatchExpr, subject_type: *const ast.TypeInfo) ErrorList!?*const ast.TypeInfo {
+    const union_type = subject_type.union_type orelse return null;
+    for (union_type.types) |member| {
+        if (!try memberCovered(self, match_expr, member, subject_type)) return member;
+    }
+    return null;
+}
+
+/// Whether an arm names `member`, or a group holding it. A group member of
+/// the union is covered when every one of the group's members is.
+fn memberCovered(self: *SemanticAnalyzer, match_expr: ast.MatchExpr, member: *const ast.TypeInfo, subject_type: *const ast.TypeInfo) ErrorList!bool {
+    for (match_expr.cases) |case| {
+        // An arm's patterns are resolved before its match is checked.
+        if (case.resolved.len != case.patterns.len) continue;
+        for (case.patterns, case.resolved) |pattern, resolved| {
+            const arm = (try patternType(self, pattern, resolved, subject_type)) orelse continue;
+            if (helpers.typesEqual(self, &arm, member) or returns.namedMemberAccepts(self, &arm, member)) return true;
+        }
+    }
+    const group = helpers.matchSubjectGroup(self, member) orelse return false;
+    const group_id = self.group_table.idOf(group) orelse return false;
+    for (self.group_table.members(group_id) orelse &.{}) |group_member| {
+        const as_type: ast.TypeInfo = .{ .base = .Custom, .custom_type = .{ .ref = group_member.ref }, .is_mutable = false };
+        if (!try memberCovered(self, match_expr, &as_type, subject_type)) return false;
+    }
+    return true;
 }
 
 /// The member of `subject_type` an array pattern names. A pattern spells

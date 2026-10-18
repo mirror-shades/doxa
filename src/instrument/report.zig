@@ -7,6 +7,7 @@
 //! report re-derives neither.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const instrument = @import("../runtime/instrument.zig");
 const complexity = @import("complexity.zig");
 const memory = @import("memory.zig");
@@ -293,8 +294,9 @@ pub fn writeJson(w: *std.Io.Writer, json: Json) !void {
 
 // ── The command ──
 
-/// `doxa report <binary> [--json] [--cache-dir=<dir>]`. A path with a directory
-/// names a `doxa compile` output; a bare stem a `doxa run` build, in the cache.
+/// `doxa report <binary> [--json] [--cache-dir=<dir>]`. A path, or a filename
+/// with an extension, names a `doxa compile` output; a bare stem a `doxa run`
+/// build, in the cache.
 pub fn command(io: std.Io, alloc: std.mem.Allocator, args: []const []const u8, default_cache: []const u8) u8 {
     var target: ?[]const u8 = null;
     var json = false;
@@ -376,12 +378,22 @@ pub fn command(io: std.Io, alloc: std.mem.Allocator, args: []const []const u8, d
     return 0;
 }
 
-/// The binary's path without its extension; a bare stem is in the cache.
+/// The binary's path without its extension, allocator-owned. A name with a
+/// directory or an extension is the user's path, resolved against the
+/// invocation directory; a bare stem names a `doxa run` build in the cache.
 fn stemOf(alloc: std.mem.Allocator, given: []const u8, cache_dir: []const u8) ![]const u8 {
     const ext = std.fs.path.extension(given);
-    const bare = if (std.ascii.eqlIgnoreCase(ext, ".exe")) given[0 .. given.len - ext.len] else given;
-    if (std.fs.path.dirname(bare) != null) return bare;
-    return std.fs.path.join(alloc, &.{ cache_dir, bare });
+    if (ext.len != 0) {
+        // A Windows binary's side files drop `.exe`; on another host it is
+        // part of the name the build wrote.
+        const bare = if (builtin.os.tag == .windows and std.ascii.eqlIgnoreCase(ext, ".exe"))
+            given[0 .. given.len - ext.len]
+        else
+            given;
+        return alloc.dupe(u8, bare);
+    }
+    if (std.fs.path.dirname(given) != null) return alloc.dupe(u8, given);
+    return std.fs.path.join(alloc, &.{ cache_dir, given });
 }
 
 /// The file's contents, `.{null}` when there is none, or null after
@@ -426,4 +438,30 @@ test "a profile joins with its own build and refuses another's" {
     const other = try std.fmt.allocPrint(a, "{s}\nhash {x:0>16}\n1\n7\n", .{ instrument.profdata_header, instrument.buildHash("call\tx\tm.doxa\t1\t1\n") });
     try std.testing.expectError(error.Stale, join(a, map.written(), other));
     try std.testing.expectError(error.Stale, join(a, map.written(), data[0 .. data.len - 2]));
+}
+
+test "a bare filename with an extension is a path, a bare stem is in the cache" {
+    const alloc = std.testing.allocator;
+    const exe_stem = if (builtin.os.tag == .windows) "repro" else "repro.exe";
+
+    const exe = try stemOf(alloc, "repro.exe", ".doxa-cache");
+    defer alloc.free(exe);
+    try std.testing.expectEqualStrings(exe_stem, exe);
+
+    const nested = try stemOf(alloc, "out/repro.exe", ".doxa-cache");
+    defer alloc.free(nested);
+    try std.testing.expectEqualStrings(
+        if (builtin.os.tag == .windows) "out/repro" else "out/repro.exe",
+        nested,
+    );
+
+    const explicit = try stemOf(alloc, "./repro", ".doxa-cache");
+    defer alloc.free(explicit);
+    try std.testing.expectEqualStrings("./repro", explicit);
+
+    const cached = try stemOf(alloc, "repro", ".doxa-cache");
+    defer alloc.free(cached);
+    const expected = try std.fs.path.join(alloc, &.{ ".doxa-cache", "repro" });
+    defer alloc.free(expected);
+    try std.testing.expectEqualStrings(expected, cached);
 }

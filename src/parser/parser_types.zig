@@ -283,6 +283,7 @@ pub const Parser = struct {
         var block_value: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+            const pass_start = self.current;
             const stmt = try statement_parser.parseStatement(self);
 
             if (stmt.data == .Lift) {
@@ -291,6 +292,7 @@ pub const Parser = struct {
             }
 
             try statements.append(stmt);
+            try self.expectProgress(pass_start);
 
             if (stmt.data == .Return) break;
 
@@ -396,6 +398,16 @@ pub const Parser = struct {
         return error.ExpectedNewline;
     }
 
+    /// Every statement loop's backstop: one pass, begun at token `start`, must
+    /// consume a token. A pass that ends where it began would repeat forever,
+    /// appending what it parsed each time, so it is reported (E8003) at the
+    /// token that stalled it. The end of input is not a stall.
+    pub fn expectProgress(self: *Parser, start: usize) ErrorList!void {
+        if (self.current != start or self.peek().type == .EOF) return;
+        self.reporter.reportCompileError(self.locationOf(self.peek()), ErrorCode.PARSER_DID_NOT_ADVANCE, "Parser did not advance at '{s}'", .{self.peek().lexeme});
+        return error.ParserDidNotAdvance;
+    }
+
     /// Report a parser-phase failure at the token the parser stopped on.
     /// `execute` returns errors without emitting a diagnostic — the caller owns
     /// presentation — so every caller must route through here: the root file in
@@ -471,11 +483,14 @@ pub const Parser = struct {
             if (self.peek().type == .ENTRY) {
                 is_entry = true;
                 const entry_token = self.peek();
-                self.advance();
-                if (!self.has_entry_point) {
-                    self.has_entry_point = true;
-                    self.entry_point_location = entry_token;
+                // A program starts in one place.
+                if (self.entry_point_location) |first| {
+                    self.reporter.reportCompileError(self.locationOf(entry_token), ErrorCode.MULTIPLE_ENTRY_POINTS, "a program has one entry function, and line {d} already marks one", .{first.line});
+                    return error.MultipleEntryPoints;
                 }
+                self.advance();
+                self.has_entry_point = true;
+                self.entry_point_location = entry_token;
             }
 
             const stmt_token_type = self.peek().type;
@@ -502,15 +517,7 @@ pub const Parser = struct {
                     var func = try declaration_parser.parseFunctionDecl(self);
                     func.data.FunctionDecl.is_public = is_public;
                     func.data.FunctionDecl.is_entry = is_entry;
-                    if (is_entry) {
-                        if (self.entry_point_location != null) {
-                            self.entry_point_name = func.data.FunctionDecl.name.lexeme;
-                        } else {
-                            {
-                                return error.MultipleEntryPoints;
-                            }
-                        }
-                    }
+                    if (is_entry) self.entry_point_name = func.data.FunctionDecl.name.lexeme;
                     try statements.append(func);
                 },
                 .IMPORT => {
@@ -604,19 +611,7 @@ pub const Parser = struct {
                 statements.items[statements.items.len - 1].base.span = self.spanFrom(start);
             }
 
-            if (self.current == loop_start_pos and self.peek().type != .EOF) {
-                self.reporter.reportCompileError(Location{
-                    .file = self.current_file,
-                    .file_uri = self.current_file_uri,
-                    .range = .{
-                        .start_line = self.peek().line,
-                        .start_col = self.peek().column,
-                        .end_line = self.peek().line,
-                        .end_col = self.peek().column,
-                    },
-                }, ErrorCode.PARSER_DID_NOT_ADVANCE, "Parser did not advance", .{});
-                return error.ParserDidNotAdvance;
-            }
+            try self.expectProgress(loop_start_pos);
         }
 
         if (self.has_entry_point and self.entry_point_name == null) {

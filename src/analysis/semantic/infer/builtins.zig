@@ -29,6 +29,27 @@ fn uninferredElement(self: *SemanticAnalyzer, subject: *ast.Expr, type_info: *as
     return type_info;
 }
 
+/// A built-in that changes its collection (`@push`, `@pop`, `@insert`,
+/// `@remove`, `@clear`) needs a name that may change: a `const` name is
+/// refused, as `x is …` is (E1015). An array whose storage forbids the change
+/// is `ensureDynamicArrayStorage`'s to report.
+fn ensureMutableSubject(self: *SemanticAnalyzer, subject: *const ast.Expr, subject_type: *const ast.TypeInfo, usage: []const u8) SemanticError!bool {
+    if (subject.data != .Variable) return true;
+    if (subject_type.base == .Array and subject_type.array_storage != .dynamic) return true;
+    const name = subject.data.Variable.lexeme;
+    const storage_id = (try names.storageBeneath(self, name)) orelse return true;
+    const storage = self.memory.scope_manager.value_storage.get(storage_id) orelse return true;
+    if (!storage.constant) return true;
+    self.reporter.reportCompileError(
+        getLocationFromBase(subject.base),
+        ErrorCode.INVALID_ASSIGNMENT_TARGET,
+        "Cannot change immutable variable '{s}' with {s}",
+        .{ name, usage },
+    );
+    self.fatal_error = true;
+    return false;
+}
+
 pub fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) SemanticError!*ast.TypeInfo {
     const subject_type = try infer_type.inferTypeFromExpr(self, subject);
     // An empty literal takes its element type from its context, and a
@@ -168,6 +189,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
         if (coll_t.base == .Error) return type_info;
+        if (!try ensureMutableSubject(self, args[0], coll_t, "@push")) return type_info;
         const val_t = if (coll_t.base == .Array and coll_t.array_type != null)
             try infer_type.inferTypeIn(self, args[1], coll_t.array_type.?)
         else
@@ -207,6 +229,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
         if (coll_t.base == .Error) return type_info;
+        if (!try ensureMutableSubject(self, args[0], coll_t, "@pop")) return type_info;
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@pop")) return type_info;
             if (coll_t.array_type) |elem| type_info.* = elem.*;
@@ -223,6 +246,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
         if (coll_t.base == .Error) return type_info;
+        if (!try ensureMutableSubject(self, args[0], coll_t, "@insert")) return type_info;
         const idx_t = try infer_type.inferTypeFromExpr(self, args[1]);
         if (idx_t.base == .Error) return type_info;
         if (idx_t.base != .Int) {
@@ -261,6 +285,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
         if (coll_t.base == .Error) return type_info;
+        if (!try ensureMutableSubject(self, args[0], coll_t, "@remove")) return type_info;
         const idx_t = try infer_type.inferTypeFromExpr(self, args[1]);
         if (idx_t.base == .Error) return type_info;
         if (idx_t.base != .Int) {
@@ -399,6 +424,7 @@ pub fn inferBuiltinCallInner(
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
         const coll_t = try inferBuiltinSubjectType(self, args[0]);
         if (coll_t.base == .Error) return type_info;
+        if (!try ensureMutableSubject(self, args[0], coll_t, "@clear")) return type_info;
         if (coll_t.base != .Array and coll_t.base != .String) {
             self.reporter.reportCompileError(
                 getLocationFromBase(args[0].base),
@@ -409,6 +435,7 @@ pub fn inferBuiltinCallInner(
             self.fatal_error = true;
             return type_info;
         }
+        if (coll_t.base == .Array and !self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@clear")) return type_info;
         // @clear returns nothing
         type_info.* = .{ .base = .Nothing };
         return type_info;

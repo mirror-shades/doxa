@@ -279,6 +279,28 @@ pub fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, a
         param_index += 1;
     }
 
+    // A `^` loan is exclusive for the call (`docs/alias.md`): one storage lent
+    // to two parameters would reach the callee under two names.
+    for (arguments, 0..) |arg, i| {
+        if (!arg.is_alias) continue;
+        const target = self.getStoreTarget(arg.expr.base.id) orelse continue;
+        for (arguments[0..i]) |earlier| {
+            if (!earlier.is_alias) continue;
+            const earlier_target = self.getStoreTarget(earlier.expr.base.id) orelse continue;
+            if (earlier_target.storage != target.storage) continue;
+            // The parser admits only a name after `^`.
+            const name = if (arg.expr.data == .Variable) arg.expr.data.Variable.lexeme else "this value";
+            self.reporter.reportCompileError(
+                getLocationFromBase(arg.expr.base),
+                ErrorCode.BORROW_CONFLICT,
+                "this call already lends '{s}' to a ^ parameter; a value is lent to one ^ parameter at a time",
+                .{name},
+            );
+            self.fatal_error = true;
+            return false;
+        }
+    }
+
     return true;
 }
 

@@ -12,7 +12,6 @@ const names = @import("../names.zig");
 const Scope = @import("../../../utils/memory.zig").Scope;
 const infer_type = @import("../infer_type.zig");
 const SemanticError = infer_type.SemanticError;
-const fields = @import("fields.zig");
 
 const GroupCast = enum { not_a_group, valid, not_a_member };
 
@@ -84,7 +83,7 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         self.current_scope = then_scope;
         defer self.current_scope = prev_scope;
 
-        try bindNarrowedCastType(self, then_scope, cast.value, target_type_info);
+        try narrowSubject(self, then_scope, cast.value, target_type_info);
         if (cast_decl_name) |name| expr.data.Cast.decl_then = try bindCastDeclName(then_scope, name, target_type_info);
 
         if (then_expr.data == .Block and then_expr.data.Block.value != null) {
@@ -104,7 +103,7 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         }
 
         if (cast_decl_name) |name| then_scope.propagateUsedToParent(name);
-        if (castValueBindingName(cast.value)) |name| then_scope.propagateUsedToParent(name);
+        if (narrowedViewName(cast.value)) |name| then_scope.propagateUsedToParent(name);
     }
 
     var else_diverges = false;
@@ -118,7 +117,7 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         defer self.current_scope = prev_else_scope;
 
         const remainder_type = try helpers.subtractTypeFromUnion(self, value_type, target_type_info);
-        try bindNarrowedCastType(self, else_scope, cast.value, remainder_type);
+        try narrowSubject(self, else_scope, cast.value, remainder_type);
         if (cast_decl_name) |name| expr.data.Cast.decl_else = try bindCastDeclName(else_scope, name, remainder_type);
 
         self.discarded_grant = discarded;
@@ -131,7 +130,7 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         }
 
         if (cast_decl_name) |name| else_scope.propagateUsedToParent(name);
-        if (castValueBindingName(cast.value)) |name| else_scope.propagateUsedToParent(name);
+        if (narrowedViewName(cast.value)) |name| else_scope.propagateUsedToParent(name);
     }
 
     if (else_type) |et| {
@@ -209,16 +208,39 @@ pub fn classifyGroupCast(self: *SemanticAnalyzer, value_type: *ast.TypeInfo, tar
     return .not_a_member;
 }
 
-/// Returns the variable name that `bindNarrowedCastType` would shadow for the
-/// given cast value, so usage of that narrowed binding can be propagated to the
-/// original variable when the narrowing scope is torn down.
-pub fn castValueBindingName(cast_value: *ast.Expr) ?[]const u8 {
-    if (cast_value.data == .Variable) return cast_value.data.Variable.lexeme;
-    if (cast_value.data == .FieldAccess) {
-        const field_access = cast_value.data.FieldAccess;
-        if (field_access.object.data == .Variable) return field_access.object.data.Variable.lexeme;
+/// The name `narrowSubject` binds a view of for `subject`, so the view's use
+/// can be propagated to the variable beneath it when the narrowing scope is
+/// torn down. A narrowed field path binds no view: its object is read as
+/// itself.
+pub fn narrowedViewName(subject: *const ast.Expr) ?[]const u8 {
+    return if (subject.data == .Variable) subject.data.Variable.lexeme else null;
+}
+
+/// Narrow `subject` to `narrowed` within `scope`, the branch or arm that proved
+/// it. A variable is seen through a view at the narrower type. A field path
+/// `o.f` is recorded on the scope: reads of `f` through `o` see the narrower
+/// type, while `o` keeps its own type, and with it the struct's identity.
+/// Any other subject is a value with no name to narrow.
+pub fn narrowSubject(self: *SemanticAnalyzer, scope: *Scope, subject: *const ast.Expr, narrowed: *ast.TypeInfo) !void {
+    switch (subject.data) {
+        .Variable => |name| try bindNarrowedName(scope, name.lexeme, narrowed),
+        .FieldAccess => |field_access| {
+            // TODO: narrow deeper paths (`a.b.c`) and fields read through `this`.
+            if (field_access.object.data != .Variable) return;
+            const storage = (try names.storageBeneath(self, field_access.object.data.Variable.lexeme)) orelse return;
+            try scope.narrowField(storage, field_access.field.lexeme, narrowed);
+        },
+        else => {},
     }
-    return null;
+}
+
+/// The type a read of `object.field` sees where it is read: the type a
+/// narrowing in force proved for that path, or null when none applies.
+pub fn narrowedFieldType(self: *SemanticAnalyzer, object: *const ast.Expr, field: []const u8) !?*ast.TypeInfo {
+    if (object.data != .Variable) return null;
+    const scope = self.current_scope orelse return null;
+    const storage = (try names.storageBeneath(self, object.data.Variable.lexeme)) orelse return null;
+    return scope.narrowedField(storage, field);
 }
 
 pub fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !void {
@@ -243,49 +265,6 @@ pub fn bindCastDeclName(scope: *Scope, name: []const u8, narrowed_type: *ast.Typ
         else => |e| return e,
     };
     return .{ .storage = binding.storage_id, .type_info = narrowed_type };
-}
-
-pub fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast.Expr, narrowed_type: *ast.TypeInfo) !void {
-    if (cast_value.data == .Variable) {
-        try bindNarrowedName(scope, cast_value.data.Variable.lexeme, narrowed_type);
-    } else if (cast_value.data == .FieldAccess) {
-        const field_access = cast_value.data.FieldAccess;
-        if (field_access.object.data == .Variable) {
-            const obj_name = field_access.object.data.Variable.lexeme;
-            const fld_name = field_access.field.lexeme;
-            if (try names.lookupVariable(self, obj_name)) |variable| {
-                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    const original_type = storage.type_info.*;
-                    var struct_fields: ?[]const ast.StructFieldType = null;
-                    if (original_type.base == .Struct and original_type.struct_fields != null) {
-                        struct_fields = original_type.struct_fields.?;
-                    } else if (original_type.base == .Custom and original_type.custom_type != null) {
-                        if (try self.customType(original_type.custom_type.?.resolved())) |custom_type| {
-                            if (custom_type.kind == .Struct) struct_fields = try fields.structFieldTypes(self, custom_type.struct_fields orelse &.{});
-                        }
-                    }
-                    if (struct_fields) |fields_arr| {
-                        const dup_fields = try self.allocator.alloc(ast.StructFieldType, fields_arr.len);
-                        for (fields_arr, 0..) |sf, i| {
-                            if (std.mem.eql(u8, sf.name, fld_name)) {
-                                dup_fields[i] = .{ .name = sf.name, .type_info = narrowed_type };
-                            } else {
-                                dup_fields[i] = sf;
-                            }
-                        }
-                        const narrowed_struct = try ast.TypeInfo.createDefault(self.allocator);
-                        narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
-                        const view = scope.createValueBinding(
-                            obj_name,
-                            narrowed_struct,
-                            false,
-                        ) catch return;
-                        view.is_view = true;
-                    }
-                }
-            }
-        }
-    }
 }
 
 /// Whether an expression unconditionally transfers control away and therefore

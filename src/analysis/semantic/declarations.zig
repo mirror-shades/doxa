@@ -399,12 +399,50 @@ pub fn declareStruct(self: *SemanticAnalyzer, decl: *ast.StructDecl, scope: *Sco
         };
     }
     try helpers.registerStructType(self, ref, fields);
+    try checkSelfContaining(self, decl, fields, ref);
 
     const type_info = try ast.TypeInfo.createDefault(self.allocator);
     type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = fields, .is_mutable = false };
     try bindTypeName(self, scope, decl.name, type_info, base);
     try checkStructMemberNames(self, decl);
     try registerStructMethods(self, decl, ref);
+}
+
+/// A struct whose fields lead, through structs held by value, back to
+/// itself has no value anyone could build: each would need another first.
+/// An array (which may be empty) or a union (which may hold another member)
+/// on the way breaks the chain. A cycle across modules is found when its
+/// last struct is declared, since the others are registered by then.
+fn checkSelfContaining(self: *SemanticAnalyzer, decl: *ast.StructDecl, fields: []const ast.StructFieldType, ref: TypeRef) ErrorList!void {
+    var visited: std.ArrayListUnmanaged(TypeRef) = .empty;
+    defer visited.deinit(self.allocator);
+    for (decl.fields, fields) |field, struct_field| {
+        if (!try holdsByValue(self, struct_field.type_info, ref, &visited)) continue;
+        self.reporter.reportCompileError(
+            ast.SourceSpan.fromToken(field.name).location,
+            ErrorCode.SELF_CONTAINING_STRUCT,
+            "struct '{s}' holds itself through '{s}', so no value of it can be built; make the field '{s} | nothing'",
+            .{ decl.name.lexeme, field.name.lexeme, try helpers.typeSpelling(self, struct_field.type_info) },
+        );
+        self.fatal_error = true;
+        return;
+    }
+}
+
+/// Whether a value of `type_info` holds, by value, a `target` somewhere in its
+/// chain of struct fields.
+fn holdsByValue(self: *SemanticAnalyzer, type_info: *const ast.TypeInfo, target: TypeRef, visited: *std.ArrayListUnmanaged(TypeRef)) ErrorList!bool {
+    if (type_info.base != .Custom and type_info.base != .Struct) return false;
+    const ref = (type_info.custom_type orelse return false).resolved();
+    if (ref.eql(target)) return true;
+    for (visited.items) |seen| if (seen.eql(ref)) return false;
+    try visited.append(self.allocator, ref);
+    const custom = self.custom_types.get(ref) orelse return false;
+    if (custom.kind != .Struct) return false;
+    for (custom.struct_fields orelse &.{}) |field| {
+        if (try holdsByValue(self, field.field_type_info, target, visited)) return true;
+    }
+    return false;
 }
 
 /// The type a struct field written as `type` holds. A field is one word

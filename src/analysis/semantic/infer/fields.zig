@@ -13,6 +13,7 @@ const effects = @import("../effects.zig");
 const infer_type = @import("../infer_type.zig");
 const SemanticError = infer_type.SemanticError;
 const member_mod = @import("member.zig");
+const cast = @import("cast.zig");
 
 pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!void {
     const field = expr.data.FieldAccess;
@@ -72,7 +73,10 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
                         type_info.base = .Nothing;
                         return;
                     }
-                    type_info.* = struct_field.field_type_info.*;
+                    // A narrowing in force (`o.f as T then …`) proved a
+                    // narrower type for this path; the field itself keeps its own.
+                    const narrowed = try cast.narrowedFieldType(self, field.object, struct_field.name);
+                    type_info.* = (narrowed orelse struct_field.field_type_info).*;
                 },
                 // `Color.Red`, `Group.Member`: the qualifier names the
                 // value's type.
@@ -83,7 +87,8 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
             const fields = object_type.struct_fields orelse &.{};
             for (fields) |struct_field| {
                 if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                    type_info.* = struct_field.type_info.*;
+                    const narrowed = try cast.narrowedFieldType(self, field.object, struct_field.name);
+                    type_info.* = (narrowed orelse struct_field.type_info).*;
                     return;
                 }
             }

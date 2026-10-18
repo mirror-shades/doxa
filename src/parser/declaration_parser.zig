@@ -346,11 +346,15 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 body.deinit();
             }
 
-            while (self.peek().type != .RIGHT_BRACE) {
+            while (true) {
                 while (self.peek().type == .NEWLINE) self.advance();
+                if (self.peek().type == .RIGHT_BRACE or self.peek().type == .EOF) break;
+                const pass_start = self.current;
                 const stmt = try statement_parser.parseStatement(self);
                 try body.append(stmt);
+                try self.expectProgress(pass_start);
             }
+            if (self.peek().type != .RIGHT_BRACE) return error.ExpectedRightBrace;
             self.advance();
 
             const method = try self.allocator.create(ast.StructMethod);
@@ -640,8 +644,10 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+        const pass_start = self.current;
         const stmt = try statement_parser.parseStatement(self);
         try body_statements.append(stmt);
+        try self.expectProgress(pass_start);
     }
 
     if (self.peek().type != .RIGHT_BRACE) {

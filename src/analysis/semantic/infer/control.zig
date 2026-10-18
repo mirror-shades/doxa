@@ -14,6 +14,7 @@ const TypeRef = ast.TypeRef;
 const infer_type = @import("../infer_type.zig");
 const SemanticError = infer_type.SemanticError;
 const calls = @import("calls.zig");
+const patterns = @import("../patterns.zig");
 
 pub fn ifExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo, discarded: bool) SemanticError!void {
     const if_expr = expr.data.If;
@@ -109,12 +110,9 @@ pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
     const match_expr = expr.data.Match;
     const subject_type = try infer_type.inferTypeFromExpr(self, match_expr.value);
     try helpers.checkGroupMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
+    try helpers.checkEnumMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
 
     if (match_expr.cases.len > 0) {
-        var matched_var_name: ?[]const u8 = null;
-        if (match_expr.value.data == .Variable) {
-            matched_var_name = match_expr.value.data.Variable.lexeme;
-        }
         const group = helpers.matchSubjectGroup(self, subject_type);
         const subject_enum: ?ast.TypeRef = blk: {
             const custom = subject_type.custom_type orelse break :blk null;
@@ -127,9 +125,10 @@ pub fn matchExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
 
         for (match_expr.cases) |*case| {
             try self.resolveMatchPatterns(case, group, subject_enum);
-            const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, matched_var_name, discarded);
+            const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, subject_type, match_expr.value, discarded);
             try union_types.append(case_type);
         }
+        if (!discarded) try patterns.checkUnionMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
 
         if (union_types.items.len > 0) {
             // The match is one of its arms' values: their common type,

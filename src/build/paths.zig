@@ -3,7 +3,6 @@
 //! side file a previous build may have left.
 
 const std = @import("std");
-const constants = @import("../common/constants.zig");
 const config = @import("config.zig");
 
 pub fn fileStem(path: []const u8) []const u8 {
@@ -14,13 +13,6 @@ pub fn fileStem(path: []const u8) []const u8 {
     return filename;
 }
 
-pub fn looksLikeOutputPath(path: []const u8) bool {
-    if (std.fs.path.isAbsolute(path)) return true;
-    if (std.mem.startsWith(u8, path, "./") or std.mem.startsWith(u8, path, "../")) return true;
-    if (std.mem.startsWith(u8, path, ".\\") or std.mem.startsWith(u8, path, "..\\")) return true;
-    return std.mem.indexOfAny(u8, path, "/\\") != null;
-}
-
 pub fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8, is_windows: bool) ![]u8 {
     if (is_windows) {
         if (std.mem.endsWith(u8, path, ".exe")) return allocator.dupe(u8, path);
@@ -29,7 +21,7 @@ pub fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8, is_windows:
     return allocator.dupe(u8, path);
 }
 
-// `doxa compile` writes a user-facing binary (`-o`, or `bin/<stem>`).
+// `doxa compile` writes the user-facing binary exactly where `-o` names it.
 // `doxa run` writes into the cache directory and executes from there.
 pub fn nativeOutputPath(
     allocator: std.mem.Allocator,
@@ -39,16 +31,15 @@ pub fn nativeOutputPath(
     script_path: []const u8,
     is_windows: bool,
 ) ![]u8 {
-    const raw = switch (mode) {
-        .compile => blk: {
-            const stem = output_path orelse fileStem(script_path);
-            if (looksLikeOutputPath(stem)) break :blk try allocator.dupe(u8, stem);
-            break :blk try std.fmt.allocPrint(allocator, "{s}/{s}", .{ constants.DEFAULT_BIN_DIR, stem });
+    switch (mode) {
+        // The command line refuses `doxa compile` without `-o`.
+        .compile => return withExeSuffix(allocator, output_path.?, is_windows),
+        .run => {
+            const raw = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ cache_dir, fileStem(script_path) });
+            defer allocator.free(raw);
+            return withExeSuffix(allocator, raw, is_windows);
         },
-        .run => try std.fmt.allocPrint(allocator, "{s}/{s}", .{ cache_dir, fileStem(script_path) }),
-    };
-    defer allocator.free(raw);
-    return withExeSuffix(allocator, raw, is_windows);
+    }
 }
 
 /// Each of `paths` resolved against `base`; an absolute path is kept as is.
@@ -71,4 +62,30 @@ pub fn removeIfExists(io: std.Io, path: []const u8) !void {
         error.FileNotFound => {},
         else => return err,
     };
+}
+
+test "compile names the binary exactly where -o points" {
+    const alloc = std.testing.allocator;
+    const cases = [_]struct { given: []const u8, windows: []const u8, other: []const u8 }{
+        .{ .given = "repro", .windows = "repro.exe", .other = "repro" },
+        .{ .given = "repro.exe", .windows = "repro.exe", .other = "repro.exe" },
+        .{ .given = "out/repro", .windows = "out/repro.exe", .other = "out/repro" },
+        .{ .given = "./repro", .windows = "./repro.exe", .other = "./repro" },
+    };
+    for (cases) |case| {
+        const windows = try nativeOutputPath(alloc, .compile, case.given, "cache", "app.doxa", true);
+        defer alloc.free(windows);
+        try std.testing.expectEqualStrings(case.windows, windows);
+
+        const other = try nativeOutputPath(alloc, .compile, case.given, "cache", "app.doxa", false);
+        defer alloc.free(other);
+        try std.testing.expectEqualStrings(case.other, other);
+    }
+}
+
+test "run names the binary by the script's stem in the cache" {
+    const alloc = std.testing.allocator;
+    const path = try nativeOutputPath(alloc, .run, null, "cache", "src/app.doxa", true);
+    defer alloc.free(path);
+    try std.testing.expectEqualStrings("cache/app.exe", path);
 }

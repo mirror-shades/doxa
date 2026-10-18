@@ -23,7 +23,19 @@ fn parseExpressionStmtBody(self: *Parser) ErrorList!ast.Stmt {
         return declaration_parser.parseVarDecl(self);
     }
 
+    const start = self.current;
     const expr = try expression_parser.parseExpression(self);
+
+    // A token no expression can start leaves nothing parsed and nothing
+    // consumed. Only a blank line or the block's end is an empty statement;
+    // anything else is refused here, before `expectEnd`, which accepts any
+    // token once the line before it has ended.
+    if (expr == null and self.current == start and
+        std.mem.indexOfScalar(token.TokenType, &Parser.statement_end, self.peek().type) == null)
+    {
+        self.reporter.reportCompileError(self.locationOf(self.peek()), ErrorCode.EXPECTED_EXPRESSION, "Expected a statement, found '{s}'", .{self.peek().lexeme});
+        return error.ExpectedExpression;
+    }
 
     const is_block_like = if (expr) |e| switch (e.data) {
         .Block, .If, .Loop, .Peek, .Match => true,
@@ -70,8 +82,10 @@ pub fn parseBlockStmt(self: *Parser) ErrorList![]ast.Stmt {
     }
 
     while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+        const pass_start = self.current;
         const stmt = try parseStatement(self);
         try statements.append(stmt);
+        try self.expectProgress(pass_start);
     }
 
     if (self.peek().type != .RIGHT_BRACE) {

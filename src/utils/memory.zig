@@ -64,7 +64,20 @@ pub const Scope = struct {
     manager: *ScopeManager,
     memory_manager: *MemoryManager,
     arena: std.heap.ArenaAllocator,
+    /// The field paths a narrowing proved in this scope (`o.f as T then …`, a
+    /// match arm on `o.f`). The struct keeps its type; only a read of the
+    /// field through it sees the narrower one.
+    narrowed_fields: std.ArrayListUnmanaged(NarrowedField) = .empty,
     is_deinited: bool = false,
+
+    /// Field `field` of the binding stored at `storage` reads as `type_info`.
+    /// The storage is the binding beneath every view, so the struct is the
+    /// same one however it is reached.
+    pub const NarrowedField = struct {
+        storage: u32,
+        field: []const u8,
+        type_info: *TypeInfo,
+    };
 
     pub fn init(scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) Scope {
         return .{
@@ -98,6 +111,7 @@ pub const Scope = struct {
         }
         self.variables.deinit();
         self.name_map.deinit();
+        self.narrowed_fields.deinit(self.allocator);
         self.children.deinit(self.allocator);
         self.arena.deinit();
     }
@@ -173,6 +187,25 @@ pub const Scope = struct {
             return;
         }
         if (self.parent) |p| p.markUsed(name);
+    }
+
+    /// Record that field `field` of the binding stored at `storage` reads as
+    /// `type_info` within this scope.
+    pub fn narrowField(self: *Scope, storage: u32, field: []const u8, type_info: *TypeInfo) !void {
+        try self.narrowed_fields.append(self.allocator, .{ .storage = storage, .field = field, .type_info = type_info });
+    }
+
+    /// The type a read of field `field` of the binding stored at `storage`
+    /// sees here: the innermost narrowing of that path, or null when none is
+    /// in force.
+    pub fn narrowedField(self: *Scope, storage: u32, field: []const u8) ?*TypeInfo {
+        var current: ?*Scope = self;
+        while (current) |s| : (current = s.parent) {
+            for (s.narrowed_fields.items) |narrowed| {
+                if (narrowed.storage == storage and std.mem.eql(u8, narrowed.field, field)) return narrowed.type_info;
+            }
+        }
+        return null;
     }
 
     /// When a narrowed shadow binding in this scope has been used, propagate the

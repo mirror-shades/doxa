@@ -89,6 +89,29 @@ pub fn typeLabel(type_info: *const ast.TypeInfo) []const u8 {
     return @tagName(type_info.base);
 }
 
+/// `type_info` as a program writes it: `int`, `Point[]`, `int | string`.
+/// Allocated in the analysis allocator, which outlives every diagnostic.
+pub fn typeSpelling(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) ![]const u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try writeTypeSpelling(self, &out, type_info);
+    return out.toOwnedSlice(self.allocator);
+}
+
+fn writeTypeSpelling(self: *const SemanticAnalyzer, out: *std.ArrayListUnmanaged(u8), type_info: *const ast.TypeInfo) !void {
+    if (type_info.custom_type) |custom| return out.appendSlice(self.allocator, custom.displayName());
+    switch (type_info.base) {
+        .Array => {
+            if (type_info.array_type) |element| try writeTypeSpelling(self, out, element) else try out.appendSlice(self.allocator, "nothing");
+            try out.appendSlice(self.allocator, "[]");
+        },
+        .Union => for ((type_info.union_type orelse return).types, 0..) |member, i| {
+            if (i > 0) try out.appendSlice(self.allocator, " | ");
+            try writeTypeSpelling(self, out, member);
+        },
+        else => for (@tagName(type_info.base)) |c| try out.append(self.allocator, std.ascii.toLower(c)),
+    }
+}
+
 /// The names a diagnostic shows for two types it compares. Two distinct types
 /// that share a declared name (`a.Node`, `b.Node`) are told apart by the
 /// stable names of the modules that declare them.
@@ -373,7 +396,49 @@ pub fn matchSubjectGroup(self: *const SemanticAnalyzer, subject_type: *const ast
     return groupOf(self, subject_type);
 }
 
-fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
+/// A match on an enum names every variant or ends in `else`
+/// (`docs/control.md`): a variant it leaves out would fall off the match.
+pub fn checkEnumMatchExhaustive(
+    self: *SemanticAnalyzer,
+    match_expr: ast.MatchExpr,
+    subject_type: *const ast.TypeInfo,
+    location: Reporting.Location,
+) !void {
+    if (matchHasElseArm(match_expr)) return;
+    const ref = (subject_type.custom_type orelse return).resolved();
+    const enum_type = (try self.customType(ref)) orelse return;
+    if (enum_type.kind != .Enum) return;
+
+    var uncovered = std.array_list.Managed([]const u8).init(self.allocator);
+    defer uncovered.deinit();
+    for (enum_type.enum_variants orelse &.{}) |variant| {
+        if (!matchNames(match_expr, variant.name)) try uncovered.append(variant.name);
+    }
+    if (uncovered.items.len == 0) return;
+
+    const listed = try std.mem.join(self.allocator, "', '", uncovered.items);
+    defer self.allocator.free(listed);
+    self.reporter.reportCompileError(
+        location,
+        ErrorCode.NON_EXHAUSTIVE_MATCH,
+        "Match on enum '{s}' is not exhaustive: '{s}' not covered. Cover every variant or add an 'else' arm",
+        .{ ref.name, listed },
+    );
+    self.fatal_error = true;
+}
+
+/// Whether an arm of `match_expr` lists the pattern `name`: an enum arm's
+/// pattern is its variant's name, written `.A` or through its enum.
+fn matchNames(match_expr: ast.MatchExpr, name: []const u8) bool {
+    for (match_expr.cases) |case| {
+        for (case.patterns) |pattern| {
+            if (std.mem.eql(u8, pattern.lexeme, name)) return true;
+        }
+    }
+    return false;
+}
+
+pub fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
     for (match_expr.cases) |case| {
         for (case.patterns) |pattern| {
             if (pattern.type == .ELSE or std.mem.eql(u8, pattern.lexeme, "else")) return true;

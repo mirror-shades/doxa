@@ -76,6 +76,13 @@ pub fn resolveName(self: *SemanticAnalyzer, name: []const u8) ErrorList!NameResu
     return resolveBinding(self, name);
 }
 
+/// The storage beneath every view of `name` where it is read now: the
+/// identity a narrowed field path is keyed by.
+pub fn storageBeneath(self: *SemanticAnalyzer, name: []const u8) ErrorList!?u32 {
+    const binding = (try resolveName(self, name)).binding orelse return null;
+    return binding.storage_id;
+}
+
 /// The nearest binding of `name` in the scope chain that is not a view.
 fn underlyingBinding(scope: *Scope, name: []const u8) ?*Variable {
     var current: ?*Scope = scope;
