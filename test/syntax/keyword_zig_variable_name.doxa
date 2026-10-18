@@ -1,0 +1,3 @@
+# B060: `zig` cannot name a variable.
+var zig is 1
+@print("done\n")

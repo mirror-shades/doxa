@@ -1392,6 +1392,43 @@ const rejected_cases = [_]Case{
         .expect_stderr = "'to' is a keyword, so it cannot name a function",
     },
     .{
+        .name = "'zig' cannot name a function",
+        .path = "./test/syntax/keyword_zig_function_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'zig' is a keyword, so it cannot name a function",
+    },
+    .{
+        .name = "'zig' cannot name a parameter",
+        .path = "./test/syntax/keyword_zig_parameter_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'zig' is a keyword, so it cannot name a parameter",
+    },
+    .{
+        .name = "'zig' cannot name a variable",
+        .path = "./test/syntax/keyword_zig_variable_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'zig' is a keyword, so it cannot name a variable",
+    },
+    .{
+        .name = "'zig' cannot name a field",
+        .path = "./test/syntax/keyword_zig_field_name.doxa",
+        .mode = .reject,
+        .expect_error = "E2032",
+        .expect_stderr = "'zig' is a keyword, so it cannot name a field",
+    },
+    .{
+        .name = "a newline ends a match expression arm",
+        .path = "./test/syntax/match_newline_arms.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "five" },
+            .{ .value = "3" },
+            .{ .value = "else" },
+        },
+    },
+    .{
         .name = "a stray token in a function body is an error, not a hang",
         .path = "./test/syntax/stray_token_function_body.doxa",
         .mode = .reject,

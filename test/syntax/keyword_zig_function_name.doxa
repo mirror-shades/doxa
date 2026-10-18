@@ -1,0 +1,8 @@
+# B060: `zig` naming a function is a keyword, not the start of an inline zig block.
+function zig() returns int {
+    return 1
+}
+
+entry function main() {
+    @print("{zig()}\n")
+}

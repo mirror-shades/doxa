@@ -1,0 +1,22 @@
+# B043: a newline ends an expression arm the way a comma does.
+const x is 5
+var msg is match x {
+    0 then "zero"
+    5 then "five"
+    else "other"
+}
+@print("{msg}\n")
+
+var sum is match x {
+    5 then 1 +
+        ... 2
+    else 0
+}
+@print("{sum}\n")
+
+var mixed is match x {
+    0 then { "block" }
+    1 then "one", 2 then "two"
+    else "else"
+}
+@print("{mixed}\n")

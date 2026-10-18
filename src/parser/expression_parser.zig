@@ -259,8 +259,8 @@ const body = try matchArmBody(self);
 
 /// Parses one `match` arm body and consumes whatever separates it from the next
 /// arm. A braced body may be followed by a comma or by whatever comes next; an
-/// expression or a bare control statement must be followed by a comma or the
-/// closing brace, since neither can absorb what follows it.
+/// expression or a bare control statement ends at a comma, a newline, or the
+/// closing brace (a `...` line never ends it: the lexer folds it into this one).
 fn matchArmBody(self: *Parser) ErrorList!*ast.Expr {
     var form: Parser.BranchForm = undefined;
     const body = (try self.branchBody(
@@ -270,13 +270,10 @@ fn matchArmBody(self: *Parser) ErrorList!*ast.Expr {
 
     switch (form) {
         .block => if (self.peek().type == .COMMA) self.advance(),
-        .expression, .diverging => {
-            while (self.peek().type == .NEWLINE) self.advance();
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedCommaOrBrace;
-            }
+        .expression, .diverging => switch (self.peek().type) {
+            .COMMA, .NEWLINE => self.advance(),
+            .RIGHT_BRACE => {},
+            else => return error.ExpectedCommaOrBrace,
         },
     }
 

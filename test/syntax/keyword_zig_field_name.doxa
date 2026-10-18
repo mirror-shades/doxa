@@ -1,0 +1,6 @@
+# B060: `zig` cannot name a struct field.
+struct Point {
+    zig :: int
+}
+
+@print("done\n")

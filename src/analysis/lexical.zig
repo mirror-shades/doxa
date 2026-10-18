@@ -504,8 +504,6 @@ pub const LexicalAnalyzer = struct {
             error.CodepointTooLarge => "unicode escape is out of range (maximum U+10FFFF)",
             error.ByteValueTooLarge => "byte literal must be in the range 0..255 (two hex digits, e.g. 0xFF)",
             error.EllipsisWithoutNewline => "'...' continuation must follow a completed line",
-            error.ExpectedIdentifier => "expected a module name after 'zig'",
-            error.ExpectedLeftBrace => "expected '{' to open the inline zig block",
             error.InvalidInternalMethod => "unknown internal method",
             else => "could not tokenize this input",
         };
@@ -606,6 +604,9 @@ pub const LexicalAnalyzer = struct {
                     // - IDENTIFIER token (module name)
                     // - ZIG_BLOCK token (raw zig source inside braces)
                     try self.addMinimalToken(.ZIG);
+                    // Anywhere else `zig` is the bare keyword, so a name
+                    // spelled `zig` reaches the parser's keyword check.
+                    if (!self.zigBlockFollows()) return;
 
                     // Skip whitespace/newlines between `zig` and module name
                     while (!self.isAtEnd() and isWhitespace(self.peekAt(0))) {
@@ -613,10 +614,6 @@ pub const LexicalAnalyzer = struct {
                     }
 
                     // Parse module name as identifier
-                    if (self.isAtEnd() or !isAlpha(self.peekAt(0))) {
-                        return error.ExpectedIdentifier;
-                    }
-
                     self.beginToken(self.current, self.line, self.line_start);
                     while (!self.isAtEnd() and (isAlpha(self.peekAt(0)) or isDigit(self.peekAt(0)) or self.peekAt(0) == '_')) {
                         self.advance();
@@ -818,11 +815,20 @@ pub const LexicalAnalyzer = struct {
         return error.UnclosedPlaceholder;
     }
 
-    fn addZigBlock(self: *LexicalAnalyzer) !void {
-        if (self.isAtEnd() or self.peekAt(0) != '{') {
-            return error.ExpectedLeftBrace;
-        }
+    /// Whether the source after a `zig` keyword has the `<ModuleName> {` shape
+    /// of an inline Zig block. Looks ahead without consuming anything.
+    fn zigBlockFollows(self: *LexicalAnalyzer) bool {
+        var i = self.current;
+        while (i < self.source.len and isWhitespace(self.source[i])) i += 1;
+        if (i >= self.source.len or !isAlpha(self.source[i])) return false;
+        while (i < self.source.len and (isAlpha(self.source[i]) or isDigit(self.source[i]) or self.source[i] == '_')) i += 1;
+        while (i < self.source.len and isWhitespace(self.source[i])) i += 1;
+        return i < self.source.len and self.source[i] == '{';
+    }
 
+    /// Lexes the braced payload of an inline Zig block; `zigBlockFollows` has
+    /// already seen its opening '{'.
+    fn addZigBlock(self: *LexicalAnalyzer) !void {
         const block_start = self.current; // points at '{'
         const block_line = self.line;
         const block_line_start = self.line_start;

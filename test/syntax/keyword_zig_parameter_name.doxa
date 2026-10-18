@@ -1,0 +1,8 @@
+# B060: `zig` cannot name a parameter.
+function f(zig :: int) returns int {
+    return 1
+}
+
+entry function main() {
+    @print("{f(1)}\n")
+}
