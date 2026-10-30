@@ -111,6 +111,8 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&install_runtime.step);
 
+    var host_unpack: ?*std.Build.Step = null;
+    var check_zerr_step: ?*std.Build.Step = null;
     if (getZigDependencyForTarget(target.result)) |zig_dep| {
         const archive_path = b.pathJoin(&.{ "external", b.fmt("{s}{s}", .{ zig_dep.folder_name, zig_dep.archive_ext }) });
         const destination_lib_dir = b.getInstallPath(.prefix, "lib");
@@ -121,6 +123,7 @@ pub fn build(b: *std.Build) void {
             destination_lib_dir,
         );
         b.getInstallStep().dependOn(&unpack_zig_dep.step);
+        host_unpack = &unpack_zig_dep.step;
     }
 
     const run_exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
@@ -193,7 +196,7 @@ pub fn build(b: *std.Build) void {
     // Regenerate the standard-library API reference from `std/`. Kept as its
     // own step so it never runs implicitly; the generated page is committed.
     const catalog_module = b.createModule(.{
-        .root_source_file = b.path("src/stdlib/catalog.zig"),
+        .root_source_file = b.path("src/stdlib_catalog.zig"),
     });
     const docs_tool = b.addExecutable(.{
         .name = "gen_stdlib_docs",
@@ -208,6 +211,41 @@ pub fn build(b: *std.Build) void {
     gen_docs.setCwd(b.path("."));
     const docs_step = b.step("docs", "Regenerate docs/stdlib-api.md from std/");
     docs_step.dependOn(&gen_docs.step);
+
+    // Regenerate `std/zerr/zerr.doxa` from the bundled Zig's error names. The
+    // names can only come from a source scan (`@typeInfo(anyerror).error_set`
+    // is null), so this is a build tool, not compiler knowledge. The generated
+    // enum is committed; `check zerr` runs on every test.
+    if (host_unpack) |unpack| {
+        const zerr_tool = b.addExecutable(.{
+            .name = "gen_zerr",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("scripts/gen_zerr.zig"),
+                .target = host_target,
+                .optimize = .ReleaseSafe,
+            }),
+        });
+        const zerr_std_dir = b.getInstallPath(.prefix, "lib/zig/lib/std");
+
+        const gen_zerr = b.addRunArtifact(zerr_tool);
+        gen_zerr.setCwd(b.path("."));
+        gen_zerr.addArg(zerr_std_dir);
+        gen_zerr.addArg("std/zerr/zerr.doxa");
+        gen_zerr.has_side_effects = true;
+        gen_zerr.step.dependOn(unpack);
+        const zerr_step = b.step("zerr", "Regenerate std/zerr/zerr.doxa from the bundled Zig");
+        zerr_step.dependOn(&gen_zerr.step);
+
+        const check_zerr = b.addRunArtifact(zerr_tool);
+        check_zerr.setCwd(b.path("."));
+        check_zerr.addArg(zerr_std_dir);
+        check_zerr.addArg("std/zerr/zerr.doxa");
+        check_zerr.addArg("--check");
+        check_zerr.has_side_effects = true;
+        check_zerr.step.dependOn(unpack);
+        check_zerr_step = b.step("check zerr", "Verify std/zerr/zerr.doxa matches the bundled Zig");
+        check_zerr_step.?.dependOn(&check_zerr.step);
+    }
 
     const answers_module = b.createModule(.{
         .root_source_file = b.path("test/answers.zig"),
@@ -311,6 +349,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&wiring.step);
     test_step.dependOn(&TypeAuthority.create(b).step);
+    if (check_zerr_step) |step| test_step.dependOn(step);
     if (can_run_target) {
         test_step.dependOn(&run_unit_tests.step);
         test_step.dependOn(&run_lsp_tests.step);
