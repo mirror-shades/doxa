@@ -685,9 +685,14 @@ pub const LexicalAnalyzer = struct {
                     try segments.append(.{ .placeholder = .{ .source = self.source[begin..self.current], .line = line, .column = column } });
                     self.advance(); // the closing `}`
                 },
+                // A line break is `\n` however the file ends its lines, so a
+                // checkout's line endings never change the program.
                 '\n', '\r' => if (!self.continuation()) {
                     self.advance();
-                    try text.append(c);
+                    if (c == '\r' and !self.isAtEnd() and self.peekAt(0) == '\n') {
+                        self.advance();
+                        try text.append('\n');
+                    } else try text.append(c);
                 },
                 else => {
                     self.advance();

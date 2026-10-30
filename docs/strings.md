@@ -54,8 +54,9 @@ continues with `...`), so `"a{b"` is an error that says to write `"a\{b"`. A pla
 source is code: a string inside it has its own escapes and placeholders
 (`"{"q\"}"}"` is `q"}`).
 
-A raw line break inside a literal is one byte of the string, unless the next line begins
-with `...`, which continues the literal without it.
+A raw line break inside a literal is one byte of the string, `\n`, unless the next line
+begins with `...`, which continues the literal without it. A file with Windows line
+endings (`\r\n`) means the same program: each line break is still `\n`.
 
 ## The `string` type
 

@@ -1,0 +1,9 @@
+# The same literal as string_line_break.doxa, in a file with CRLF line
+# endings (kept by .gitattributes): its line break is still one byte.
+
+entry function main() {
+    const s is "a
+b"
+    @print("{@length(s)}\n")
+    @print("{s == "a\nb"}\n")
+}

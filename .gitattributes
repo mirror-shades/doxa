@@ -1,2 +1,3 @@
 *.doxa linguist-detectable=true
 std/zerr/zerr.doxa text eol=lf
+test/misc/string_line_break_crlf.doxa -text

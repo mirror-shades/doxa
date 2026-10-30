@@ -183,7 +183,9 @@ fn writeBacktrace(source: Trace) void {
     }
     frames.flush();
     if (frames.shown != 0) {
-        if (!reached_entry and trace.skipped != .none) writeStderr("  ... more frames not shown\n");
+        // Cut at the bound. `skipped` cannot say: it is also `.unknown` where
+        // the walk stops because only an unsafe unwind is left.
+        if (!reached_entry and trace.return_addresses.len == backtrace_depth) writeStderr("  ... more frames not shown\n");
         return;
     }
     if (failure) |f| return unresolved(info, io, arena.allocator(), f.address, f.err);

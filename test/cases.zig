@@ -738,6 +738,14 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "a raw line break in a CRLF file is still one byte",
+        .path = "./test/misc/string_line_break_crlf.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "3" },
+            .{ .value = "true" },
+        },
+    },
+    .{
         .name = "an array literal is typed by the array its context expects",
         .path = "./test/misc/array_literal_context.doxa",
         .expected_print = &[_]print_result{
