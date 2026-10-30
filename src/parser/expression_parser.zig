@@ -162,7 +162,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             self.advance();
             const else_token = self.previous();
 
-const body = try matchArmBody(self);
+            const body = try matchArmBody(self);
 
             try cases.append(.{
                 .patterns = try self.allocator.dupe(token.Token, &[_]token.Token{else_token}),

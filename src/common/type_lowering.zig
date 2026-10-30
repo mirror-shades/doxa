@@ -47,12 +47,14 @@ pub const TypeLowering = struct {
             .Nothing => .Nothing,
             // A failed expression has no type to lower.
             .Error => error.IncompleteType,
-            .Array => .{ .Array = .{
-                .element = try self.lowered(ti.array_type orelse return error.IncompleteType),
-                // Only a fixed array is sized; a `const` bound to a literal
-                // is a dynamic array the analyzer tags `const_literal`.
-                .size = if (ti.array_storage == .fixed) @intCast(ti.array_size.?) else null,
-            } },
+            .Array => .{
+                .Array = .{
+                    .element = try self.lowered(ti.array_type orelse return error.IncompleteType),
+                    // Only a fixed array is sized; a `const` bound to a literal
+                    // is a dynamic array the analyzer tags `const_literal`.
+                    .size = if (ti.array_storage == .fixed) @intCast(ti.array_size.?) else null,
+                },
+            },
             .Enum, .Struct, .Custom => self.named((ti.custom_type orelse return error.IncompleteType).resolved()),
             .Function => blk: {
                 const ft = ti.function_type orelse return error.IncompleteType;

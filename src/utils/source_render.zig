@@ -54,8 +54,12 @@ pub const DiagnosticRenderer = struct {
         diag: *const Diagnostic,
         related: reporting.RelatedInformation,
     ) !void {
+        // A note in a file the compiler never loaded (Zig's std, under an
+        // inline-Zig error) has no snippet: it is one indented line, so it
+        // never reads as a diagnostic of its own.
         const source_file = self.source_cache.get(related.location.file) orelse {
-            try self.renderHeaderLine(writer, diag, related.location);
+            const l = related.location;
+            try writer.print("    note: {s}:{d}:{d}: {s}\n", .{ l.file, l.range.start_line, l.range.start_col, related.message });
             return;
         };
         try self.renderSnippet(
@@ -84,7 +88,9 @@ pub const DiagnosticRenderer = struct {
             if (loc) |l| {
                 try writer.print("[{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                     @tagName(diag.phase), @tagName(diag.severity),
-                    code, l.file, l.range.start_line, l.range.start_col, diag.message,
+                    code,                 l.file,
+                    l.range.start_line,   l.range.start_col,
+                    diag.message,
                 });
             } else {
                 try writer.print("[{s}][{s}][{s}] {s}\n", .{
@@ -95,7 +101,8 @@ pub const DiagnosticRenderer = struct {
             if (loc) |l| {
                 try writer.print("[{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                     @tagName(diag.phase), @tagName(diag.severity),
-                    l.file, l.range.start_line, l.range.start_col, diag.message,
+                    l.file,               l.range.start_line,
+                    l.range.start_col,    diag.message,
                 });
             } else {
                 try writer.print("[{s}][{s}] {s}\n", .{

@@ -212,6 +212,14 @@ pub fn build(b: *std.Build) void {
     const docs_step = b.step("docs", "Regenerate docs/stdlib-api.md from std/");
     docs_step.dependOn(&gen_docs.step);
 
+    // The page is committed; `check docs` runs on every test.
+    const check_docs = b.addRunArtifact(docs_tool);
+    check_docs.setCwd(b.path("."));
+    check_docs.addArg("--check");
+    check_docs.has_side_effects = true;
+    const check_docs_step = b.step("check docs", "Verify docs/stdlib-api.md matches std/");
+    check_docs_step.dependOn(&check_docs.step);
+
     // Regenerate `std/zerr/zerr.doxa` from the bundled Zig's error names. The
     // names can only come from a source scan (`@typeInfo(anyerror).error_set`
     // is null), so this is a build tool, not compiler knowledge. The generated
@@ -350,6 +358,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&wiring.step);
     test_step.dependOn(&TypeAuthority.create(b).step);
     if (check_zerr_step) |step| test_step.dependOn(step);
+    test_step.dependOn(check_docs_step);
     if (can_run_target) {
         test_step.dependOn(&run_unit_tests.step);
         test_step.dependOn(&run_lsp_tests.step);

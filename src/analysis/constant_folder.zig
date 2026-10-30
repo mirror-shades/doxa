@@ -535,5 +535,4 @@ pub const ConstantFolder = struct {
             },
         }
     }
-
 };

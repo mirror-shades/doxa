@@ -167,7 +167,6 @@ pub const Scope = struct {
         return variable;
     }
 
-
     pub fn lookupVariable(self: *Scope, name: []const u8) ?*Variable {
         if (self.name_map.get(name)) |v| return v;
         if (self.parent) |p| return p.lookupVariable(name);

@@ -48,6 +48,15 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
         self.advance();
     }
 
+    // The block's source begins one column past its `{`.
+    var origin = ast.SourceSpan.fromToken(zig_block_token).location;
+    origin.range = .{
+        .start_line = origin.range.start_line,
+        .start_col = origin.range.start_col + 1,
+        .end_line = origin.range.start_line,
+        .end_col = origin.range.start_col + 1,
+    };
+
     const span = ast.SourceSpan.merge(
         ast.SourceSpan.fromToken(zig_token),
         ast.SourceSpan.fromToken(zig_block_token),
@@ -62,6 +71,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
             .ZigDecl = .{
                 .name = module_name,
                 .source = source_owned,
+                .origin = origin,
                 .sigs = sigs,
             },
         },

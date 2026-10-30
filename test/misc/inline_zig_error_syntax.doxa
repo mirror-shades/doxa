@@ -1,0 +1,10 @@
+# A Zig syntax error in a block is reported at its line in this file.
+zig Math {
+    pub fn add(a: i64, b: i64) i64 {
+        return a + b
+    }
+}
+
+entry function main() {
+    @print("{Math.add(1, 2)}\n")
+}

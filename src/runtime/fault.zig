@@ -342,11 +342,15 @@ var trap_addresses: [backtrace_depth]usize = undefined;
 /// The reporting thread's stack.
 const report_thread_stack: usize = 16 * 1024 * 1024;
 
+/// Where the runtime owns the traps (`installHandlers`); elsewhere Zig's
+/// handler reports them (`std_options.enable_segfault_handler`).
+pub const owns_traps = switch (builtin.os.tag) {
+    .windows, .linux, .macos => true,
+    else => false,
+};
+
 /// Called once by the entry root, before the program runs, on the thread
 /// that runs it.
-///
-/// Where `owns_traps`, the runtime owns the traps and Zig's handler is off
-/// (`std_options.enable_segfault_handler`).
 ///
 /// Windows: a first-in-line vectored handler reports `EXCEPTION_STACK_OVERFLOW`
 /// as the `stack_overflow` fault, and the unhandled-exception filter reports
@@ -356,14 +360,15 @@ const report_thread_stack: usize = 16 * 1024 * 1024;
 /// Linux and macOS: records the main thread's stack (`main_stack`) and
 /// handles SIGSEGV, SIGBUS, SIGILL and SIGFPE on the alternate signal stack.
 ///
-/// TODO: threads the program starts (`std.http`'s engine) report an overflow
-/// as a crash: Windows gives them no guarantee, and POSIX knows only the main
-/// thread's stack.
-pub const owns_traps = switch (builtin.os.tag) {
-    .windows, .linux, .macos => true,
-    else => false,
-};
-
+/// Only the main thread can overflow as the `stack_overflow` fault, and that
+/// is enough: Doxa code runs on the main thread alone. The only other threads
+/// are `std.http`'s tasks, which never call into the program
+/// (`std/http/http.zig`, "Main-thread confinement"), so an overflow there is
+/// std's own bug, and ends as a crash: a POSIX thread Zig starts has its own
+/// signal stack, while a Windows thread has no guarantee, so its process ends
+/// with the system's `STATUS_STACK_OVERFLOW`. Running Doxa code on another
+/// thread breaks this: each thread would then need its guarantee and its stack
+/// recorded as it starts.
 pub fn installHandlers() void {
     switch (builtin.os.tag) {
         .windows => {

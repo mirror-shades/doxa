@@ -329,31 +329,36 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
     current.* = .{ .base = .{ .id = ast.generateNodeId(), .span = target.base.span }, .data = .{ .Held = id } };
 
     const operation = try self.allocator.create(ast.Expr);
-    operation.* = .{ .base = .{ .id = ast.generateNodeId(), .span = span }, .data = .{ .Binary = .{
-        .left = current,
-        .operator = .{
-            .type = switch (operator.type) {
-                .PLUS_EQUAL => .PLUS,
-                .MINUS_EQUAL => .MINUS,
-                .POWER_EQUAL => .POWER,
-                .ASTERISK_EQUAL => .ASTERISK,
-                .PLUS_WRAP_EQUAL => .PLUS_WRAP,
-                .MINUS_WRAP_EQUAL => .MINUS_WRAP,
-                .ASTERISK_WRAP_EQUAL => .ASTERISK_WRAP,
-                .SLASH_EQUAL => .SLASH,
-                .DOUBLE_SLASH_EQUAL => .DOUBLE_SLASH,
-                .MODULO_EQUAL => .MODULO,
-                else => unreachable, // only these tokens dispatch here
+    operation.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = span },
+        .data = .{
+            .Binary = .{
+                .left = current,
+                .operator = .{
+                    .type = switch (operator.type) {
+                        .PLUS_EQUAL => .PLUS,
+                        .MINUS_EQUAL => .MINUS,
+                        .POWER_EQUAL => .POWER,
+                        .ASTERISK_EQUAL => .ASTERISK,
+                        .PLUS_WRAP_EQUAL => .PLUS_WRAP,
+                        .MINUS_WRAP_EQUAL => .MINUS_WRAP,
+                        .ASTERISK_WRAP_EQUAL => .ASTERISK_WRAP,
+                        .SLASH_EQUAL => .SLASH,
+                        .DOUBLE_SLASH_EQUAL => .DOUBLE_SLASH,
+                        .MODULO_EQUAL => .MODULO,
+                        else => unreachable, // only these tokens dispatch here
+                    },
+                    .lexeme = operator.lexeme,
+                    .literal = operator.literal,
+                    .line = operator.line,
+                    .column = operator.column,
+                    .file = operator.file,
+                    .file_uri = operator.file_uri,
+                },
+                .right = value,
             },
-            .lexeme = operator.lexeme,
-            .literal = operator.literal,
-            .line = operator.line,
-            .column = operator.column,
-            .file = operator.file,
-            .file_uri = operator.file_uri,
         },
-        .right = value,
-    } } };
+    };
 
     const store = try self.allocator.create(ast.Expr);
     store.* = .{ .base = .{ .id = id, .span = span }, .data = .{ .CompoundAssign = .{ .target = target, .operation = operation } } };

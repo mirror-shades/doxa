@@ -19,16 +19,44 @@ fn cacheSeed() []const u8 {
 
 const GeneratedModule = struct {
     zig_path: []const u8,
+    /// How the wrapper's first `source_len` bytes, the unit's sanitized
+    /// source, map back to the unit's own text.
+    source_map: SourceMap,
 
     pub fn deinit(self: *GeneratedModule, allocator: std.mem.Allocator) void {
         allocator.free(self.zig_path);
+        allocator.free(self.source_map.cuts);
     }
 };
 
-fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8) !void {
+/// The wrapper opens with the unit's source copied verbatim except for the
+/// keywords `appendZigSourceSanitized` strips. Each strip is a cut: `len`
+/// source bytes removed just before wrapper offset `at`, in increasing order.
+/// Lines are never cut, so this maps any wrapper offset in the copy exactly.
+const SourceMap = struct {
+    cuts: []const Cut,
+    /// The copy's length in the wrapper; everything after it is generated.
+    source_len: usize,
+
+    const Cut = struct { at: usize, len: usize };
+
+    /// The unit-source offset of a wrapper offset, or null for generated code.
+    fn toSource(self: SourceMap, wrapper_offset: usize) ?usize {
+        if (wrapper_offset > self.source_len) return null;
+        var offset = wrapper_offset;
+        for (self.cuts) |cut| {
+            if (cut.at > wrapper_offset) break;
+            offset += cut.len;
+        }
+        return offset;
+    }
+};
+
+fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), cuts: *std.array_list.Managed(SourceMap.Cut), source: []const u8) !void {
     var i: usize = 0;
     while (i < source.len) {
         if (std.mem.startsWith(u8, source[i..], "public ")) {
+            try cuts.append(.{ .at = buf.items.len, .len = "public ".len });
             i += "public ".len;
             continue;
         }
@@ -36,6 +64,7 @@ fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8
             (i + "export ".len < source.len) and
             std.mem.startsWith(u8, source[i + "export ".len ..], "fn "))
         {
+            try cuts.append(.{ .at = buf.items.len, .len = "export ".len });
             i += "export ".len;
             continue;
         }
@@ -373,7 +402,10 @@ fn generateWrapperZigFile(
 
     var file_buf = std.array_list.Managed(u8).init(allocator);
     defer file_buf.deinit();
-    try appendZigSourceSanitized(&file_buf, unit.source);
+    var cuts = std.array_list.Managed(SourceMap.Cut).init(allocator);
+    defer cuts.deinit();
+    try appendZigSourceSanitized(&file_buf, &cuts, unit.source);
+    const source_len = file_buf.items.len;
     try file_buf.appendSlice("\n\n");
 
     // Inline-Zig ABI prologue. A wrapper returning a heap value takes the
@@ -690,7 +722,10 @@ fn generateWrapperZigFile(
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = zig_path, .data = file_buf.items });
 
-    return .{ .zig_path = zig_path };
+    return .{
+        .zig_path = zig_path,
+        .source_map = .{ .cuts = try cuts.toOwnedSlice(), .source_len = source_len },
+    };
 }
 
 /// Compile every inline-Zig unit of the program to an object. `cache_dir` and
@@ -755,6 +790,10 @@ pub fn compileInlineZigObjects(
     const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.Io.Dir.cwd().createDirPath(io, zig_cache_path);
+    // Zig's own local cache for the shim builds, where `build-obj --listen`
+    // writes each object before it is copied to its published name.
+    const zig_local_cache = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/build-obj", .{cache_dir});
+    defer memoryManager.getAllocator().free(zig_local_cache);
 
     var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
     errdefer {
@@ -796,22 +835,23 @@ pub fn compileInlineZigObjects(
         if (!obj_already_compiled) {
             profiler.begin("build-obj");
             defer profiler.end();
-            // Only the final rename may write the published name: the object is built at
-            // `obj_path.tmp` and moved into place once it is complete. A shim
-            // truncated by an interrupted `build-obj` would otherwise be
-            // trusted by the `size > 0` check above on every later run.
-            const staging_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.tmp", .{obj_path});
-            defer memoryManager.getAllocator().free(staging_path);
-            const emit_flag = try std.fmt.allocPrint(memoryManager.getAllocator(), "-femit-bin={s}", .{staging_path});
-            defer memoryManager.getAllocator().free(emit_flag);
+            // Zig's compiler-server protocol (`--listen=-`) hands back errors
+            // as a structured bundle that maps onto the unit's own source. It
+            // forbids an explicit output path: Zig builds into the local cache
+            // named here and reports the object's digest.
             var args_list = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
             defer args_list.deinit();
             try args_list.appendSlice(&[_][]const u8{
                 zig_exe_path,
                 "build-obj",
                 gen.zig_path,
-                emit_flag,
                 zig_opt_flag,
+                "--cache-dir",
+                zig_local_cache,
+                "--listen=-",
+                // The full trace, so an error raised inside Zig's std still
+                // reaches the unit's call into it. It costs only on failure.
+                "-freference-trace",
             });
             if (target_triple.len > 0) {
                 try args_list.append("-target");
@@ -838,20 +878,249 @@ pub fn compileInlineZigObjects(
             // `plan/libc-dependence.md`.
             try args_list.append("-lc");
 
-            var child = try std.process.spawn(io, .{
-                .argv = args_list.items,
-                .cwd = .{ .path = cache_dir },
-                .stdout = .inherit,
-                .stderr = .inherit,
-            });
-            const term = try child.wait(io);
-            switch (term) {
-                .exited => |code| if (code != 0) return error.Unexpected,
-                else => return error.Unexpected,
+            var built = try buildObject(io, memoryManager.getAllocator(), args_list.items, cache_dir);
+            defer built.errors.deinit(memoryManager.getAllocator());
+            if (built.errors.errorMessageCount() > 0) {
+                try reportZigErrors(io, memoryManager.getAnalysisAllocator(), reporter, built.errors, record.zig.?, gen);
+                return error.InlineZigCompileFailed;
             }
+            const digest = built.digest orelse return error.ZigCompilerCrashed;
+
+            // Only the final rename may write the published name: the object
+            // is copied to `obj_path.tmp` and moved into place once complete.
+            // A shim truncated by an interrupted copy would otherwise be
+            // trusted by the `size > 0` check above on every later run.
+            const built_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/o/{s}/{s}.{s}", .{ zig_local_cache, digest[0..], zig_stem, obj_ext });
+            defer memoryManager.getAllocator().free(built_path);
+            const staging_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.tmp", .{obj_path});
+            defer memoryManager.getAllocator().free(staging_path);
+            try std.Io.Dir.cwd().copyFile(built_path, std.Io.Dir.cwd(), staging_path, io, .{});
             try std.Io.Dir.cwd().rename(staging_path, std.Io.Dir.cwd(), obj_path, io);
         }
     }
 
     return try out_paths.toOwnedSlice();
+}
+
+const BuiltObject = struct {
+    /// Empty when the object was built.
+    errors: std.zig.ErrorBundle,
+    /// The object's directory under the local cache, `o/<digest>`.
+    digest: ?std.Build.Cache.HexDigest,
+};
+
+/// Run one `zig build-obj --listen=-` to completion over the compiler-server
+/// protocol. The compiler is the bundled Zig this compiler was built with, so
+/// the protocol on both ends is the same version. Its stderr is inherited:
+/// under `--listen` only a crash writes there.
+fn buildObject(io: std.Io, allocator: std.mem.Allocator, argv: []const []const u8, cwd: []const u8) !BuiltObject {
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = .{ .path = cwd },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    errdefer child.kill(io);
+
+    {
+        var stdin_writer = child.stdin.?.writer(io, &.{});
+        const w = &stdin_writer.interface;
+        inline for (.{ .update, .exit }) |tag| {
+            const header: std.zig.Client.Message.Header = .{ .tag = tag, .bytes_len = 0 };
+            w.writeStruct(header, .little) catch return stdin_writer.err.?;
+        }
+        child.stdin.?.close(io);
+        child.stdin = null;
+    }
+
+    var bundle: std.zig.ErrorBundle = .empty;
+    errdefer bundle.deinit(allocator);
+    var digest: ?std.Build.Cache.HexDigest = null;
+
+    var read_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &read_buf);
+    const r = &stdout_reader.interface;
+    while (true) {
+        const header = r.takeStruct(std.zig.Server.Message.Header, .little) catch |err| switch (err) {
+            error.EndOfStream => break,
+            error.ReadFailed => return stdout_reader.err.?,
+        };
+        const body = r.readAlloc(allocator, header.bytes_len) catch |err| switch (err) {
+            error.ReadFailed => return stdout_reader.err.?,
+            else => |e| return e,
+        };
+        defer allocator.free(body);
+        switch (header.tag) {
+            .error_bundle => {
+                bundle.deinit(allocator);
+                bundle = try std.zig.Server.allocErrorBundle(allocator, body);
+            },
+            .emit_digest => {
+                const Cache = std.Build.Cache;
+                const prefix = @sizeOf(std.zig.Server.Message.EmitDigest);
+                if (body.len < prefix + Cache.bin_digest_len) return error.ZigProtocolViolation;
+                digest = Cache.binToHex(body[prefix..][0..Cache.bin_digest_len].*);
+            },
+            else => {},
+        }
+    }
+
+    const term = try child.wait(io);
+    const exited_cleanly = switch (term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    // A failure that sent no bundle is a crash; its stderr is already out.
+    if (!exited_cleanly and bundle.errorMessageCount() == 0) return error.ZigCompilerCrashed;
+    return .{ .errors = bundle, .digest = digest };
+}
+
+/// Report each of a unit's Zig compile errors where it stands in the unit's
+/// own file. An error inside the copied source maps exactly through the
+/// wrapper's `SourceMap`. One raised inside Zig's std (a bad call into it) is
+/// reported at the unit's frame nearest it in Zig's reference trace, with the
+/// std location attached. One in the generated bridge is a Doxa bug. Zig's
+/// notes follow their error as related information, and an error Zig repeats
+/// for each instantiation is reported once. `arena` holds the paths the
+/// diagnostics borrow.
+fn reportZigErrors(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    reporter: *Reporter,
+    bundle: std.zig.ErrorBundle,
+    unit: module_graph.ZigUnit,
+    gen: GeneratedModule,
+) !void {
+    const unit_location = unit.location orelse unit.origin;
+    const Reported = struct { range: Reporting.Range, text: []const u8 };
+    var reported = std.array_list.Managed(Reported).init(arena);
+
+    for (bundle.getMessages()) |message_index| {
+        const message = bundle.getErrorMessage(message_index);
+        const text = bundle.nullTerminatedString(message.msg);
+
+        const notes = bundle.getNotes(message_index);
+        var related = try std.array_list.Managed(Reporting.RelatedInformation).initCapacity(arena, notes.len + 1);
+
+        const where = try zigLocation(io, arena, reporter, bundle, message.src_loc, unit, gen);
+        const kind = if (where) |w| w.kind else .generated;
+        const location = switch (kind) {
+            .unit => where.?.location,
+            .zig_std => blk: {
+                related.appendAssumeCapacity(.{ .message = "raised here, in Zig's std", .location = where.?.location });
+                break :blk try callSite(io, arena, reporter, bundle, message.src_loc, unit, gen) orelse unit_location;
+            },
+            .generated => unit_location,
+        };
+
+        for (notes) |note_index| {
+            const note = bundle.getErrorMessage(note_index);
+            const note_where = try zigLocation(io, arena, reporter, bundle, note.src_loc, unit, gen) orelse continue;
+            related.appendAssumeCapacity(.{ .message = bundle.nullTerminatedString(note.msg), .location = note_where.location });
+        }
+
+        const seen = for (reported.items) |r| {
+            if (std.meta.eql(r.range, location.range) and std.mem.eql(u8, r.text, text)) break true;
+        } else false;
+        if (seen) continue;
+        try reported.append(.{ .range = location.range, .text = text });
+
+        if (kind == .generated) {
+            reporter.reportWithRelated(.CompileTime, .Error, location, ErrorCode.INTERNAL_ERROR, related.items, "inline zig: the generated bridge for '{s}' does not compile: {s}", .{ unit.name, text });
+        } else {
+            reporter.reportWithRelated(.CompileTime, .Error, location, ErrorCode.INLINE_ZIG_COMPILE_ERROR, related.items, "{s}", .{text});
+        }
+    }
+}
+
+/// The first frame of a source location's reference trace that lies in the
+/// unit's own source: where the unit's code reached the failing std code.
+/// `ErrorBundle` keeps its `extra` reader private; the layout it documents is
+/// a `SourceLocation`'s fields followed by `reference_trace_len`
+/// `ReferenceTrace`s, each a flat run of `u32`s.
+fn callSite(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    reporter: *Reporter,
+    bundle: std.zig.ErrorBundle,
+    index: std.zig.ErrorBundle.SourceLocationIndex,
+    unit: module_graph.ZigUnit,
+    gen: GeneratedModule,
+) !?Reporting.Location {
+    const EB = std.zig.ErrorBundle;
+    const loc_words = @typeInfo(EB.SourceLocation).@"struct".fields.len;
+    const trace_words = @typeInfo(EB.ReferenceTrace).@"struct".fields.len;
+    const loc = bundle.getSourceLocation(index);
+    var at = @intFromEnum(index) + loc_words;
+    for (0..loc.reference_trace_len) |_| {
+        const frame_loc: EB.SourceLocationIndex = @enumFromInt(bundle.extra[at + 1]);
+        at += trace_words;
+        const frame = try zigLocation(io, arena, reporter, bundle, frame_loc, unit, gen) orelse continue;
+        if (frame.kind == .unit) return frame.location;
+    }
+    return null;
+}
+
+const ZigLocation = struct {
+    kind: enum { unit, zig_std, generated },
+    location: Reporting.Location,
+};
+
+/// Where a bundle source location stands: in the unit's own source, in a file
+/// of Zig's std, or in the generated bridge. Null when Zig gave none.
+fn zigLocation(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    reporter: *Reporter,
+    bundle: std.zig.ErrorBundle,
+    index: std.zig.ErrorBundle.SourceLocationIndex,
+    unit: module_graph.ZigUnit,
+    gen: GeneratedModule,
+) !?ZigLocation {
+    if (index == .none) return null;
+    const loc = bundle.getSourceLocation(index);
+    const path = bundle.nullTerminatedString(loc.src_path);
+
+    if (!std.mem.eql(u8, std.fs.path.basename(path), std.fs.path.basename(gen.zig_path))) {
+        const file = try arena.dupe(u8, path);
+        const span_len = loc.span_end -| loc.span_main;
+        return .{ .kind = .zig_std, .location = .{
+            .file = file,
+            .file_uri = reporter.ensureFileUri(io, file) catch null,
+            .range = .{
+                .start_line = loc.line + 1,
+                .start_col = loc.column + 1,
+                .end_line = loc.line + 1,
+                .end_col = loc.column + 1 + span_len,
+            },
+        } };
+    }
+
+    const start = gen.source_map.toSource(loc.span_main) orelse
+        return .{ .kind = .generated, .location = unit.location orelse unit.origin };
+    const end = gen.source_map.toSource(@max(loc.span_main, loc.span_end)) orelse start;
+    return .{ .kind = .unit, .location = .{
+        .file = unit.origin.file,
+        .file_uri = unit.origin.file_uri,
+        .range = rangeIn(unit, start, end),
+    } };
+}
+
+/// The file range of `source[start..end]`, placed through the unit's origin:
+/// the origin's own line continues past its column; later lines start at
+/// column 1.
+fn rangeIn(unit: module_graph.ZigUnit, start: usize, end: usize) Reporting.Range {
+    const a = positionIn(unit, start);
+    const b = positionIn(unit, end);
+    return .{ .start_line = a.line, .start_col = a.col, .end_line = b.line, .end_col = b.col };
+}
+
+fn positionIn(unit: module_graph.ZigUnit, offset: usize) struct { line: usize, col: usize } {
+    const before = unit.source[0..@min(offset, unit.source.len)];
+    const newlines = std.mem.count(u8, before, "\n");
+    const line_start = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
+    const col = before.len - line_start;
+    if (newlines == 0) return .{ .line = unit.origin.range.start_line, .col = unit.origin.range.start_col + col };
+    return .{ .line = unit.origin.range.start_line + newlines, .col = col + 1 };
 }

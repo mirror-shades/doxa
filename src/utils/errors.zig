@@ -439,6 +439,7 @@ pub const ErrorCode = struct {
     pub const MODULE_NAMESPACE_NOT_A_VALUE = "E7011";
     pub const MODULE_ROOT_UNKNOWN = "E7012";
     pub const DUPLICATE_STABLE_KEY = "E7013";
+    pub const INLINE_ZIG_COMPILE_ERROR = "E7015";
 
     // 8xxx - Internal Errors
     pub const INTERNAL_ERROR = "E8001";

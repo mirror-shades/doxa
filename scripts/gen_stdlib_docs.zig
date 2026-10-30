@@ -3,9 +3,10 @@ const Allocator = std.mem.Allocator;
 const catalog = @import("catalog").catalog;
 
 const usage_text =
-    \\Usage: gen_stdlib_docs [std-dir] [output-file]
+    \\Usage: gen_stdlib_docs [std-dir] [output-file] [--check]
     \\  std-dir       Directory containing the standard library (default: std)
     \\  output-file   Markdown page to write (default: docs/stdlib-api.md)
+    \\  --check       Write nothing; fail if the page differs from what std/ generates
     \\
 ;
 
@@ -13,11 +14,13 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
 
+    const check = args.len > 1 and std.mem.eql(u8, args[args.len - 1], "--check");
+    const positional = args[1 .. args.len - @intFromBool(check)];
     var std_dir: []const u8 = "std";
     var out_path: []const u8 = "docs/stdlib-api.md";
-    if (args.len > 1) std_dir = args[1];
-    if (args.len > 2) out_path = args[2];
-    if (args.len > 3) {
+    if (positional.len > 0) std_dir = positional[0];
+    if (positional.len > 1) out_path = positional[1];
+    if (positional.len > 2) {
         std.debug.print("{s}", .{usage_text});
         std.process.exit(1);
     }
@@ -27,8 +30,33 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
     const page = try render(allocator, cat.modules);
+    if (check) {
+        const committed = std.Io.Dir.cwd().readFileAlloc(init.io, out_path, allocator, .unlimited) catch |err| {
+            std.debug.print("gen_stdlib_docs: cannot read {s}: {s}\n", .{ out_path, @errorName(err) });
+            std.process.exit(1);
+        };
+        // A Windows checkout may have converted the page, or the std sources
+        // it quotes, to CRLF: compare content, not line endings.
+        if (!std.mem.eql(u8, try withoutCarriageReturns(allocator, committed), try withoutCarriageReturns(allocator, page))) {
+            std.debug.print("gen_stdlib_docs: {s} is stale; run `zig build docs`\n", .{out_path});
+            std.process.exit(1);
+        }
+        std.debug.print("gen_stdlib_docs: {s} is current\n", .{out_path});
+        return;
+    }
     try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = out_path, .data = page });
     std.debug.print("gen_stdlib_docs: wrote {s} ({d} bytes)\n", .{ out_path, page.len });
+}
+
+fn withoutCarriageReturns(allocator: Allocator, text: []const u8) ![]u8 {
+    const out = try allocator.alloc(u8, text.len);
+    var len: usize = 0;
+    for (text) |c| {
+        if (c == '\r') continue;
+        out[len] = c;
+        len += 1;
+    }
+    return out[0..len];
 }
 
 fn render(allocator: Allocator, modules: []const catalog.Module) ![]u8 {

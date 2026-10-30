@@ -966,6 +966,27 @@ const shared_cases = [_]Case{
         .expect_stderr = "field 'hidden' of struct 'Sealed' is private to another file, so the wrapper cannot set it",
     },
     .{
+        .name = "inline zig: a misspelled error name is reported at its .doxa line",
+        .path = "./test/misc/inline_zig_error_name.doxa",
+        .mode = .reject,
+        .expect_error = "E7015",
+        .expect_stderr = "inline_zig_error_name.doxa:7:34: expected type",
+    },
+    .{
+        .name = "inline zig: a Zig syntax error is reported at its .doxa line",
+        .path = "./test/misc/inline_zig_error_syntax.doxa",
+        .mode = .reject,
+        .expect_error = "E7015",
+        .expect_stderr = "inline_zig_error_syntax.doxa:4:21: expected ';' after statement",
+    },
+    .{
+        .name = "inline zig: an error raised in Zig's std is reported at the block's call",
+        .path = "./test/misc/inline_zig_error_in_std.doxa",
+        .mode = .reject,
+        .expect_error = "E7015",
+        .expect_stderr = "inline_zig_error_in_std.doxa:7:35: access of union field 'int' while field 'float' is active",
+    },
+    .{
         .name = "union nothing narrow",
         .path = "./test/misc/union_nothing_narrow.doxa",
         .expected_print = answers.expected_union_nothing_narrow_results[0..],

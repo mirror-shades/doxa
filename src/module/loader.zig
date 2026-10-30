@@ -292,7 +292,7 @@ pub const ModuleLoader = struct {
             );
             return error.InvalidZigModule;
         };
-        record.zig = .{ .name = std.fs.path.stem(path), .source = source, .sigs = sigs };
+        record.zig = .{ .name = std.fs.path.stem(path), .source = source, .sigs = sigs, .origin = try self.fileLocation(path) };
     }
 
     fn declarationsStage(ctx: *anyopaque, record: *ModuleRecord) anyerror!void {
@@ -322,7 +322,7 @@ pub const ModuleLoader = struct {
                         else => {},
                     }
                 },
-                .ZigDecl => |zig| try self.collectInlineZig(record, stmt, zig.name, zig.source, zig.sigs),
+                .ZigDecl => |zig| try self.collectInlineZig(record, stmt, zig.name, zig.source, zig.origin, zig.sigs),
                 .Import => |import_info| try self.collectImport(record, import_info),
                 else => {},
             }
@@ -333,7 +333,7 @@ pub const ModuleLoader = struct {
     /// that declares it and bound there as a private namespace. Its functions
     /// are its public surface: `Name.fn` reaches them through the owner's
     /// binding.
-    fn collectInlineZig(self: *ModuleLoader, owner: *ModuleRecord, stmt: *ast.Stmt, name: token.Token, source: []const u8, sigs: []ast.ZigFnSig) ErrorList!void {
+    fn collectInlineZig(self: *ModuleLoader, owner: *ModuleRecord, stmt: *ast.Stmt, name: token.Token, source: []const u8, origin: Location, sigs: []ast.ZigFnSig) ErrorList!void {
         try self.checkUnbound(owner, name);
         const block = self.graph.addGeneratedRecord(self.allocator, owner, name.lexeme) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
@@ -341,7 +341,7 @@ pub const ModuleLoader = struct {
             // of this name; reaching here is a compiler bug.
             error.DuplicateStableKey, error.ModuleRootUnknown => unreachable,
         };
-        block.zig = .{ .name = name.lexeme, .source = source, .sigs = sigs, .location = stmt.base.location() };
+        block.zig = .{ .name = name.lexeme, .source = source, .sigs = sigs, .location = stmt.base.location(), .origin = origin };
         try self.collectZigFunctions(block, sigs, ast.SourceSpan.fromToken(name));
         // An inline block is parsed as part of its owner and has no imports, so
         // it is born with its declarations collected.

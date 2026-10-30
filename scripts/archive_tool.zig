@@ -101,21 +101,97 @@ fn unpackZigDependency(io: std.Io, allocator: std.mem.Allocator, archive_path: [
     const zig_dir_path = try std.fs.path.join(allocator, &.{ destination_lib_dir, "zig" });
     defer allocator.free(zig_dir_path);
 
-    const tar_cmd = [_][]const u8{ "tar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
-    const bsdtar_cmd = [_][]const u8{ "bsdtar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
-    try runAnyCommand(io, &[_][]const []const u8{
-        &tar_cmd,
-        &bsdtar_cmd,
-    }, null);
-
     var zig_dir = try destination_dir.openDir(io, "zig", .{});
     defer zig_dir.close(io);
+
+    if (is_zip) {
+        // In-process: GNU tar, the `tar` of most Linux hosts, cannot read a
+        // zip, and no other extractor can be counted on.
+        try unzipStripped(io, archive_path, zig_dir);
+    } else {
+        const tar_cmd = [_][]const u8{ "tar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
+        const bsdtar_cmd = [_][]const u8{ "bsdtar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
+        try runAnyCommand(io, &[_][]const []const u8{
+            &tar_cmd,
+            &bsdtar_cmd,
+        }, null);
+    }
 
     // The sentinel must mean "the toolchain is actually here", so refuse to
     // write it unless the extractor produced the compiler binary.
     if (!try containsZigBinary(io, zig_dir)) return error.MissingZigBinary;
     var sentinel = try zig_dir.createFile(io, extraction_sentinel, .{});
     sentinel.close(io);
+}
+
+/// Extracts the zip at `archive_path` into `dest` without its top-level
+/// folder, as `tar --strip-components=1` does. `std.zip.extract` keeps every
+/// entry's full name, and extracting it whole then renaming the folder is the
+/// rename Windows denies (`unpackZigDependency`), so each entry is written
+/// under its name with the first component removed.
+fn unzipStripped(io: std.Io, archive_path: []const u8, dest: std.Io.Dir) !void {
+    const zip = std.zip;
+    const archive = try std.Io.Dir.cwd().openFile(io, archive_path, .{});
+    defer archive.close(io);
+    var read_buffer: [4096]u8 = undefined;
+    var reader = archive.reader(io, &read_buffer);
+
+    var entries = try zip.Iterator.init(&reader);
+    var name_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    while (try entries.next()) |entry| {
+        switch (entry.compression_method) {
+            .store, .deflate => {},
+            else => return error.UnsupportedCompressionMethod,
+        }
+        if (entry.filename_len > name_buffer.len) return error.ZipInsufficientBuffer;
+        const name = name_buffer[0..entry.filename_len];
+        try reader.seekTo(entry.header_zip_offset + @sizeOf(zip.CentralDirectoryFileHeader));
+        try reader.interface.readSliceAll(name);
+        std.mem.replaceScalar(u8, name, '\\', '/');
+
+        // The top folder itself, or a name that would leave `dest`.
+        const slash = std.mem.indexOfScalar(u8, name, '/') orelse return error.ZipEntryOutsideTopFolder;
+        const path = name[slash + 1 ..];
+        if (path.len == 0) continue;
+        if (std.fs.path.isAbsolutePosix(path)) return error.ZipBadFilename;
+        var components = std.mem.splitScalar(u8, path, '/');
+        while (components.next()) |component| if (std.mem.eql(u8, component, "..")) return error.ZipBadFilename;
+
+        if (path[path.len - 1] == '/') {
+            try dest.createDirPath(io, path[0 .. path.len - 1]);
+            continue;
+        }
+
+        try reader.seekTo(entry.file_offset);
+        const local = try reader.interface.takeStruct(zip.LocalFileHeader, .little);
+        if (!std.mem.eql(u8, &local.signature, &zip.local_file_header_sig)) return error.ZipBadFileOffset;
+        try reader.seekTo(entry.file_offset + @sizeOf(zip.LocalFileHeader) + local.filename_len + local.extra_len);
+
+        var parent = if (std.fs.path.dirnamePosix(path)) |dir| try dest.createDirPathOpen(io, dir, .{}) else dest;
+        defer if (parent.handle != dest.handle) parent.close(io);
+        const out = try parent.createFile(io, std.fs.path.basenamePosix(path), .{ .exclusive = true });
+        defer out.close(io);
+        var write_buffer: [64 * 1024]u8 = undefined;
+        var writer = out.writer(io, &write_buffer);
+        switch (entry.compression_method) {
+            .store => reader.interface.streamExact64(&writer.interface, entry.uncompressed_size) catch |err| switch (err) {
+                error.ReadFailed => return reader.err.?,
+                error.WriteFailed => return writer.err.?,
+                error.EndOfStream => return error.ZipDecompressTruncated,
+            },
+            .deflate => {
+                var window: [std.compress.flate.max_window_len]u8 = undefined;
+                var inflate: std.compress.flate.Decompress = .init(&reader.interface, .raw, &window);
+                inflate.reader.streamExact64(&writer.interface, entry.uncompressed_size) catch |err| switch (err) {
+                    error.ReadFailed => return reader.err orelse inflate.err.?,
+                    error.WriteFailed => return writer.err.?,
+                    error.EndOfStream => return error.ZipDecompressTruncated,
+                };
+            },
+            else => unreachable,
+        }
+        try writer.end();
+    }
 }
 
 fn containsZigBinary(io: std.Io, zig_dir: std.Io.Dir) !bool {

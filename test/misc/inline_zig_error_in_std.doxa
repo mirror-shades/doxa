@@ -1,0 +1,14 @@
+# An error Zig raises inside its own std is reported at the block's call into
+# it, the nearest frame of Zig's reference trace that lies in this file.
+zig Parse {
+    const std = @import("std");
+
+    pub fn number(n: i64) i64 {
+        const v = std.fmt.parseInt(f64, "3", 10) catch 0;
+        return n + @as(i64, @intFromFloat(v));
+    }
+}
+
+entry function main() {
+    @print("{Parse.number(3)}\n")
+}

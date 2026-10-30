@@ -349,6 +349,10 @@ pub const ZigUnit = struct {
     source: []const u8,
     sigs: []ast.ZigFnSig,
     location: ?Location = null,
+    /// Where `source`'s first byte sits in its file: line 1, column 1 of an
+    /// imported `.zig` file, or just past an inline block's `{`. The wrapper
+    /// copies `source` verbatim, so a Zig compile error maps back through it.
+    origin: Location,
     /// One entry per distinct `DoxaError_<path>` a signature returns, filled in
     /// by the analyzer's Types stage once the enum each path names is resolved.
     /// The wrapper generator turns each into a Zig error set with these variant

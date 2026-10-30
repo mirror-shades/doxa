@@ -257,6 +257,9 @@ pub const Stmt = struct {
         ZigDecl: struct {
             name: Token,
             source: []const u8,
+            /// Where `source`'s first byte sits in the file: just past the
+            /// block's `{`. A Zig error in the block maps back from here.
+            origin: Location,
             sigs: []ZigFnSig = &.{},
         },
         VarDecl: struct {
@@ -1452,4 +1455,3 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
 
     return type_info;
 }
-

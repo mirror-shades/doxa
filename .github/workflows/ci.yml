@@ -30,8 +30,21 @@ jobs:
         with:
           version: 0.16.0
 
+      # One job is enough for the platform-independent checks. Linux's
+      # checkout keeps LF line endings, which `zig fmt` requires.
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: zig fmt --check src test scripts std build.zig
+
       - name: Build
         run: zig build
 
+      # `zig build test` also checks that std/zerr/zerr.doxa and
+      # docs/stdlib-api.md are current.
       - name: Test
         run: zig build test
+
+      # Cross-builds the release binaries for every platform.
+      - name: Release build
+        if: matrix.os == 'ubuntu-latest'
+        run: zig build release -Doutput-dir=release-out

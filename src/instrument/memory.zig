@@ -303,7 +303,6 @@ pub fn writeText(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]
         };
     }
 
-
     var opened: u64 = 0;
     for (rows) |r| if (eql(r.kind, "opened") and r.fields.len == 1) {
         opened += std.fmt.parseInt(u64, r.fields[0], 10) catch 0;
@@ -314,8 +313,8 @@ pub fn writeText(w: *std.Io.Writer, rows: []const complexity.Finding, sites: ?[]
     };
     const dropped = count(rows, "dropped");
     try w.print("\n{d} allocation sites. Arenas: {d} opened, {d} dropped; {d} @caller dropped. Copies: {d} kept ({d} clone, {d} runtime), {d} removed.\n", .{
-        count(rows, "alloc"), opened + dropped, dropped, count(rows, "caller"),
-        count(rows, "copy"),  clones,          count(rows, "copy") - clones, count(rows, "removed"),
+        count(rows, "alloc"), opened + dropped, dropped,                      count(rows, "caller"),
+        count(rows, "copy"),  clones,           count(rows, "copy") - clones, count(rows, "removed"),
     });
 }
 
