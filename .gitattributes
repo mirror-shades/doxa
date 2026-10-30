@@ -1,1 +1,2 @@
 *.doxa linguist-detectable=true
+std/zerr/zerr.doxa text eol=lf
