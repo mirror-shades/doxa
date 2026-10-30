@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const catalog = @import("catalog");
+const catalog = @import("catalog").catalog;
 
 const usage_text =
     \\Usage: gen_stdlib_docs [std-dir] [output-file]
