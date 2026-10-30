@@ -57,15 +57,9 @@ fn runAnyCommand(
 
 fn unpackZigDependency(io: std.Io, allocator: std.mem.Allocator, archive_path: []const u8, destination_lib_dir: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
-    cwd.createDir(io, destination_lib_dir, .default_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
-    var destination_dir = try cwd.openDir(
-        io,
-        destination_lib_dir,
-        .{},
-    );
+    // The whole path: on a fresh output directory nothing above `lib` exists
+    // yet, since the target's binary may not have been installed first.
+    var destination_dir = try cwd.createDirPathOpen(io, destination_lib_dir, .{});
     defer destination_dir.close(io);
 
     // Unpack straight into the final `zig` name rather than extracting to the
