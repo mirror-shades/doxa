@@ -1,0 +1,4 @@
+public struct Sealed {
+    public shown :: int,
+    hidden :: int,
+}

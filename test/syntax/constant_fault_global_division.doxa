@@ -1,0 +1,5 @@
+# A constant initializer that divides by zero is one error (E1036). The
+# name is still declared, so its later uses earn no second error.
+const a is 7 % 0
+const b is 1
+@print("{a} {b} {a + b}\n")

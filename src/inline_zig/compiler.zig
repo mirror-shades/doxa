@@ -139,11 +139,107 @@ fn errorUnionRef(t: ast.TypeInfo) ?ast.TypeRef {
 /// — is a heap value, which the wrapper builds in that arena
 /// (`docs/zig.md`, "ABI"). The emitter passes it by the same rule.
 pub fn takesArena(sig: *const ast.ZigFnSig) bool {
-    const result = if (errorUnionRef(sig.return_type) != null)
-        errorUnionPayload(sig.return_type) orelse return false
-    else
-        sig.return_type;
-    return result.base == .String or result.base == .Array;
+    const result = resultType(sig) orelse return false;
+    // A struct result is built in that arena by the caller, whatever it holds.
+    return result.base == .String or result.base == .Array or result.base == .Custom;
+}
+
+/// What a signature's result carries: the return type, or a fallible
+/// return's payload.
+fn resultType(sig: *const ast.ZigFnSig) ?ast.TypeInfo {
+    if (errorUnionRef(sig.return_type) != null) return errorUnionPayload(sig.return_type);
+    return sig.return_type;
+}
+
+/// The index in `unit.structs` of the crossing struct `t` (a resolved
+/// `.Custom`) names. Analysis recorded every struct a signature returns and
+/// every struct one holds (`zig_interop.StructCheck`).
+fn structIndex(unit: *const module_graph.ZigUnit, t: ast.TypeInfo) usize {
+    const ref = t.custom_type.?.ref;
+    for (unit.structs, 0..) |s, i| {
+        if (s.ref.eql(ref)) return i;
+    }
+    unreachable;
+}
+
+/// Whether the struct holds a `string` or an array anywhere, which the
+/// wrapper builds in the caller's arena.
+fn structHoldsHeap(unit: *const module_graph.ZigUnit, index: usize) bool {
+    for (unit.structs[index].fields) |field| switch (field.type_info.base) {
+        .String, .Array => return true,
+        .Custom => if (structHoldsHeap(unit, structIndex(unit, field.type_info))) return true,
+        else => {},
+    };
+    return false;
+}
+
+/// The Zig type a crossing struct's field has in its mirror.
+fn mirrorFieldType(allocator: std.mem.Allocator, unit: *const module_graph.ZigUnit, t: ast.TypeInfo) ![]u8 {
+    return switch (t.base) {
+        .Int, .Enum => allocator.dupe(u8, "i64"),
+        .Float => allocator.dupe(u8, "f64"),
+        .Byte => allocator.dupe(u8, "u8"),
+        .Tetra => allocator.dupe(u8, "bool"),
+        .String => allocator.dupe(u8, "[]const u8"),
+        .Array => blk: {
+            const info = arrayInfoFor(t).?;
+            break :blk std.fmt.allocPrint(allocator, "__DoxaArrayType({s}, {d})", .{ info.zig_type, info.depth });
+        },
+        .Custom => std.fmt.allocPrint(allocator, "__DoxaStruct_{d}", .{structIndex(unit, t)}),
+        else => unreachable,
+    };
+}
+
+/// The bridge's handling of a struct result. A Doxa struct's layout belongs to
+/// the emitter, so the bridge never writes one: each leaf field (a nested
+/// struct's fields in turn, depth-first in declaration order) comes back
+/// through out-parameters of its own, and the emitter builds the struct from
+/// them. A `string` leaf is cloned into the caller's arena as a
+/// `(ptr, len)` pair, an array leaf built there as an `ArrayHeader`.
+fn appendStructLeaves(
+    allocator: std.mem.Allocator,
+    unit: *const module_graph.ZigUnit,
+    index: usize,
+    access: []const u8,
+    leaf: *usize,
+    params: *std.array_list.Managed(u8),
+    writes: *std.array_list.Managed(u8),
+) !void {
+    for (unit.structs[index].fields) |field| {
+        const path = try std.fmt.allocPrint(allocator, "{s}.@\"{s}\"", .{ access, field.name });
+        defer allocator.free(path);
+        if (field.type_info.base == .Custom) {
+            try appendStructLeaves(allocator, unit, structIndex(unit, field.type_info), path, leaf, params, writes);
+            continue;
+        }
+        const k = leaf.*;
+        leaf.* += 1;
+        const decl, const write = switch (field.type_info.base) {
+            .String => .{
+                try std.fmt.allocPrint(allocator, ", o{d}_ptr: *?[*]u8, o{d}_len: *u64", .{ k, k }),
+                try std.fmt.allocPrint(allocator, "    if ({s}.len == 0) {{ o{d}_ptr.* = null; o{d}_len.* = 0; }} else doxa_str_clone(__doxa_scope, {s}.ptr, {s}.len, o{d}_ptr, o{d}_len);\n", .{ path, k, k, path, path, k, k }),
+            },
+            .Array => blk: {
+                const info = arrayInfoFor(field.type_info).?;
+                break :blk .{
+                    try std.fmt.allocPrint(allocator, ", o{d}: *?*__DoxaArrayHeader", .{k}),
+                    try std.fmt.allocPrint(allocator, "    o{d}.* = __doxa_build(__doxa_scope, {s}, {d}, {d}, {d}, {s});\n", .{ k, info.zig_type, info.depth, info.elem_tag, info.elem_size, path }),
+                };
+            },
+            else => blk: {
+                const zig_type = try mirrorFieldType(allocator, unit, field.type_info);
+                defer allocator.free(zig_type);
+                break :blk .{
+                    try std.fmt.allocPrint(allocator, ", o{d}: *{s}", .{ k, zig_type }),
+                    try std.fmt.allocPrint(allocator, "    o{d}.* = {s};\n", .{ k, path }),
+                };
+            },
+        };
+        defer allocator.free(decl);
+        defer allocator.free(write);
+        try params.appendSlice(decl);
+        try writes.appendSlice(write);
+    }
 }
 
 fn errorUnionPayload(t: ast.TypeInfo) ?ast.TypeInfo {
@@ -275,25 +371,6 @@ fn generateWrapperZigFile(
     const sigs = unit.sigs;
     const location = unit.location;
 
-    // The wrapper's content is its source plus the link names it exports,
-    // which the record's mangling tag fixes.
-    var h: [Sha256.digest_length]u8 = undefined;
-    var hasher = Sha256.init(.{});
-    hasher.update(cacheSeed());
-    hasher.update("\n");
-    hasher.update(unit.name);
-    hasher.update("\n");
-    hasher.update(record.mangle_tag.?);
-    hasher.update("\n");
-    hasher.update(unit.source);
-    hasher.final(&h);
-
-    const hex_buf = std.fmt.bytesToHex(h, .lower);
-    const short_hex = hex_buf[0..16];
-
-    const zig_path = try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, short_hex });
-    errdefer allocator.free(zig_path);
-
     var file_buf = std.array_list.Managed(u8).init(allocator);
     defer file_buf.deinit();
     try appendZigSourceSanitized(&file_buf, unit.source);
@@ -306,7 +383,13 @@ fn generateWrapperZigFile(
     // arena ownership rules in docs/memory.md with no free hook.
     // `DoxaByte` is the marker a signature uses to spell `byte[]`: a bare
     // `[]const u8` is unambiguously a `string`, so bytes need their own name.
+    // The wrapper is its object's root, so its `std_options` govern the Zig
+    // std compiled into it. A status Zig std does not map (`unexpectedStatus`,
+    // `unexpectedErrno`) still returns `error.Unexpected` to the caller; it
+    // no longer also dumps a Zig stack trace into the program's stderr.
+    // TODO: Zig 0.16's `netReadWindows` maps no STATUS_LOCAL_DISCONNECT (B058).
     try file_buf.appendSlice("const __doxa_std = @import(\"std\");\n\n" ++
+        "pub const std_options: __doxa_std.Options = .{ .unexpected_error_tracing = false };\n\n" ++
         "const DoxaByte = u8;\n\n" ++
         "const __DoxaArrayHeader = opaque {};\n\n" ++
         "const __DoxaScope = opaque {};\n\n" ++
@@ -364,6 +447,29 @@ fn generateWrapperZigFile(
         try file_buf.appendSlice("    };\n}\n");
     }
 
+    // A struct result's Zig mirror, built from the Doxa declaration analysis
+    // checked: the body returns it like any Zig struct, and the two cannot
+    // drift. A struct precedes any that holds it, and each spelling a
+    // signature names it by is an alias (`plan/inline-zig-structs.md`).
+    for (unit.structs, 0..) |s, i| {
+        const head = try std.fmt.allocPrint(allocator, "const __DoxaStruct_{d} = struct {{", .{i});
+        defer allocator.free(head);
+        try file_buf.appendSlice(head);
+        for (s.fields) |field| {
+            const zig_type = try mirrorFieldType(allocator, &unit, field.type_info);
+            defer allocator.free(zig_type);
+            const member = try std.fmt.allocPrint(allocator, " @\"{s}\": {s},", .{ field.name, zig_type });
+            defer allocator.free(member);
+            try file_buf.appendSlice(member);
+        }
+        try file_buf.appendSlice(" };\n");
+        for (s.aliases) |alias| {
+            const line = try std.fmt.allocPrint(allocator, "const @\"DoxaStruct_{s}\" = __DoxaStruct_{d};\n", .{ alias, i });
+            defer allocator.free(line);
+            try file_buf.appendSlice(line);
+        }
+    }
+
     for (sigs) |sig| {
         const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}", .{sig.name});
         defer allocator.free(native_ident);
@@ -372,6 +478,8 @@ fn generateWrapperZigFile(
 
         const native_ret_zig = if (errorUnionRef(sig.return_type) != null)
             "i64"
+        else if (sig.return_type.base == .Custom)
+            "void"
         else
             nativeReturnType(sig.return_type) orelse {
                 reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
@@ -454,7 +562,8 @@ fn generateWrapperZigFile(
         // i64 return is free to carry the sentinel (-1 = success) or the error.
         if (fallible_payload) |payload| {
             const out_params: ?[]const u8 = switch (payload.base) {
-                .Nothing => null,
+                // A struct payload's out-parameters are its leaves, below.
+                .Nothing, .Custom => null,
                 .String => "out_ptr: *?[*]u8, out_len: *u64",
                 .Array => "out_array: *?*__DoxaArrayHeader",
                 .Int => "out_value: *i64",
@@ -470,6 +579,19 @@ fn generateWrapperZigFile(
                 try native_buf.appendSlice(decl);
             }
         }
+        var struct_writes = std.array_list.Managed(u8).init(allocator);
+        defer struct_writes.deinit();
+        if (resultType(&sig)) |result| if (result.base == .Custom) {
+            var struct_params = std.array_list.Managed(u8).init(allocator);
+            defer struct_params.deinit();
+            // The caller builds the struct in its arena; the bridge uses the
+            // arena itself only for a string or array leaf.
+            if (!structHoldsHeap(&unit, structIndex(&unit, result))) try struct_writes.appendSlice("    _ = __doxa_scope;\n");
+            var leaf: usize = 0;
+            try appendStructLeaves(allocator, &unit, structIndex(&unit, result), "__doxa_out", &leaf, &struct_params, &struct_writes);
+            // Each leaf's declaration leads with its separator.
+            try native_buf.appendSlice(if (has_params) struct_params.items else struct_params.items[@min(2, struct_params.items.len)..]);
+        };
         try native_buf.appendSlice(") callconv(.c) ");
         try native_buf.appendSlice(native_ret_zig);
         try native_buf.appendSlice(" {\n");
@@ -514,9 +636,15 @@ fn generateWrapperZigFile(
                     try native_buf.appendSlice(postlude);
                 },
                 .Int => try native_buf.appendSlice("    out_value.* = __doxa_out;\n"),
+                .Custom => try native_buf.appendSlice(struct_writes.items),
                 else => {},
             }
             try native_buf.appendSlice("    return -1;\n");
+        } else if (sig.return_type.base == .Custom) {
+            try native_buf.appendSlice("    const __doxa_out = ");
+            try native_buf.appendSlice(native_call.items);
+            try native_buf.appendSlice(";\n");
+            try native_buf.appendSlice(struct_writes.items);
         } else if (sig.return_type.base == .Array) {
             const elem = arrayInfoFor(sig.return_type) orelse {
                 reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
@@ -545,6 +673,20 @@ fn generateWrapperZigFile(
         try native_buf.appendSlice("\" }); }\n\n");
         try file_buf.appendSlice(native_buf.items);
     }
+
+    // The wrapper is named, and its object keyed (`shimObjectKey`), by the
+    // text written here, not by the block's source alone: the prologue also
+    // carries what the program's Doxa declarations fix, such as an error set's
+    // variant order, so editing one of those must build a new object.
+    var h: [Sha256.digest_length]u8 = undefined;
+    var hasher = Sha256.init(.{});
+    hasher.update(cacheSeed());
+    hasher.update("\n");
+    hasher.update(file_buf.items);
+    hasher.final(&h);
+    const hex_buf = std.fmt.bytesToHex(h, .lower);
+    const zig_path = try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, hex_buf[0..16] });
+    errdefer allocator.free(zig_path);
 
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = zig_path, .data = file_buf.items });
 

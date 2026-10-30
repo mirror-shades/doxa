@@ -1,0 +1,42 @@
+# A refused write refuses its whole document, and only that document:
+# `finish` always ends it, so the next one starts clean (B024, B071).
+
+import json from @std()
+
+function report(label :: string) {
+    const out is json.finish()
+    out as string then {
+        @print("{label}: {out}\n")
+    } else {
+        @print("{label}: refused\n")
+    }
+}
+
+var invalid :: byte[] is [255]
+
+json.beginArray()
+json.writeText(@pack(invalid))
+json.end()
+report("refused inside an array")
+
+json.beginArray()
+json.writeText("after")
+json.end()
+report("next document")
+
+json.beginObject()
+json.writeKey("k")
+json.writeText(@pack(invalid))
+report("refused inside an object, left open")
+
+json.writeInt(1)
+report("next document")
+
+json.writeText(@pack(invalid))
+json.writeText("ok")
+report("refused at the top, then a write")
+
+json.writeText("clean")
+report("next document")
+
+report("finish with nothing written")

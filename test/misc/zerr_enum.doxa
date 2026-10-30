@@ -1,0 +1,8 @@
+# The generated `ZigError` enum is an ordinary `std` enum: it imports through
+# the aggregator, holds a variant, and prints as any enum does.
+import zerr from @std()
+
+entry function main() {
+    const e is zerr.ZigError.AccessDenied
+    @print("{e}\n")
+}

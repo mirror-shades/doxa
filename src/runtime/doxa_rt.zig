@@ -15,6 +15,8 @@ const numbers = @import("numbers.zig");
 pub const instrument = @import("instrument.zig");
 pub const FaultKind = fault.FaultKind;
 pub const DoxaFaultSite = fault.DoxaFaultSite;
+pub const installFaultHandlers = fault.installHandlers;
+pub const owns_traps = fault.owns_traps;
 
 const abi = @import("abi.zig");
 pub const DoxaString = abi.DoxaString;

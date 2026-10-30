@@ -598,6 +598,10 @@ public function execCapture(input :: string) returns string | error.StdError {
     return mapProcessError(err)
 }
 
+public function execCaptureArgs(program :: string, arguments :: string[]) returns string | error.StdError {
+    return execCaptureEnv(program, arguments, [], [])
+}
+
 public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
     const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()

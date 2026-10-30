@@ -268,7 +268,7 @@ pub fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scop
                 if (decl.initializer) |init_expr| {
                     // An annotated initializer is typed in its context.
                     if (decl.type_info.base != .Nothing) _ = try infer_type.inferTypeIn(self, init_expr, type_info);
-                    comptime_value = type_ops.constantInitializer(self, init_expr, !decl.type_info.is_mutable) catch continue;
+                    comptime_value = type_ops.constantInitializer(self, init_expr, !decl.type_info.is_mutable, type_info);
                 } else if (self.isEnumTypeRequiringInitializer(type_info)) {
                     self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
                     self.fatal_error = true;

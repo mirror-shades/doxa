@@ -133,6 +133,10 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         if (narrowedViewName(cast.value)) |name| else_scope.propagateUsedToParent(name);
     }
 
+    // The `as`'s value is an inline `then`'s, or else the narrowed subject, and
+    // a fallback that yields a value yields one of that type.
+    const result_type = then_type orelse target_type_info;
+
     if (else_type) |et| {
         const label = struct {
             fn run(t: *ast.TypeInfo) []const u8 {
@@ -149,13 +153,13 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
             }
         }.run;
 
-        const fallback_matches_target = !self.block_value_expected or (et.base == .Nothing and else_diverges) or helpers.typesEqual(self, target_type_info, et);
-        if (!fallback_matches_target) {
+        const fallback_matches = !self.block_value_expected or (et.base == .Nothing and else_diverges) or helpers.typesEqual(self, result_type, et);
+        if (!fallback_matches) {
             self.reporter.reportCompileError(
                 getLocationFromBase(expr.base),
                 ErrorCode.TYPE_MISMATCH,
                 "Fallback for 'as' must produce type {s}, got {s}",
-                .{ label(target_type_info), label(et) },
+                .{ label(result_type), label(et) },
             );
             self.fatal_error = true;
             type_info.base = .Nothing;
@@ -163,19 +167,17 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         }
     }
 
-    type_info.* = target_type_info.*;
+    type_info.* = result_type.*;
 
+    // Where no value is expected the fallback may yield another type, and the
+    // `as` is then either. A fallback that diverges yields nothing to join.
     if (then_type) |tt| {
         if (else_type) |et| {
-            if (tt.base == et.base) {
-                type_info.* = tt.*;
-            } else {
+            if (!else_diverges and !helpers.typesEqual(self, tt, et)) {
                 var types = [_]*ast.TypeInfo{ tt, et };
                 const union_type = try helpers.createUnionType(self, &types);
                 type_info.* = union_type.*;
             }
-        } else {
-            type_info.* = tt.*;
         }
     }
 }

@@ -1,0 +1,11 @@
+# Rejected: a struct crossing from Zig holds only plain data; a union field
+# has no Zig mirror.
+struct Reply { public value :: int | string }
+
+zig Z {
+    pub fn reply() DoxaStruct_Reply {
+        return .{ .value = 1 };
+    }
+}
+
+@print("{Z.reply()}\n")

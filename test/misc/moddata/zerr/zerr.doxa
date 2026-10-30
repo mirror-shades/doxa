@@ -1,0 +1,4 @@
+# A reduced stand-in for the generated module of Zig's error sets
+# (plan/std-errors.md): Zig's paths, mirrored as nested modules.
+public module fs from "./fs/fs.doxa"
+public module process from "./process/process.doxa"

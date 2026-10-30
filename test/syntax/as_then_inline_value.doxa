@@ -1,0 +1,20 @@
+# An `as` with an inline `then` is that expression's value, so its fallback
+# produces the same type: a string here, though the subject narrows to int. A
+# fallback that diverges produces no value, so it adds nothing to the type.
+function maybe(n :: int) returns int | nothing {
+    if n > 0 then return n
+    return nothing
+}
+
+function describe(n :: int) returns string {
+    const u is maybe(n)
+    return u as int then "an int: {u}" else "nothing"
+}
+
+function doubled(n :: int) returns int {
+    const u is maybe(n)
+    const v is u as int then u * 2 else { return -1 }
+    return v + 1
+}
+
+@print("{describe(3)} / {describe(0)} / {doubled(4)} {doubled(0)}\n")

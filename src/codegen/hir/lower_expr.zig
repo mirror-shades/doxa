@@ -331,25 +331,27 @@ fn logical(l: *Lowering, e: *ast.Expr, log: ast.Logical) Error!?ValueId {
     return try l.define(.{ .tetra_binary = .{ .op = op, .lhs = lhs, .rhs = rhs } }, .Tetra);
 }
 
-/// `a and b`: `b` when `a` holds, else `false`; `a or b`: `true` when `a`
-/// holds, else `b`. The right side runs only when it decides the value.
+/// `a and b`: whether `b` holds when `a` does, else `false`; `a or b`:
+/// `true` when `a` holds, else whether `b` does. Like every binary tetra
+/// operator it reads whether each side holds and answers `true` or `false`
+/// (`docs/tetras.md`). The right side runs only when it decides the answer;
+/// otherwise the left side's own answer is the result.
 fn shortCircuit(l: *Lowering, log: ast.Logical, op: ir.CondOp) Error!?ValueId {
     const left = try cond(l, log.left) orelse return null;
     const rhs_block = try l.b.createBlock();
     const join = try l.b.createBlock();
-    const value = try l.b.blockParam(join, .of(.Tetra));
-    const decided = try l.constant(.{ .tetra = if (op == .@"and") .false else .true }, .Tetra);
+    const answer = try l.b.blockParam(join, .cond);
     if (op == .@"and") {
-        try l.b.branch(left, .{ .block = rhs_block }, .{ .block = join, .args = &.{decided} });
+        try l.b.branch(left, .{ .block = rhs_block }, .{ .block = join, .args = &.{left} });
     } else {
-        try l.b.branch(left, .{ .block = join, .args = &.{decided} }, .{ .block = rhs_block });
+        try l.b.branch(left, .{ .block = join, .args = &.{left} }, .{ .block = rhs_block });
     }
     try l.b.seal(rhs_block);
     l.b.switchTo(rhs_block);
-    if (try expr(l, log.right)) |right| try l.b.jump(.{ .block = join, .args = &.{right} });
+    if (try cond(l, log.right)) |right| try l.b.jump(.{ .block = join, .args = &.{right} });
     try l.b.seal(join);
     l.b.switchTo(join);
-    return value;
+    return try l.define(.{ .tetra_from_cond = .{ .operand = answer } }, .Tetra);
 }
 
 fn unary(l: *Lowering, e: *ast.Expr, u: ast.Unary) Error!?ValueId {
@@ -754,8 +756,14 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
     if (!slot_type.eql(param_type) or element) {
         // A member lent to a union parameter, or a fixed array to a dynamic
         // one, goes through a converted temporary that is read back after;
-        // so does an `each` element, which has no address of its own.
-        const arena_value = try l.arena();
+        // so does an `each` element, which has no address of its own. The
+        // temporary lives where the element does, the array's arena: what
+        // the callee stores through it is placed there, and the write-back
+        // keeps it as it is, no copy per call.
+        const arena_value = if (element)
+            try l.arenaOf((try l.expr(l.local(target.storage).element.at.data.Index.array)).?)
+        else
+            try l.arena();
         const slot = try l.b.addSlot(param_type, arena_value);
         const ref = try l.b.define(.{ .slot_addr = slot }, .{ .ref = param_type });
         const current = try l.readStorage(target, e.data.Variable.lexeme);

@@ -1,0 +1,29 @@
+# A struct prints its fields in declaration order (B061). The fields differ
+# in width, a string two words and a union one boxed word, so each is read at
+# its own running offset; a nested struct prints in place. A string held in
+# the union field is quoted like the plain string field (B062).
+enum Tone { Warm, Cool }
+
+struct Inner {
+    public first :: int,
+    public second :: string,
+}
+
+struct Mixed {
+    public a :: int,
+    public b :: string,
+    public c :: float,
+    public d :: Tone,
+    public e :: int | string,
+    public f :: Inner,
+}
+
+const m is $Mixed {
+    a is 1,
+    b is "x",
+    c is 2.5,
+    d is Tone.Cool,
+    e is "u",
+    f is $Inner { first is 7, second is "y" },
+}
+@print("{m}\n")

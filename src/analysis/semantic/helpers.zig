@@ -279,9 +279,12 @@ fn typeIsGroupMember(self: *const SemanticAnalyzer, group: TypeRef, actual: *con
 }
 
 /// True when `actual` is assignable to `group` on its own: it is one of the
-/// group's members, it is the group itself, or it is `Nothing`.
+/// group's members, it is the group itself, a group whose every member is one
+/// of `group`'s, or `Nothing`. A group is the union of its members
+/// (`docs/groups.md` 3.1), so a group fits wherever all of its members do.
 ///
-/// The last two cases are why this exists separately from `typeIsGroupMember`.
+/// The cases past the first are why this exists separately from
+/// `typeIsGroupMember`.
 /// A function declared `returns SomeGroup` commonly has one path returning a
 /// member and another falling off the end with a bare `return` (typed
 /// `Nothing`), and a wrapper returns the group unchanged. Both are legitimate,
@@ -294,7 +297,21 @@ fn typeWidensToGroup(self: *const SemanticAnalyzer, group: TypeRef, actual: *con
     if (actual.base == .Custom) {
         if (refOf(actual)) |ref| if (ref.eql(group)) return true;
     }
+    if (groupOf(self, actual)) |inner| return groupWithin(self, inner, group);
     return typeIsGroupMember(self, group, actual);
+}
+
+/// Whether every flattened member of `inner` is a member of `outer`.
+fn groupWithin(self: *const SemanticAnalyzer, inner: TypeRef, outer: TypeRef) bool {
+    const inner_id = self.group_table.idOf(inner) orelse return false;
+    const outer_id = self.group_table.idOf(outer) orelse return false;
+    const outer_members = self.group_table.members(outer_id) orelse return false;
+    for (self.group_table.members(inner_id) orelse return false) |member| {
+        for (outer_members) |candidate| {
+            if (candidate.ref.eql(member.ref)) break;
+        } else return false;
+    }
+    return true;
 }
 
 /// §4.1: a `match` on a group must cover every flattened member. An arm covers
@@ -354,7 +371,14 @@ pub fn checkGroupMatchExhaustive(
     defer uncovered.deinit();
     for (members, 0..) |member, index| {
         if (isMemberCovered(coverage[index])) continue;
-        try uncovered.append(member.qualifier);
+        // A bare name two members share says which by its module.
+        const shared = for (members, 0..) |other, j| {
+            if (j != index and std.mem.eql(u8, other.qualifier, member.qualifier)) break true;
+        } else false;
+        try uncovered.append(if (shared)
+            try std.fmt.allocPrint(allocator, "{s}' from '{s}", .{ member.qualifier, self.graph.moduleName(member.ref.module) })
+        else
+            member.qualifier);
     }
     if (uncovered.items.len == 0) return;
 
@@ -1014,17 +1038,10 @@ pub fn flattenGroupType(self: *SemanticAnalyzer, ref: TypeRef) !void {
     var visited: std.ArrayListUnmanaged(TypeRef) = .empty;
     defer visited.deinit(self.allocator);
     try visited.append(self.allocator, ref);
+    // Members are types: two distinct types may share a bare name
+    // (`fs.File.OpenError`, `fs.Dir.OpenError`). The name is then no
+    // shortcut for either (`groupMemberType`).
     try flattenGroupMembers(self, sources, &flat, &visited);
-
-    // A qualifier names one member after flattening.
-    for (flat.items, 0..) |member, i| {
-        for (flat.items[0..i]) |earlier| {
-            if (!std.mem.eql(u8, earlier.qualifier, member.qualifier)) continue;
-            self.reporter.reportCompileError(null, ErrorCode.TYPE_MISMATCH, "Group '{s}' has duplicate qualifier '{s}'", .{ ref.name, member.qualifier });
-            self.fatal_error = true;
-        }
-    }
-
     _ = try self.group_table.registerGroup(ref, flat.items);
 }
 

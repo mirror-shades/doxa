@@ -1,0 +1,33 @@
+struct Item {
+    public count :: int,
+    public names :: string[],
+}
+
+function bump(^it :: Item) {
+    it.count += 1
+}
+
+function rename(^it :: Item, n :: int) {
+    it.names is ["fresh {n}"]
+    @push(it.names, "pushed {n}")
+}
+
+# The element of `each it in ^items`, lent on as `^`, is the element itself:
+# what the callee stores through it outlives the loop body's arena.
+function run() returns Item[] {
+    var items :: Item[] is []
+    for i while i < 3 do i += 1 {
+        @push(items, $Item { count is i, names is ["old"] })
+    }
+    for r while r < 2 do r += 1 {
+        each it in ^items {
+            bump(^it)
+            rename(^it, it.count)
+        }
+    }
+    return items
+}
+
+each it in run() {
+    @print("{it.count} {it.names}\n")
+}

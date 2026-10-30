@@ -1,0 +1,24 @@
+# A fallible Zig block naming the generated `ZigError` enum: the wrapper
+# synthesizes the enum's variants as its Zig error set and maps the caught name
+# back to the same variant. Both the success and error paths are exercised.
+import zerr from @std()
+
+zig Fail {
+    pub fn f(x: i64) @"DoxaError_zerr.ZigError"!i64 {
+        if (x == 0) return error.AccessDenied;
+        return x;
+    }
+}
+
+entry function main() {
+    const ok is Fail.f(7)
+    ok as int then @print("ok {ok}\n") else @print("unexpected\n")
+
+    const bad is Fail.f(0)
+    bad as int then @print("unexpected\n") else {
+        match bad {
+            zerr.ZigError.AccessDenied then @print("denied\n"),
+            else @print("other\n"),
+        }
+    }
+}

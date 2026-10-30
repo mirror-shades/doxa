@@ -25,7 +25,10 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
     if (try groupVariant(self, expr, type_info)) return;
 
     const object_type = try infer_type.inferTypeFromExpr(self, field.object);
-    if (object_type.base == .Error) return;
+    if (object_type.base == .Error) {
+        type_info.* = .{ .base = .Error };
+        return;
+    }
     switch (object_type.base) {
         .Union => {
             self.reporter.reportCompileError(
@@ -117,31 +120,34 @@ pub fn fieldAccess(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
 }
 
 /// `Group.Member.Variant`, or `Group.Variant` for a variant unique across the
-/// group's members (`docs/groups.md` 2.3): the member's variant, a value of
-/// the group. The member is recorded as the access's resolution. False when
-/// `expr` is not written through a group.
+/// group's members (`docs/groups.md` 2.3): the member's variant, typed as the
+/// member, since a group creates no values (3.2). It widens to the group
+/// wherever one is expected, and compares with a group value as its member
+/// does. The member is recorded as the access's resolution. False when `expr`
+/// is not written through a group.
 fn groupVariant(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo) SemanticError!bool {
     const field = expr.data.FieldAccess;
     const location = getLocationFromBase(expr.base);
-    const group, const member = qualified: {
+    const member = qualified: {
         if (field.object.data == .FieldAccess) {
             const qualifier = field.object.data.FieldAccess;
             if (try groupNamed(self, qualifier.object)) |group| {
+                if (try self.reportSharedQualifier(group, qualifier.field)) break :qualified null;
                 const member = (try self.groupMemberType(group, qualifier.field.lexeme)) orelse {
                     self.reporter.reportCompileError(location, ErrorCode.FIELD_NOT_FOUND, "Group '{s}' has no member '{s}'", .{ group.name, qualifier.field.lexeme });
-                    break :qualified .{ group, null };
+                    break :qualified null;
                 };
                 const enum_member = (try self.customType(member)).?.kind == .Enum;
                 if (!enum_member or !try self.enumDeclares(member, field.field.lexeme)) {
                     self.reporter.reportCompileError(location, ErrorCode.VARIABLE_NOT_FOUND, "Member '{s}' of group '{s}' has no variant '{s}'", .{ qualifier.field.lexeme, group.name, field.field.lexeme });
-                    break :qualified .{ group, null };
+                    break :qualified null;
                 }
-                break :qualified .{ group, member };
+                break :qualified member;
             }
         }
         const group = (try groupNamed(self, field.object)) orelse return false;
         // `groupVariantMember` reports a variant no member or several declare.
-        break :qualified .{ group, try self.groupVariantMember(group, field.field) };
+        break :qualified try self.groupVariantMember(group, field.field);
     };
     const ref = member orelse {
         self.fatal_error = true;
@@ -149,7 +155,7 @@ fn groupVariant(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         return true;
     };
     try names.annotate(self, expr, .{ .group_variant = ref });
-    type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = group } };
+    type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref } };
     return true;
 }
 

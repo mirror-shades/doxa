@@ -214,6 +214,7 @@ pub const SemanticAnalyzer = struct {
     pub const resolveMatchPatterns = patterns.resolveMatchPatterns;
     pub const inferMatchCaseTypeWithNarrow = patterns.inferMatchCaseTypeWithNarrow;
     pub const groupMemberType = patterns.groupMemberType;
+    pub const reportSharedQualifier = patterns.reportSharedQualifier;
     pub const groupVariantMember = patterns.groupVariantMember;
     pub const enumDeclares = patterns.enumDeclares;
     pub const checkFreshName = names.checkFreshName;

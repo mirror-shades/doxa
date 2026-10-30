@@ -1,0 +1,13 @@
+# minInt // -1 has no int, so it faults as an overflow, as the constant form is
+# E1024. The operands come from calls, so nothing is known about them.
+function minInt() returns int {
+    return -9223372036854775807 - 1
+}
+
+function negOne(x :: int) returns int {
+    return x - x - 1
+}
+
+const m is minInt()
+const q is m // negOne(m)
+@print("{q}\n")

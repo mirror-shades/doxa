@@ -1,0 +1,7 @@
+# Inside a function: a constant division by zero is one error (E1036), and
+# the name it declares still types its uses.
+function f() returns int {
+    const q is 7 // 0
+    return q + 1
+}
+@print("{f()}\n")

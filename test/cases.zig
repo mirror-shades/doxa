@@ -250,6 +250,40 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_group_equals_member_results[0..],
     },
     .{
+        .name = "a group is the union of its members: shared bare names, subgroup widening",
+        .path = "./test/misc/group_shared_member_names.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "file: denied" },
+            .{ .value = "true" },
+            .{ .value = "narrowed .NotDir" },
+            .{ .value = "dir parse" },
+            .{ .value = "dir" },
+        },
+    },
+    .{
+        .name = "a bare name two group members share names neither through the group",
+        .path = "./test/misc/group_shared_name_qualifier_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1039",
+        .expect_stderr = "Group 'ZigErr' has 2 members named 'OpenError'; name the member by its own path",
+    },
+    .{
+        .name = "a non-exhaustive group match names a shared-name member by its module",
+        .path = "./test/misc/group_shared_name_not_exhaustive.doxa",
+        .mode = .reject,
+        .expect_error = "E1033",
+        .expect_stderr = "'OpenError' from '",
+    },
+    .{
+        .name = "a group-qualified variant is its member's value (B063)",
+        .path = "./test/misc/group_qualified_member_equals.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "true true false" },
+            .{ .value = "true true" },
+            .{ .value = "true" },
+        },
+    },
+    .{
         .name = "match on a union subject",
         .path = "./test/misc/match_union_struct.doxa",
         .expected_print = answers.expected_match_union_struct_results[0..],
@@ -430,6 +464,11 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_each_borrow_results[0..],
     },
     .{
+        .name = "each over ^path lends its element on; the callee's stores outlive the body (B057)",
+        .path = "./test/misc/each_borrow_lend_on.doxa",
+        .expected_print = answers.expected_each_borrow_lend_on_results[0..],
+    },
+    .{
         .name = "a callee emptying a borrowed global meets a bounds check",
         .path = "./test/misc/each_borrow_resized_global.doxa",
         .mode = .terminate,
@@ -480,6 +519,12 @@ const shared_cases = [_]Case{
         .name = "memory: a block reclaims its arena",
         .path = "./test/misc/memory/block_scope.doxa",
         .expected_print = answers.expected_memory_block_scope_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: a fresh value joins one a binding holds",
+        .path = "./test/misc/memory/join_fresh_with_held.doxa",
+        .expected_print = answers.expected_memory_join_fresh_with_held_results[0..],
         .pipelines = memory_pipelines,
     },
     .{
@@ -558,8 +603,8 @@ const shared_cases = [_]Case{
         .mode = .peek,
         .expected_peek = &[_]peek_result{
             .{ .type = ">string | Error", .value = "\"fine\"" },
-            .{ .type = "string | >Error", .value = "{ code: 13, path: \"/\" }" },
-            .{ .type = "IOError | >FileError", .value = "{ code: 2, path: \"/tmp\" }" },
+            .{ .type = "string | >Error", .value = "{ path: \"/\", code: 13 }" },
+            .{ .type = "IOError | >FileError", .value = "{ path: \"/tmp\", code: 2 }" },
         },
     },
     .{
@@ -770,6 +815,21 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "the generated ZigError enum is an ordinary std enum",
+        .path = "./test/misc/zerr_enum.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = ".AccessDenied" },
+        },
+    },
+    .{
+        .name = "a fallible Zig block returns the generated ZigError enum",
+        .path = "./test/misc/zerr_bridge.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "ok 7" },
+            .{ .value = "denied" },
+        },
+    },
+    .{
         .name = "intrinsics called postfix",
         .path = "./test/misc/intrinsic_postfix.doxa",
         .expected_print = &[_]print_result{
@@ -846,6 +906,56 @@ const shared_cases = [_]Case{
         .name = "inline zig error union",
         .path = "./test/misc/inline_zig_errors.doxa",
         .expected_print = answers.expected_inline_zig_errors_results[0..],
+    },
+    .{
+        .name = "a struct prints its fields in declaration order, strings quoted (B061, B062)",
+        .path = "./test/misc/struct_print_order.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "{ a: 1, b: \"x\", c: 2.5, d: .Cool, e: \"u\", f: { first: 7, second: \"y\" } }" },
+        },
+    },
+    .{
+        .name = "inline zig: a Zig function returns a Doxa struct",
+        .path = "./test/misc/inline_zig_structs.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "3 hello [\"a\", \"b\"] true 0x07 .High 2.5" },
+            .{ .value = "10 20 30" },
+            .{ .value = "1 2 3" },
+            .{ .value = "ran" },
+            .{ .value = "broken" },
+            .{ .value = "hello [\"a\", \"b\"]" },
+        },
+        // The struct and what it holds are built in the caller's arena and
+        // outlive the call: memcheck poisons every arena reclaimed under it.
+        .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "inline zig: a struct crosses only as a result",
+        .path = "./test/syntax/inline_zig_struct_param_error.doxa",
+        .mode = .reject,
+        .expect_error = "E8002",
+        .expect_stderr = "inline zig 'Z.status': a struct parameter is not supported yet; pass its fields",
+    },
+    .{
+        .name = "inline zig: DoxaStruct_ must name a struct",
+        .path = "./test/syntax/inline_zig_struct_names_enum_error.doxa",
+        .mode = .reject,
+        .expect_error = "E8002",
+        .expect_stderr = "`DoxaStruct_Color` names an enum, not a struct",
+    },
+    .{
+        .name = "inline zig: a crossing struct holds only plain data",
+        .path = "./test/syntax/inline_zig_struct_union_field_error.doxa",
+        .mode = .reject,
+        .expect_error = "E8002",
+        .expect_stderr = "field 'value' of struct 'Reply' has a type that cannot cross the boundary",
+    },
+    .{
+        .name = "inline zig: a struct from another file crosses only with public fields",
+        .path = "./test/misc/inline_zig_struct_private_error.doxa",
+        .mode = .reject,
+        .expect_error = "E8002",
+        .expect_stderr = "field 'hidden' of struct 'Sealed' is private to another file, so the wrapper cannot set it",
     },
     .{
         .name = "union nothing narrow",
@@ -1007,6 +1117,19 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "json writer recovery",
+        .path = "./test/misc/json_writer_recovery.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "refused inside an array: refused" },
+            .{ .value = "next document: [\"after\"]" },
+            .{ .value = "refused inside an object, left open: refused" },
+            .{ .value = "next document: 1" },
+            .{ .value = "refused at the top, then a write: refused" },
+            .{ .value = "next document: \"clean\"" },
+            .{ .value = "finish with nothing written: refused" },
+        },
+    },
+    .{
         .name = "http router",
         .path = "./test/misc/http_router.doxa",
         .expected_print = &[_]print_result{
@@ -1041,6 +1164,16 @@ const shared_cases = [_]Case{
             .{ .value = "download streaming ok" },
             .{ .value = "download filename ok" },
             .{ .value = "download status ok" },
+        },
+    },
+    .{
+        .name = "http: a client giving up mid-answer leaves stderr quiet (B058)",
+        .path = "./test/misc/http_cancel_quiet.doxa",
+        .mode = .peek,
+        .expected_peek = &[_]peek_result{
+            .{ .type = "tetra", .value = "true" },
+            .{ .type = "int", .value = "1" },
+            .{ .type = "int", .value = "1" },
         },
     },
     .{
@@ -2350,6 +2483,82 @@ const rejected_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E1031",
         .expect_stderr = "byte value out of range (must be 0-255) in a constant expression",
+    },
+    .{
+        .name = "@int of a float with no int faults",
+        .path = "./test/syntax/int_of_float_out_of_range.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at int_of_float_out_of_range.doxa:4:14",
+    },
+    .{
+        .name = "minInt // -1 faults as an overflow",
+        .path = "./test/misc/min_div_minus_one_fault.doxa",
+        .mode = .terminate,
+        .expect_code = 1,
+        .expect_stderr = "Integer overflow at min_div_minus_one_fault.doxa:12:12",
+    },
+    .{
+        .name = "minInt % -1 is 0, at run time as in a constant",
+        .path = "./test/misc/min_mod_minus_one.doxa",
+        .expected_print = answers.expected_min_mod_minus_one_results[0..],
+    },
+    .{
+        .name = "a match block arm ending in an if or a match keeps its value",
+        .path = "./test/syntax/match_arm_block_value_tails.doxa",
+        .expected_print = answers.expected_match_arm_block_value_tails_results[0..],
+    },
+    .{
+        .name = "an as with an inline then is that expression's value",
+        .path = "./test/syntax/as_then_inline_value.doxa",
+        .expected_print = answers.expected_as_then_inline_value_results[0..],
+    },
+    .{
+        .name = "a global whose constant overflows is still declared",
+        .path = "./test/syntax/constant_fault_global_overflow.doxa",
+        .mode = .reject,
+        .expect_error = "E1024",
+        .expect_stderr = "constant_fault_global_overflow.doxa:3:12: integer overflow in a constant expression",
+    },
+    .{
+        .name = "a global whose constant divides by zero is still declared",
+        .path = "./test/syntax/constant_fault_global_division.doxa",
+        .mode = .reject,
+        .expect_error = "E1036",
+        .expect_stderr = "constant_fault_global_division.doxa:3:12: division by zero in a constant expression",
+    },
+    .{
+        .name = "a local whose constant overflows is still declared",
+        .path = "./test/syntax/constant_fault_local_overflow.doxa",
+        .mode = .reject,
+        .expect_error = "E1024",
+        .expect_stderr = "constant_fault_local_overflow.doxa:4:16: integer overflow in a constant expression",
+    },
+    .{
+        .name = "a local whose constant divides by zero is still declared",
+        .path = "./test/syntax/constant_fault_local_division.doxa",
+        .mode = .reject,
+        .expect_error = "E1036",
+        .expect_stderr = "constant_fault_local_division.doxa:4:16: division by zero in a constant expression",
+    },
+    .{
+        .name = "an operation on a failed operand is poison",
+        .path = "./test/syntax/poison_operand_in_return.doxa",
+        .mode = .reject,
+        .expect_error = "E1007",
+        .expect_stderr = "poison_operand_in_return.doxa:4:16: Arithmetic requires numeric operands",
+    },
+    .{
+        .name = "every tetra operator agrees folded and at run time",
+        .path = "./test/misc/tetra_operator_tables.doxa",
+        .expected_print = answers.expected_tetra_operator_tables_results[0..],
+    },
+    .{
+        .name = "an as fallback must produce the inline then's type",
+        .path = "./test/syntax/as_then_fallback_type_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1003",
+        .expect_stderr = "as_then_fallback_type_error.doxa:8:16: Fallback for 'as' must produce type string, got int",
     },
     .{
         .name = "an unannotated empty concatenation has no element type",

@@ -37,22 +37,7 @@ fn parseExpressionStmtBody(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedExpression;
     }
 
-    const is_block_like = if (expr) |e| switch (e.data) {
-        .Block, .If, .Loop, .Peek, .Match => true,
-        .Cast => |c| (c.then_branch != null and c.then_branch.?.data == .Block) or
-            (c.else_branch != null and c.else_branch.?.data == .Block),
-        else => false,
-    } else false;
-
-    if (!is_block_like) {
-        self.expectEnd("the statement", &Parser.statement_end) catch |err| {
-            if (expr) |e| {
-                e.deinit(self.allocator);
-                self.allocator.destroy(e);
-            }
-            return err;
-        };
-    }
+    try endStatement(self, expr, "the statement");
 
     return ast.Stmt{
         .base = .{
@@ -62,6 +47,38 @@ fn parseExpressionStmtBody(self: *Parser) ErrorList!ast.Stmt {
         .data = .{
             .Expression = expr,
         },
+    };
+}
+
+/// An expression that ends at a closing brace: a block, `if`, loop, `match` or
+/// peek, or an `as` with a block branch. As a statement it needs no terminator.
+fn isBlockLike(e: *const ast.Expr) bool {
+    return switch (e.data) {
+        .Block, .If, .Loop, .Peek, .Match => true,
+        .Cast => |c| (c.then_branch != null and c.then_branch.?.data == .Block) or
+            (c.else_branch != null and c.else_branch.?.data == .Block),
+        else => false,
+    };
+}
+
+/// Ends the statement `expr` began, freeing `expr` when it does not end. A
+/// block-like statement needs no terminator but takes the line end that
+/// follows it, as `expectEnd` does for every other statement. Left behind, that
+/// newline would read as an empty statement of its own, and a block whose value
+/// is its last statement would find the empty one.
+fn endStatement(self: *Parser, expr: ?*ast.Expr, comptime what: []const u8) ErrorList!void {
+    if (expr) |e| {
+        if (isBlockLike(e)) {
+            while (self.peek().type == .NEWLINE) self.advance();
+            return;
+        }
+    }
+    self.expectEnd(what, &Parser.statement_end) catch |err| {
+        if (expr) |e| {
+            e.deinit(self.allocator);
+            self.allocator.destroy(e);
+        }
+        return err;
     };
 }
 
@@ -179,19 +196,7 @@ fn parseStatementBody(self: *Parser) ErrorList!ast.Stmt {
             const expr = try expression_parser.parseExpression(self);
 
             if (expr) |e| {
-                const is_block_like = switch (e.data) {
-                    .Block, .If, .Loop, .Peek, .Match => true,
-                    .Cast => |c| (c.then_branch != null and c.then_branch.?.data == .Block) or
-                        (c.else_branch != null and c.else_branch.?.data == .Block),
-                    else => false,
-                };
-                if (!is_block_like) {
-                    self.expectEnd("the defer", &Parser.statement_end) catch |err| {
-                        e.deinit(self.allocator);
-                        self.allocator.destroy(e);
-                        return err;
-                    };
-                }
+                try endStatement(self, e, "the defer");
 
                 break :blk ast.Stmt{
                     .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(defer_token) },

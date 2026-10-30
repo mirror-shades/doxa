@@ -21,7 +21,9 @@ pub fn arith(self: *FunctionEmitter, inst: *const ir.Inst, op: ir.ArithOp, lhs: 
                 .IntDiv => try flooredDiv(self, l, r, int_range.signFacts(lr, rr)),
                 .Mod => try flooredMod(self, l, r, int_range.signFacts(lr, rr)),
                 .Div => blk: {
-                    try divisorGuard(self, r, int_range.signFacts(lr, rr));
+                    const facts = int_range.signFacts(lr, rr);
+                    try divisorGuard(self, r, facts);
+                    try quotientGuard(self, l, r, facts);
                     break :blk try self.tmp("sdiv i64 {s}, {s}", .{ l, r });
                 },
                 .Pow => blk: {
@@ -117,6 +119,24 @@ pub fn divisorGuard(self: *FunctionEmitter, divisor: []const u8, facts: int_rang
     try self.enter(cont);
 }
 
+/// Fault with `Integer overflow` on minInt // -1, the one quotient with no
+/// `i64`, unless the ranges rule that pair out: `sdiv` must never see it.
+fn quotientGuard(self: *FunctionEmitter, dividend: []const u8, divisor: []const u8, facts: int_range.SignFacts) Error!void {
+    if (!facts.min_by_neg_one) return;
+    const by_neg_one = try self.tmp("icmp eq i64 {s}, -1", .{divisor});
+    const of_min = try self.tmp("icmp eq i64 {s}, -9223372036854775808", .{dividend});
+    try overflowGuard(self, try self.tmp("and i1 {s}, {s}", .{ by_neg_one, of_min }));
+}
+
+/// The divisor `srem` is given: -1 becomes 1 unless the ranges rule out
+/// minInt % -1. A remainder by either is 0, so nothing changes but that
+/// `srem`, undefined on minInt and -1, never sees them.
+fn remainderDivisor(self: *FunctionEmitter, divisor: []const u8, facts: int_range.SignFacts) Error![]const u8 {
+    if (!facts.min_by_neg_one) return divisor;
+    const by_neg_one = try self.tmp("icmp eq i64 {s}, -1", .{divisor});
+    return self.tmp("select i1 {s}, i64 1, i64 {s}", .{ by_neg_one, divisor });
+}
+
 pub fn correction(self: *FunctionEmitter, remainder: []const u8, dividend: []const u8, divisor: []const u8, dividend_sign_decided: bool) Error![]const u8 {
     const non_zero = try self.tmp("icmp ne i64 {s}, 0", .{remainder});
     const sign = if (dividend_sign_decided) dividend else try self.tmp("xor i64 {s}, {s}", .{ dividend, divisor });
@@ -137,11 +157,11 @@ pub fn flooredMod(self: *FunctionEmitter, dividend: []const u8, divisor: []const
         },
         .srem_bare => {
             try divisorGuard(self, divisor, facts);
-            return self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
+            return self.tmp("srem i64 {s}, {s}", .{ dividend, try remainderDivisor(self, divisor, facts) });
         },
         .fixup_dividend_sign, .fixup_general => {
             try divisorGuard(self, divisor, facts);
-            const residue = try self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
+            const residue = try self.tmp("srem i64 {s}, {s}", .{ dividend, try remainderDivisor(self, divisor, facts) });
             const cond = try correction(self, residue, dividend, divisor, int_range.planModulo(facts) == .fixup_dividend_sign);
             const adjust = try self.tmp("select i1 {s}, i64 {s}, i64 0", .{ cond, divisor });
             return self.tmp("add i64 {s}, {s}", .{ residue, adjust });
@@ -159,10 +179,12 @@ pub fn flooredDiv(self: *FunctionEmitter, dividend: []const u8, divisor: []const
         },
         .sdiv_bare => {
             try divisorGuard(self, divisor, facts);
+            try quotientGuard(self, dividend, divisor, facts);
             return self.tmp("sdiv i64 {s}, {s}", .{ dividend, divisor });
         },
         .fixup_dividend_sign, .fixup_general => {
             try divisorGuard(self, divisor, facts);
+            try quotientGuard(self, dividend, divisor, facts);
             const quotient = try self.tmp("sdiv i64 {s}, {s}", .{ dividend, divisor });
             const residue = try self.tmp("srem i64 {s}, {s}", .{ dividend, divisor });
             const cond = try correction(self, residue, dividend, divisor, int_range.planDiv(facts) == .fixup_dividend_sign);
@@ -184,7 +206,17 @@ pub fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) E
         },
         .Int => switch (from) {
             .Byte => try self.def(inst, "zext i8 {s} to i64", .{v}),
-            .Float => try self.def(inst, "fptosi double {s} to i64", .{v}),
+            // Truncated toward zero, a float has an int exactly when it lies in
+            // `[-2^63, 2^63)` (both ends are doubles, spelled exactly in hex);
+            // NaN fails both ordered compares and an infinity one. `fptosi` is
+            // undefined outside it.
+            .Float => {
+                const above = try self.tmp("fcmp oge double {s}, 0xC3E0000000000000", .{v});
+                const below = try self.tmp("fcmp olt double {s}, 0x43E0000000000000", .{v});
+                const fits = try self.tmp("and i1 {s}, {s}", .{ above, below });
+                try overflowGuard(self, try self.tmp("xor i1 {s}, true", .{fits}));
+                try self.def(inst, "fptosi double {s} to i64", .{v});
+            },
             else => return self.e.faultf("converts a {s} to an int", .{@tagName(from)}),
         },
         // A value with no byte faults like byte arithmetic leaving `[0, 255]`.
@@ -192,7 +224,7 @@ pub fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) E
             .Int => {
                 const range = self.ranges[@intFromEnum(operand)];
                 const fits = range.isNonNegative() and (if (range.konst) |c| c <= 255 else range.hi_known and range.hi <= 255);
-                if (!fits) try byteGuard(self, try self.tmp("icmp ugt i64 {s}, 255", .{v}));
+                if (!fits) try overflowGuard(self, try self.tmp("icmp ugt i64 {s}, 255", .{v}));
                 try self.def(inst, "trunc i64 {s} to i8", .{v});
             },
             // Truncated toward zero, so `(-1, 256)` has a byte; NaN fails
@@ -201,7 +233,7 @@ pub fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) E
                 const above = try self.tmp("fcmp ogt double {s}, -1.0", .{v});
                 const below = try self.tmp("fcmp olt double {s}, 256.0", .{v});
                 const fits = try self.tmp("and i1 {s}, {s}", .{ above, below });
-                try byteGuard(self, try self.tmp("xor i1 {s}, true", .{fits}));
+                try overflowGuard(self, try self.tmp("xor i1 {s}, true", .{fits}));
                 try self.def(inst, "fptoui double {s} to i8", .{v});
             },
             else => return self.e.faultf("converts a {s} to a byte", .{@tagName(from)}),
@@ -210,12 +242,12 @@ pub fn convert(self: *FunctionEmitter, inst: *const ir.Inst, operand: ValueId) E
     }
 }
 
-/// Fault with `Integer overflow` when `outside`, a conversion's verdict that
-/// its operand has no byte, holds.
-fn byteGuard(self: *FunctionEmitter, outside: []const u8) Error!void {
-    const trap = try self.split("byte.trap");
-    const cont = try self.split("byte.cont");
-    try self.line("br i1 {s}, label %{s}, label %{s}", .{ outside, trap, cont });
+/// Fault with `Integer overflow` when `overflows`, a verdict that a result has
+/// no value of its type, holds.
+fn overflowGuard(self: *FunctionEmitter, overflows: []const u8) Error!void {
+    const trap = try self.split("range.trap");
+    const cont = try self.split("range.cont");
+    try self.line("br i1 {s}, label %{s}, label %{s}", .{ overflows, trap, cont });
     try self.enter(trap);
     try self.fault(.overflow, null, "0", "0");
     try self.enter(cont);

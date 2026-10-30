@@ -1,0 +1,10 @@
+# Rejected: a struct crosses into Zig only as a result (plan/inline-zig-structs.md).
+struct Run { public status :: int }
+
+zig Z {
+    pub fn status(r: DoxaStruct_Run) i64 {
+        return r.status;
+    }
+}
+
+@print("{Z.status($Run { status is 1 })}\n")

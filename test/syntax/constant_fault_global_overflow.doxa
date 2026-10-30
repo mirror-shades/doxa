@@ -1,0 +1,5 @@
+# A constant initializer that overflows is one error (E1024). The name is
+# still declared, so its later uses earn no second error.
+const a is (-9223372036854775807 - 1) // -1
+const b is 1
+@print("{a} {b} {a + b}\n")

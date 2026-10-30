@@ -17,7 +17,10 @@ pub fn binary(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeInfo
     const left_type = try infer_type.inferTypeFromExpr(self, bin.left.?);
     const right_type = try infer_type.inferTypeFromExpr(self, bin.right.?);
     // A failed operand already has its error; the operation is poison too.
-    if (left_type.base == .Error or right_type.base == .Error) return;
+    if (left_type.base == .Error or right_type.base == .Error) {
+        type_info.* = .{ .base = .Error };
+        return;
+    }
     // `x == .Red`: a shorthand compared against an enum is its variant.
     if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL) {
         helpers.contextualizeEnumMember(self, bin.left.?, left_type, right_type);
@@ -383,7 +386,10 @@ pub fn logicalExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.Typ
     const logical = expr.data.Logical;
     const left_type = try infer_type.inferTypeFromExpr(self, logical.left);
     const right_type = try infer_type.inferTypeFromExpr(self, logical.right);
-    if (left_type.base == .Error or right_type.base == .Error) return;
+    if (left_type.base == .Error or right_type.base == .Error) {
+        type_info.* = .{ .base = .Error };
+        return;
+    }
 
     if (left_type.base != .Tetra or right_type.base != .Tetra) {
         self.reporter.reportCompileError(

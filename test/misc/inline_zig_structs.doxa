@@ -1,0 +1,79 @@
+# A Zig function returns a Doxa struct (plan/inline-zig-structs.md): the
+# wrapper declares its Zig mirror from the Doxa declaration, hands each field
+# back, and the struct is built in the caller's arena.
+enum Level { Low, High }
+enum Fail { Missing, Broken }
+
+struct Inner {
+    public level :: Level,
+    public weight :: float,
+}
+
+# Same-typed fields with distinct values, read by name, so a field landing in
+# its neighbour's place cannot pass.
+struct Order {
+    public a :: int,
+    public b :: int,
+    public c :: int,
+}
+
+struct Run {
+    public status :: int,
+    # Private: the struct is declared beside the `zig` block, so the wrapper
+    # sets it on this file's behalf.
+    out :: string,
+    public tags :: string[],
+    public ok :: tetra,
+    public flag :: byte,
+    public inner :: Inner,
+    public order :: Order,
+
+    public method output() returns string {
+        return this.out
+    }
+}
+
+zig Z {
+    pub fn run() DoxaStruct_Run {
+        return .{
+            .status = 3,
+            .out = "hello",
+            .tags = &.{ "a", "b" },
+            .ok = true,
+            .flag = 7,
+            .inner = .{ .level = 1, .weight = 2.5 },
+            .order = .{ .a = 10, .b = 20, .c = 30 },
+        };
+    }
+    pub fn tryRun(fail: bool) DoxaError_Fail!DoxaStruct_Run {
+        if (fail) return error.Broken;
+        return run();
+    }
+    pub fn order() DoxaStruct_Order {
+        return .{ .a = 1, .b = 2, .c = 3 };
+    }
+}
+
+# Returned from a function, the struct outlives the call's arena.
+function kept() returns Run {
+    const made is Z.run()
+    return made
+}
+
+const r is Z.run()
+@print("{r.status} {r.output()} {r.tags} {r.ok} {r.flag} {r.inner.level} {r.inner.weight}\n")
+@print("{r.order.a} {r.order.b} {r.order.c}\n")
+const o is Z.order()
+@print("{o.a} {o.b} {o.c}\n")
+match Z.tryRun(false) {
+    Fail.Missing then @print("missing\n"),
+    Fail.Broken then @print("broken\n"),
+    else @print("ran\n"),
+}
+match Z.tryRun(true) {
+    Fail.Missing then @print("missing\n"),
+    Fail.Broken then @print("broken\n"),
+    else @print("ran\n"),
+}
+const k is kept()
+@print("{k.output()} {k.tags}\n")

@@ -988,7 +988,14 @@ const Verifier = struct {
             .static, .root => true,
             .outer => self.arena_kind[@intFromEnum(self.baseOf(dest))].? == .caller,
             .arena => |a| blk: {
-                if (self.arena_kind[@intFromEnum(a)].? == .root) break :blk true;
+                switch (self.arena_kind[@intFromEnum(a)].?) {
+                    .root => break :blk true,
+                    // A `^` argument's arena outlives the call, so every
+                    // arena the function opens; against `@caller`, which
+                    // may outlive the lender, it is unordered.
+                    .alias => if (!self.isFunctionLevel(dest)) break :blk true,
+                    .caller, .held, .opened => {},
+                }
                 var d = dest;
                 while (true) {
                     if (d == a) break :blk true;
@@ -1010,6 +1017,9 @@ const Verifier = struct {
 
     /// The shorter-lived of two regions, or null when neither is sure to
     /// outlive the other.
+    // TODO: two caller-owned regions (a `^` argument's and a by-value
+    // parameter's, or two `^` arguments') are unordered, so a join of them
+    // still faults; both outlive every arena the function opens.
     fn meet(self: *const Verifier, a: Region, b: Region) ?Region {
         if (self.regionOutlives(a, b)) return b;
         if (self.regionOutlives(b, a)) return a;

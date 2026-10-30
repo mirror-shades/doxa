@@ -1,0 +1,7 @@
+# A failed operand makes the operation poison, not `nothing`: the return
+# below earns no second error beside the first (E1007).
+function f() returns int {
+    const q is "x" * 2
+    return q + 1
+}
+@print("{f()}\n")

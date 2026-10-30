@@ -1,0 +1,7 @@
+# Inside a function: an overflowing constant initializer is one error
+# (E1024), and the name it declares still types its uses.
+function f() returns int {
+    const q is 9223372036854775807 + 1
+    return q * 2
+}
+@print("{f()}\n")

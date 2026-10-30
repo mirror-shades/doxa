@@ -28,4 +28,5 @@ test {
     _ = @import("test_lsp_session.zig");
     _ = @import("test_profile_report.zig");
     _ = @import("test_redirect.zig");
+    _ = @import("test_shim_cache.zig");
 }

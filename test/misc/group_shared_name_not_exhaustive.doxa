@@ -1,0 +1,10 @@
+# Rejected: a non-exhaustive match names the uncovered member by its module
+# when its bare name is shared.
+module zerr from "./moddata/zerr/zerr.doxa"
+group ZigErr { zerr.fs.File.OpenError, zerr.fs.Dir.OpenError }
+function f(e :: ZigErr) returns int {
+    return match e {
+        zerr.fs.File.OpenError.* then 1,
+    }
+}
+@print("{f(zerr.fs.Dir.OpenError.NotDir)}\n")

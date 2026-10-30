@@ -1,0 +1,13 @@
+# A group-qualified variant is its member's value, typed as the member
+# (docs/groups.md 3.2, B063): it compares with a group value as the member
+# does, and widens into the group where one is expected.
+enum Num { Overflow, Underflow }
+enum Parse { Empty }
+group Failure { Num, Parse }
+
+const a :: Failure is Num.Overflow
+@print("{a == Num.Overflow} {a == Failure.Num.Overflow} {a == Failure.Num.Underflow}\n")
+@print("{Num.Overflow == Failure.Num.Overflow} {Failure.Overflow == Num.Overflow}\n")
+
+const widened :: Failure is Failure.Parse.Empty
+@print("{widened == Parse.Empty}\n")

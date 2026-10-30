@@ -292,6 +292,13 @@ fn parseAllowedType(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhi
         if (std.mem.startsWith(u8, tok.lexeme, "DoxaEnum_")) {
             return .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = tok.lexeme["DoxaEnum_".len..] } };
         }
+        // `DoxaStruct_<path>` names a Doxa struct, typed as Doxa types a
+        // declared struct (`.Custom`, resolved in analysis through the
+        // declaring file's bindings). It parses in either position so analysis
+        // can say why a parameter is refused (`plan/inline-zig-structs.md`).
+        if (std.mem.startsWith(u8, tok.lexeme, "DoxaStruct_")) {
+            return .{ .base = .Custom, .is_mutable = false, .custom_type = .{ .written = tok.lexeme["DoxaStruct_".len..] } };
+        }
         // `DoxaError_<path>!<payload>` is a fallible return: the function yields
         // either the payload or a variant of the named Doxa enum. It lowers to
         // `<payload> | <enum>`, so a call site is typed exactly as if Doxa had

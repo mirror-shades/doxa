@@ -1,0 +1,5 @@
+# @int of a float with no int faults; it never yields minInt.
+entry function main() {
+    var f is 1.0e300
+    @print("{@int(f)}\n")
+}

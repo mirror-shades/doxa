@@ -95,6 +95,12 @@ pub const IntRange = struct {
         return self.lo_known and self.lo > 0;
     }
 
+    /// True unless the range rules out the value `v`.
+    pub fn mayBe(self: IntRange, v: i64) bool {
+        if (self.konst) |c| return c == v;
+        return !(self.lo_known and self.lo > v) and !(self.hi_known and self.hi < v);
+    }
+
     /// True when the value provably cannot be positive.
     pub fn isNonPositive(self: IntRange) bool {
         if (self.konst) |c| return c <= 0;
@@ -240,6 +246,9 @@ pub const SignFacts = struct {
     rhs_nonneg: bool = false,
     /// The divisor provably cannot be zero, so the division needs no guard.
     rhs_nonzero: bool = false,
+    /// The operands may be minInt and -1, whose quotient has no `i64`. `sdiv`
+    /// and `srem` are undefined on that pair (x86 traps), so it needs a guard.
+    min_by_neg_one: bool = true,
 
     /// True when the divisor is statically known not to be zero, whether as an
     /// exact constant or from a strictly positive lower bound.
@@ -256,6 +265,7 @@ pub fn signFacts(lhs: IntRange, rhs: IntRange) SignFacts {
         .lhs_nonneg = lhs.isNonNegative(),
         .rhs_nonneg = rhs.isNonNegative(),
         .rhs_nonzero = rhs.isNonZero(),
+        .min_by_neg_one = lhs.mayBe(std.math.minInt(i64)) and rhs.mayBe(-1),
     };
 }
 

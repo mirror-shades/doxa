@@ -155,16 +155,14 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
     const enums = if (desc.field_enums) |p| p[0..field_count] else &[_]?*const abi.EnumDesc{};
     const fields: [*]const i64 = @ptrCast(@alignCast(@as(*anyopaque, @ptrFromInt(key))));
 
+    // Fields print in declaration order, each at the running word offset.
     try out.print("{{ ", .{});
-    var first: bool = true;
-    var word: usize = structs.structTotalWords(tags, field_count);
-    var idx: usize = field_count;
-    while (idx > 0) {
-        idx -= 1;
+    var word: usize = 0;
+    for (0..field_count) |idx| {
         const tag: u64 = if (idx < tags.len) tags[idx] else 255;
-        word -= structs.structFieldWordCount(tag);
+        defer word += structs.structFieldWordCount(tag);
         const bits: i64 = fields[word];
-        if (!first) try out.print(", ", .{});
+        if (idx != 0) try out.print(", ", .{});
 
         const name_slice: []const u8 = if (idx < names.len) blk: {
             if (names[idx]) |n| break :blk std.mem.span(n);
@@ -183,12 +181,12 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
         } else if (tag == 8 and idx < enums.len) {
             if (enums[idx]) |ed| try values.writeVariant(out, ed, bits) else try out.print("<enum:{d}>", .{bits});
         } else if (tag == 9) {
-            // Boxed union/group field: render the boxed %DoxaValue.
-            try writeValue(out, @ptrFromInt(@as(usize, @intCast(bits))));
+            // Boxed union/group field: rendered as a union element of an
+            // array is, so a string it holds is quoted like a string field.
+            try printValueElement(out, @ptrFromInt(@as(usize, @intCast(bits))));
         } else {
             try printTaggedBitsImpl(out, tag, bits);
         }
-        first = false;
     }
     try out.print(" }}", .{});
 }

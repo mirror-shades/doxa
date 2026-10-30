@@ -1,0 +1,1 @@
+public enum OpenError { FileNotFound, AccessDenied, IsDir }

@@ -225,6 +225,44 @@ pub const expected_as_fallback_diverges_results = [_]print_result{
     .{ .value = "42 kept 7" },
 };
 
+pub const expected_as_then_inline_value_results = [_]print_result{
+    .{ .value = "an int: 3 / nothing / 9 -1" },
+};
+
+pub const expected_match_arm_block_value_tails_results = [_]print_result{
+    .{ .value = "5 -2 -5 9 1101" },
+};
+
+/// `a b: and or xor iff nand nor implies == !=` for every operand pair, then
+/// `not`; printed once folded and once at run time.
+const tetra_operator_rows = [_]print_result{
+    .{ .value = "T T: T T F T F F T T F" },
+    .{ .value = "T F: F T T F T F F F T" },
+    .{ .value = "T B: T T F T F F T F T" },
+    .{ .value = "T N: F T T F T F F F T" },
+    .{ .value = "F T: F T T F T F T F T" },
+    .{ .value = "F F: F F F T T T T T F" },
+    .{ .value = "F B: F T T F T F T F T" },
+    .{ .value = "F N: F F F T T T T F T" },
+    .{ .value = "B T: T T F T F F T F T" },
+    .{ .value = "B F: F T T F T F F F T" },
+    .{ .value = "B B: T T F T F F T T F" },
+    .{ .value = "B N: F T T F T F F F T" },
+    .{ .value = "N T: F T T F T F T F T" },
+    .{ .value = "N F: F F F T T T T F T" },
+    .{ .value = "N B: F T T F T F T F T" },
+    .{ .value = "N N: F F F T T T T T F" },
+    .{ .value = "not: F T B N" },
+};
+
+pub const expected_tetra_operator_tables_results = tetra_operator_rows ++ tetra_operator_rows ++ [_]print_result{
+    .{ .value = "branch: else" },
+};
+
+pub const expected_min_mod_minus_one_results = [_]print_result{
+    .{ .value = "0 0 0 9223372036854775807 -9223372036854775808 1" },
+};
+
 pub const expected_group_equals_member_results = [_]print_result{
     .{ .value = "true false false true" },
     .{ .value = "true false true" },
@@ -334,11 +372,17 @@ pub const expected_each_borrow_results = [_]print_result{
     .{ .value = "40 [1, 1, 1]" },
 };
 
+pub const expected_each_borrow_lend_on_results = [_]print_result{
+    .{ .value = "2 [\"fresh 2\", \"pushed 2\"]" },
+    .{ .value = "3 [\"fresh 3\", \"pushed 3\"]" },
+    .{ .value = "4 [\"fresh 4\", \"pushed 4\"]" },
+};
+
 pub const expected_fixed_struct_field_array_results = [_]print_result{
     .{ .value = "1 2 3 6" },
     .{ .value = "30" },
     .{ .value = "102 104 106" },
-    .{ .value = "[{ y: 102, x: 1 }, { y: 104, x: 30 }, { y: 106, x: 5 }]" },
+    .{ .value = "[{ x: 1, y: 102 }, { x: 30, y: 104 }, { x: 5, y: 106 }]" },
     .{ .value = "0 0" },
 };
 
@@ -353,7 +397,7 @@ pub const expected_union_struct_field_results = [_]print_result{
     .{ .value = "1 1" },
     .{ .value = "7 7" },
     .{ .value = "5 7" },
-    .{ .value = "[{ y: 2, x: 1 }, { y: 0, x: 0 }]" },
+    .{ .value = "[{ x: 1, y: 2 }, { x: 0, y: 0 }]" },
 };
 
 pub const expected_fixed_struct_array_params_results = [_]print_result{
@@ -400,6 +444,33 @@ pub const expected_memory_block_scope_results = [_]print_result{
     .{ .value = "id-3!" },
     .{ .value = "early-5 small" },
     .{ .value = "[\"n0\", \"n1\", \"n2\", \"n3\"]" },
+};
+
+pub const expected_memory_join_fresh_with_held_results = [_]print_result{
+    .{ .value = "array ^ if: [5] [1, 2]" },
+    .{ .value = "array value if: [9] [6] [1, 2]" },
+    .{ .value = "array local if: [5] [1, 2]" },
+    .{ .value = "array global if: [9] [7] [1, 2]" },
+    .{ .value = "array ^ match: [5] [1, 2]" },
+    .{ .value = "array value match: [9] [6] [1, 2]" },
+    .{ .value = "array local match: [5] [1, 2]" },
+    .{ .value = "array global match: [9] [7] [1, 2]" },
+    .{ .value = "struct ^ if: [5] [1, 2]" },
+    .{ .value = "struct value if: [9] [6] [1, 2]" },
+    .{ .value = "struct local if: [5] [1, 2]" },
+    .{ .value = "struct global if: [9] [7] [1, 2]" },
+    .{ .value = "struct ^ match: [5] [1, 2]" },
+    .{ .value = "struct value match: [9] [6] [1, 2]" },
+    .{ .value = "struct local match: [5] [1, 2]" },
+    .{ .value = "struct global match: [9] [7] [1, 2]" },
+    .{ .value = "group ^ if: dot 5 line [1, 2]" },
+    .{ .value = "group value if: dot 6 dot 6 line [1, 2]" },
+    .{ .value = "group local if: dot 5 line [1, 2]" },
+    .{ .value = "group global if: dot 7 dot 7 line [1, 2]" },
+    .{ .value = "group ^ match: dot 5 line [1, 2]" },
+    .{ .value = "group value match: dot 6 dot 6 line [1, 2]" },
+    .{ .value = "group local match: dot 5 line [1, 2]" },
+    .{ .value = "group global match: dot 7 dot 7 line [1, 2]" },
 };
 
 pub const expected_float_compare_results = [_]print_result{
@@ -553,7 +624,7 @@ pub const expected_floored_arith_results = [_]print_result{
 
 pub const expected_descriptor_skip_results = [_]print_result{
     .{ .value = "2 3" },
-    .{ .value = "{ y: 8, x: 7 }" },
+    .{ .value = "{ x: 7, y: 8 }" },
     .{ .value = "1 4" },
 };
 
@@ -920,7 +991,7 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"true\"" },
     .{ .type = "string", .value = "\"both\"" },
     .{ .type = "string", .value = "\"nothing\"" },
-    .{ .type = "string", .value = "\"{ species: .DOG, name: \\\"Spot\\\" }\"" },
+    .{ .type = "string", .value = "\"{ name: \\\"Spot\\\", species: .DOG }\"" },
     .{ .type = "string", .value = "\"Spot\"" },
     .{ .type = "string", .value = "\".DOG\"" },
     .{ .type = "string", .value = "\"int\"" },
@@ -1330,7 +1401,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"M\"" },
     .{ .type = "byte", .value = "0x4D" },
     .{ .type = "int", .value = "1000" },
-    .{ .type = "Point", .value = "{ y: 2, x: 5 }" },
+    .{ .type = "Point", .value = "{ x: 5, y: 2 }" },
     .{ .type = "int", .value = "5" },
     .{ .type = "int", .value = "2" },
     .{ .type = "int", .value = "8" },
@@ -1407,7 +1478,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "Species", .value = ".PENGUIN" },
     .{ .type = "string", .value = "\"Nemo\"" },
     .{ .type = "Species", .value = ".WHALE" },
-    .{ .type = "Animal", .value = "{ name: \"Larry\", animal_type: .FROG }" },
+    .{ .type = "Animal", .value = "{ animal_type: .FROG, name: \"Larry\" }" },
     .{ .type = "string", .value = "\"Larry\"" },
     .{ .type = "int", .value = "3" },
     .{ .type = "int", .value = "779" },

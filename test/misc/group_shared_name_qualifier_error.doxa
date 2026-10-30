@@ -1,0 +1,6 @@
+# Rejected: two members share the bare name `OpenError`, so it names neither
+# through the group; each is named by its own path.
+module zerr from "./moddata/zerr/zerr.doxa"
+group ZigErr { zerr.fs.File.OpenError, zerr.fs.Dir.OpenError }
+const v is ZigErr.OpenError.AccessDenied
+@print("{v}\n")

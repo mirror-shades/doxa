@@ -1,0 +1,51 @@
+# Every binary tetra operator over all 16 operand pairs, and `not`, written
+# with literal operands (folded by the compiler) and then behind a call
+# (computed at run time). Both halves print the same rows: each binary
+# operator reads whether each side holds (`both` does, `neither` does not)
+# and answers `true` or `false`; `==` and `!=` compare the values themselves;
+# `not` keeps a contradiction (docs/tetras.md).
+# A row is `a b: and or xor iff nand nor implies == !=`.
+
+function show(t :: tetra) returns string {
+    if t == true then return "T"
+    if t == false then return "F"
+    if t == both then return "B"
+    return "N"
+}
+
+function id(t :: tetra) returns tetra {
+    return t
+}
+
+function row(a :: tetra, b :: tetra) {
+    @print("{show(a)} {show(b)}: {show(a and b)} {show(a or b)} {show(a xor b)} {show(a iff b)} {show(a nand b)} {show(a nor b)} {show(a implies b)} {show(a == b)} {show(a != b)}\n")
+}
+
+@print("T T: {show(true and true)} {show(true or true)} {show(true xor true)} {show(true iff true)} {show(true nand true)} {show(true nor true)} {show(true implies true)} {show(true == true)} {show(true != true)}\n")
+@print("T F: {show(true and false)} {show(true or false)} {show(true xor false)} {show(true iff false)} {show(true nand false)} {show(true nor false)} {show(true implies false)} {show(true == false)} {show(true != false)}\n")
+@print("T B: {show(true and both)} {show(true or both)} {show(true xor both)} {show(true iff both)} {show(true nand both)} {show(true nor both)} {show(true implies both)} {show(true == both)} {show(true != both)}\n")
+@print("T N: {show(true and neither)} {show(true or neither)} {show(true xor neither)} {show(true iff neither)} {show(true nand neither)} {show(true nor neither)} {show(true implies neither)} {show(true == neither)} {show(true != neither)}\n")
+@print("F T: {show(false and true)} {show(false or true)} {show(false xor true)} {show(false iff true)} {show(false nand true)} {show(false nor true)} {show(false implies true)} {show(false == true)} {show(false != true)}\n")
+@print("F F: {show(false and false)} {show(false or false)} {show(false xor false)} {show(false iff false)} {show(false nand false)} {show(false nor false)} {show(false implies false)} {show(false == false)} {show(false != false)}\n")
+@print("F B: {show(false and both)} {show(false or both)} {show(false xor both)} {show(false iff both)} {show(false nand both)} {show(false nor both)} {show(false implies both)} {show(false == both)} {show(false != both)}\n")
+@print("F N: {show(false and neither)} {show(false or neither)} {show(false xor neither)} {show(false iff neither)} {show(false nand neither)} {show(false nor neither)} {show(false implies neither)} {show(false == neither)} {show(false != neither)}\n")
+@print("B T: {show(both and true)} {show(both or true)} {show(both xor true)} {show(both iff true)} {show(both nand true)} {show(both nor true)} {show(both implies true)} {show(both == true)} {show(both != true)}\n")
+@print("B F: {show(both and false)} {show(both or false)} {show(both xor false)} {show(both iff false)} {show(both nand false)} {show(both nor false)} {show(both implies false)} {show(both == false)} {show(both != false)}\n")
+@print("B B: {show(both and both)} {show(both or both)} {show(both xor both)} {show(both iff both)} {show(both nand both)} {show(both nor both)} {show(both implies both)} {show(both == both)} {show(both != both)}\n")
+@print("B N: {show(both and neither)} {show(both or neither)} {show(both xor neither)} {show(both iff neither)} {show(both nand neither)} {show(both nor neither)} {show(both implies neither)} {show(both == neither)} {show(both != neither)}\n")
+@print("N T: {show(neither and true)} {show(neither or true)} {show(neither xor true)} {show(neither iff true)} {show(neither nand true)} {show(neither nor true)} {show(neither implies true)} {show(neither == true)} {show(neither != true)}\n")
+@print("N F: {show(neither and false)} {show(neither or false)} {show(neither xor false)} {show(neither iff false)} {show(neither nand false)} {show(neither nor false)} {show(neither implies false)} {show(neither == false)} {show(neither != false)}\n")
+@print("N B: {show(neither and both)} {show(neither or both)} {show(neither xor both)} {show(neither iff both)} {show(neither nand both)} {show(neither nor both)} {show(neither implies both)} {show(neither == both)} {show(neither != both)}\n")
+@print("N N: {show(neither and neither)} {show(neither or neither)} {show(neither xor neither)} {show(neither iff neither)} {show(neither nand neither)} {show(neither nor neither)} {show(neither implies neither)} {show(neither == neither)} {show(neither != neither)}\n")
+@print("not: {show(not true)} {show(not false)} {show(not both)} {show(not neither)}\n")
+
+const operands :: tetra[] is [true, false, both, neither]
+each a in operands {
+    each b in operands {
+        row(id(a), id(b))
+    }
+}
+@print("not: {show(not id(true))} {show(not id(false))} {show(not id(both))} {show(not id(neither))}\n")
+
+# `true and both` is `true`, so its negation takes `else`.
+if not (id(true) and id(both)) then @print("branch: then\n") else @print("branch: else\n")

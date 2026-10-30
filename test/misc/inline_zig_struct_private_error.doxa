@@ -1,0 +1,12 @@
+# Rejected: the wrapper fills a struct on behalf of the file declaring the
+# `zig` block, so a private field of a struct another file declares is out of
+# its reach.
+import Sealed from "./moddata/zig_private_struct.doxa"
+
+zig Z {
+    pub fn seal() DoxaStruct_Sealed {
+        return .{ .shown = 1, .hidden = 2 };
+    }
+}
+
+@print("{Z.seal()}\n")

@@ -1,0 +1,10 @@
+# Rejected: `DoxaStruct_<path>` must name a struct.
+enum Color { Red, Green }
+
+zig Z {
+    pub fn pick() DoxaStruct_Color {
+        return 0;
+    }
+}
+
+@print("{Z.pick()}\n")

@@ -1,0 +1,8 @@
+# The fallback must produce the inline `then`'s type, not the subject's.
+function maybe(n :: int) returns int | nothing {
+    if n > 0 then return n
+    return nothing
+}
+
+const u is maybe(3)
+const label is u as int then "an int" else 0

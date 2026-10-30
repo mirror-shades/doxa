@@ -72,7 +72,10 @@ pub fn indexExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeI
     const index = expr.data.Index;
     const array_type = try infer_type.inferTypeFromExpr(self, index.array);
     const index_type = try infer_type.inferTypeFromExpr(self, index.index);
-    if (array_type.base == .Error or index_type.base == .Error) return;
+    if (array_type.base == .Error or index_type.base == .Error) {
+        type_info.* = .{ .base = .Error };
+        return;
+    }
 
     if (array_type.base == .Array) {
         if (index_type.base != .Int) {

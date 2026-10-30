@@ -48,8 +48,9 @@ fn writeStdout(slice: []const u8) void {
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
     const stdout = &stdout_writer.interface;
-    _ = stdout.write(slice) catch return;
-    _ = stdout.flush() catch return;
+    // `write` may take only part of a slice longer than the buffer.
+    stdout.writeAll(slice) catch return;
+    stdout.flush() catch return;
 }
 
 pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: u64) callconv(.c) void {

@@ -1,0 +1,48 @@
+# A match block arm's value is its last expression whatever that expression
+# starts with: an `if` or a `match` there is the arm's value, as `y * 2` is.
+# A block-like statement elsewhere in a block still ends where it did.
+enum K { A, B }
+
+function declThenIf(k :: K, x :: int) returns int {
+    return match k {
+        .A then x,
+        .B then {
+            const y is x + 1
+            if y > 3 then y else 0 - y
+        }
+    }
+}
+
+function onlyIf(k :: K, x :: int) returns int {
+    return match k {
+        .A then x,
+        .B then {
+            if x > 3 then x else 0 - x
+        }
+    }
+}
+
+function matchTail(k :: K, x :: int) returns int {
+    return match k {
+        .A then x,
+        .B then {
+            const y is x + 1
+            match k { .A then y, .B then 0 - y }
+        }
+    }
+}
+
+function statements(x :: int) returns int {
+    var n is 0
+    if x > 0 then {
+        n is n + 1
+    }
+    match x {
+        0 then n is n + 10,
+        else n is n + 100,
+    }
+    n is n + 1000
+    return n
+}
+
+@print("{declThenIf(K.B, 4)} {onlyIf(K.B, 2)} {matchTail(K.B, 4)} {declThenIf(K.A, 9)} {statements(1)}\n")

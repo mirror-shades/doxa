@@ -1,0 +1,271 @@
+# A join of a fresh value with one a binding holds, as an `if` and as a
+# `match`, for a `^` parameter, a by-value parameter, a local and a global,
+# over an array, a struct and a group. A `^` argument's arena outlives every
+# arena the function opens, so each join has one region (docs/alias.md); the
+# value a binding holds is still a copy (docs/memory.md), so writing through
+# the result leaves its source alone.
+
+struct Box { public xs :: int[] }
+struct Dot { public n :: int }
+struct Line { public pts :: int[] }
+group Shape { Dot, Line }
+
+function freshArr() returns int[] {
+    return [1, 2]
+}
+
+function freshBox() returns Box {
+    return $Box { xs is [1, 2] }
+}
+
+function freshShape() returns Shape {
+    return $Line { pts is [1, 2] }
+}
+
+function shape(s :: Shape) returns string {
+    return match s {
+        Dot { n } then "dot {n}",
+        Line { pts } then "line {pts}",
+    }
+}
+
+var g_arr :: int[] is [7]
+var g_box :: Box is $Box { xs is [7] }
+var g_shape :: Shape is $Dot { n is 7 }
+
+function arrAliasIf(^a :: int[], k :: int) {
+    const next is if k == 0 then freshArr() else a
+    a is next
+}
+
+function arrValueIf(a :: int[], k :: int) returns int[] {
+    const next is if k == 0 then freshArr() else a
+    return next
+}
+
+function arrLocalIf(k :: int) returns int[] {
+    var a :: int[] is [5]
+    const next is if k == 0 then freshArr() else a
+    return next
+}
+
+function arrGlobalIf(k :: int) returns int[] {
+    const next is if k == 0 then freshArr() else g_arr
+    return next
+}
+
+function arrAliasMatch(^a :: int[], k :: int) {
+    const next is match k {
+        0 then freshArr(),
+        else a,
+    }
+    a is next
+}
+
+function arrValueMatch(a :: int[], k :: int) returns int[] {
+    const next is match k {
+        0 then freshArr(),
+        else a,
+    }
+    return next
+}
+
+function arrLocalMatch(k :: int) returns int[] {
+    var a :: int[] is [5]
+    const next is match k {
+        0 then freshArr(),
+        else a,
+    }
+    return next
+}
+
+function arrGlobalMatch(k :: int) returns int[] {
+    const next is match k {
+        0 then freshArr(),
+        else g_arr,
+    }
+    return next
+}
+
+function boxAliasIf(^a :: Box, k :: int) {
+    const next is if k == 0 then freshBox() else a
+    a is next
+}
+
+function boxValueIf(a :: Box, k :: int) returns Box {
+    const next is if k == 0 then freshBox() else a
+    return next
+}
+
+function boxLocalIf(k :: int) returns Box {
+    var a :: Box is $Box { xs is [5] }
+    const next is if k == 0 then freshBox() else a
+    return next
+}
+
+function boxGlobalIf(k :: int) returns Box {
+    const next is if k == 0 then freshBox() else g_box
+    return next
+}
+
+function boxAliasMatch(^a :: Box, k :: int) {
+    const next is match k {
+        0 then freshBox(),
+        else a,
+    }
+    a is next
+}
+
+function boxValueMatch(a :: Box, k :: int) returns Box {
+    const next is match k {
+        0 then freshBox(),
+        else a,
+    }
+    return next
+}
+
+function boxLocalMatch(k :: int) returns Box {
+    var a :: Box is $Box { xs is [5] }
+    const next is match k {
+        0 then freshBox(),
+        else a,
+    }
+    return next
+}
+
+function boxGlobalMatch(k :: int) returns Box {
+    const next is match k {
+        0 then freshBox(),
+        else g_box,
+    }
+    return next
+}
+
+function shapeAliasIf(^a :: Shape, k :: int) {
+    const next is if k == 0 then freshShape() else a
+    a is next
+}
+
+function shapeValueIf(a :: Shape, k :: int) returns Shape {
+    const next is if k == 0 then freshShape() else a
+    return next
+}
+
+function shapeLocalIf(k :: int) returns Shape {
+    var a :: Shape is $Dot { n is 5 }
+    const next is if k == 0 then freshShape() else a
+    return next
+}
+
+function shapeGlobalIf(k :: int) returns Shape {
+    const next is if k == 0 then freshShape() else g_shape
+    return next
+}
+
+function shapeAliasMatch(^a :: Shape, k :: int) {
+    const next is match k {
+        0 then freshShape(),
+        else a,
+    }
+    a is next
+}
+
+function shapeValueMatch(a :: Shape, k :: int) returns Shape {
+    const next is match k {
+        0 then freshShape(),
+        else a,
+    }
+    return next
+}
+
+function shapeLocalMatch(k :: int) returns Shape {
+    var a :: Shape is $Dot { n is 5 }
+    const next is match k {
+        0 then freshShape(),
+        else a,
+    }
+    return next
+}
+
+function shapeGlobalMatch(k :: int) returns Shape {
+    const next is match k {
+        0 then freshShape(),
+        else g_shape,
+    }
+    return next
+}
+
+var arr_lent_if :: int[] is [5]
+arrAliasIf(^arr_lent_if, 1)
+@print("array ^ if: {arr_lent_if} ")
+arrAliasIf(^arr_lent_if, 0)
+@print("{arr_lent_if}\n")
+var arr_mine_if :: int[] is [6]
+var arr_got_if is arrValueIf(arr_mine_if, 1)
+arr_got_if[0] is 9
+@print("array value if: {arr_got_if} {arr_mine_if} {arrValueIf(arr_mine_if, 0)}\n")
+@print("array local if: {arrLocalIf(1)} {arrLocalIf(0)}\n")
+var arr_copy_if is arrGlobalIf(1)
+arr_copy_if[0] is 9
+@print("array global if: {arr_copy_if} {g_arr} {arrGlobalIf(0)}\n")
+var arr_lent_match :: int[] is [5]
+arrAliasMatch(^arr_lent_match, 1)
+@print("array ^ match: {arr_lent_match} ")
+arrAliasMatch(^arr_lent_match, 0)
+@print("{arr_lent_match}\n")
+var arr_mine_match :: int[] is [6]
+var arr_got_match is arrValueMatch(arr_mine_match, 1)
+arr_got_match[0] is 9
+@print("array value match: {arr_got_match} {arr_mine_match} {arrValueMatch(arr_mine_match, 0)}\n")
+@print("array local match: {arrLocalMatch(1)} {arrLocalMatch(0)}\n")
+var arr_copy_match is arrGlobalMatch(1)
+arr_copy_match[0] is 9
+@print("array global match: {arr_copy_match} {g_arr} {arrGlobalMatch(0)}\n")
+var box_lent_if :: Box is $Box { xs is [5] }
+boxAliasIf(^box_lent_if, 1)
+@print("struct ^ if: {box_lent_if.xs} ")
+boxAliasIf(^box_lent_if, 0)
+@print("{box_lent_if.xs}\n")
+var box_mine_if :: Box is $Box { xs is [6] }
+var box_got_if is boxValueIf(box_mine_if, 1)
+box_got_if.xs[0] is 9
+@print("struct value if: {box_got_if.xs} {box_mine_if.xs} {boxValueIf(box_mine_if, 0).xs}\n")
+@print("struct local if: {boxLocalIf(1).xs} {boxLocalIf(0).xs}\n")
+var box_copy_if is boxGlobalIf(1)
+box_copy_if.xs[0] is 9
+@print("struct global if: {box_copy_if.xs} {g_box.xs} {boxGlobalIf(0).xs}\n")
+var box_lent_match :: Box is $Box { xs is [5] }
+boxAliasMatch(^box_lent_match, 1)
+@print("struct ^ match: {box_lent_match.xs} ")
+boxAliasMatch(^box_lent_match, 0)
+@print("{box_lent_match.xs}\n")
+var box_mine_match :: Box is $Box { xs is [6] }
+var box_got_match is boxValueMatch(box_mine_match, 1)
+box_got_match.xs[0] is 9
+@print("struct value match: {box_got_match.xs} {box_mine_match.xs} {boxValueMatch(box_mine_match, 0).xs}\n")
+@print("struct local match: {boxLocalMatch(1).xs} {boxLocalMatch(0).xs}\n")
+var box_copy_match is boxGlobalMatch(1)
+box_copy_match.xs[0] is 9
+@print("struct global match: {box_copy_match.xs} {g_box.xs} {boxGlobalMatch(0).xs}\n")
+var shape_lent_if :: Shape is $Dot { n is 5 }
+shapeAliasIf(^shape_lent_if, 1)
+@print("group ^ if: {shape(shape_lent_if)} ")
+shapeAliasIf(^shape_lent_if, 0)
+@print("{shape(shape_lent_if)}\n")
+var shape_mine_if :: Shape is $Dot { n is 6 }
+var shape_got_if is shapeValueIf(shape_mine_if, 1)
+@print("group value if: {shape(shape_got_if)} {shape(shape_mine_if)} {shape(shapeValueIf(shape_mine_if, 0))}\n")
+@print("group local if: {shape(shapeLocalIf(1))} {shape(shapeLocalIf(0))}\n")
+var shape_copy_if is shapeGlobalIf(1)
+@print("group global if: {shape(shape_copy_if)} {shape(g_shape)} {shape(shapeGlobalIf(0))}\n")
+var shape_lent_match :: Shape is $Dot { n is 5 }
+shapeAliasMatch(^shape_lent_match, 1)
+@print("group ^ match: {shape(shape_lent_match)} ")
+shapeAliasMatch(^shape_lent_match, 0)
+@print("{shape(shape_lent_match)}\n")
+var shape_mine_match :: Shape is $Dot { n is 6 }
+var shape_got_match is shapeValueMatch(shape_mine_match, 1)
+@print("group value match: {shape(shape_got_match)} {shape(shape_mine_match)} {shape(shapeValueMatch(shape_mine_match, 0))}\n")
+@print("group local match: {shape(shapeLocalMatch(1))} {shape(shapeLocalMatch(0))}\n")
+var shape_copy_match is shapeGlobalMatch(1)
+@print("group global match: {shape(shape_copy_match)} {shape(g_shape)} {shape(shapeGlobalMatch(0))}\n")

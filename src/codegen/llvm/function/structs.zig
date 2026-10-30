@@ -64,17 +64,21 @@ pub fn fieldPtr(self: *FunctionEmitter, object: []const u8, id: ir.StructId, wor
 
 pub fn structNew(self: *FunctionEmitter, inst: *const ir.Inst, arena: ValueId, fields: []const ValueId) Error!void {
     const id = self.f.typeOf(inst.result.?).doxa.Struct;
-    const field_types = self.e.layout.struct_fields[id];
-    if (self.e.layout.skip_descriptor[id]) {
-        const words = @max(1, layout.structWords(field_types));
-        try self.def(inst, "call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ self.name(arena), words * 8 });
-    } else {
-        try self.def(inst, "call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ self.name(arena), try self.e.structDesc(id) });
-    }
-    const object = self.name(inst.result.?);
-    for (fields, field_types, 0..) |v, t, i| {
+    const object = try newStruct(self, self.name(arena), id);
+    self.names[@intFromEnum(inst.result.?)] = object;
+    for (fields, self.e.layout.struct_fields[id], 0..) |v, t, i| {
         try storeField(self, object, self.name(arena), id, @intCast(i), t, self.name(v));
     }
+}
+
+/// A struct of `id` in `arena`, its fields still to be stored: what a struct
+/// literal and a struct crossing from Zig (`calls.zigStruct`) both build.
+pub fn newStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId) Error![]const u8 {
+    if (self.e.layout.skip_descriptor[id]) {
+        const words = @max(1, layout.structWords(self.e.layout.struct_fields[id]));
+        return self.tmp("call ptr @doxa_scope_alloc(ptr {s}, i64 {d}, i64 8)", .{ arena, words * 8 });
+    }
+    return self.tmp("call ptr @doxa_struct_new(ptr {s}, ptr {s})", .{ arena, try self.e.structDesc(id) });
 }
 
 /// Store `v` into field `index` of `object`, which lives in `scope`: a

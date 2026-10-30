@@ -2,6 +2,7 @@ const std = @import("std");
 const ir = @import("../../hir/register/ir.zig");
 const rt = @import("../../../runtime/doxa_rt.zig");
 const layout = @import("../layout.zig");
+const structs = @import("structs.zig");
 const FunctionEmitter = @import("../function.zig").FunctionEmitter;
 const Error = @import("../function.zig").Error;
 const HIRType = ir.HIRType;
@@ -54,6 +55,13 @@ pub fn callZig(self: *FunctionEmitter, inst: *const ir.Inst, callee: ir.ZigFunct
     const sep = if (text.items.len == 0) "" else ", ";
     switch (sig.ret) {
         .Nothing => try self.line("call void {s}({s})", .{ symbol, text.items }),
+        .Struct => |id| {
+            var slots: std.ArrayListUnmanaged(LeafSlot) = .empty;
+            try leafSlots(self, id, &slots);
+            try self.line("call void {s}({s}{s}{s})", .{ symbol, text.items, sep, try leafArgs(self, slots.items) });
+            var cursor: usize = 0;
+            self.names[@intFromEnum(inst.result.?)] = try zigStruct(self, callerArena(self, args, sig.roles), id, slots.items, &cursor);
+        },
         .String => {
             const slots = try self.stringSlots();
             try self.line("call void {s}({s}{s}ptr {s}, ptr {s})", .{ symbol, text.items, sep, slots.ptr, slots.len });
@@ -63,15 +71,79 @@ pub fn callZig(self: *FunctionEmitter, inst: *const ir.Inst, callee: ir.ZigFunct
             const b = try self.tmp("call i1 {s}({s})", .{ symbol, text.items });
             try self.def(inst, "zext i1 {s} to i2", .{b});
         },
-        .Union => try fallibleZig(self, inst, symbol, text.items, sig.ret),
+        .Union => try fallibleZig(self, inst, symbol, text.items, sig.ret, args, sig.roles),
         else => try self.def(inst, "call {s} {s}({s})", .{ layout.doxaType(sig.ret), symbol, text.items }),
     }
+}
+
+// ── Structs crossing from Zig ──
+//
+// A Zig function returning a struct hands back each leaf field (a nested
+// struct's fields in turn, depth-first in declaration order) through an
+// out-parameter of its own, the order `inline_zig.appendStructLeaves` writes
+// them in. The struct is built here, the way a struct literal is, so its
+// layout stays the emitter's alone (`plan/inline-zig-structs.md`).
+
+/// The slot a leaf comes back through: a string's is a `(ptr, len)` pair.
+const LeafSlot = struct { at: []const u8, len: ?[]const u8 = null };
+
+fn leafSlots(self: *FunctionEmitter, id: ir.StructId, slots: *std.ArrayListUnmanaged(LeafSlot)) Error!void {
+    for (self.e.layout.struct_fields[id]) |t| switch (t) {
+        .Struct => |inner| try leafSlots(self, inner, slots),
+        .String => try slots.append(self.e.alloc, .{ .at = try self.alloca("ptr"), .len = try self.alloca("i64") }),
+        // A tetra comes back as a Zig `bool`, a byte in memory.
+        .Byte, .Tetra => try slots.append(self.e.alloc, .{ .at = try self.alloca("i8") }),
+        .Float => try slots.append(self.e.alloc, .{ .at = try self.alloca("double") }),
+        .Array => try slots.append(self.e.alloc, .{ .at = try self.alloca("ptr") }),
+        .Int, .Enum => try slots.append(self.e.alloc, .{ .at = try self.alloca("i64") }),
+        else => return self.e.faultf("a {s} field cannot cross from Zig", .{@tagName(t)}),
+    };
+}
+
+fn leafArgs(self: *FunctionEmitter, slots: []const LeafSlot) Error![]const u8 {
+    var text: std.ArrayListUnmanaged(u8) = .empty;
+    for (slots, 0..) |slot, i| {
+        if (i != 0) try text.appendSlice(self.e.alloc, ", ");
+        try text.print(self.e.alloc, "ptr {s}", .{slot.at});
+        if (slot.len) |len| try text.print(self.e.alloc, ", ptr {s}", .{len});
+    }
+    return text.items;
+}
+
+/// The arena a Zig call builds its heap result in: the hidden first argument
+/// (`inline_zig.takesArena`), which every struct result takes.
+fn callerArena(self: *FunctionEmitter, args: []const ValueId, roles: []const ir.ParamRole) []const u8 {
+    for (args, roles) |a, role| {
+        if (role == .caller_arena) return self.name(a);
+    }
+    unreachable;
+}
+
+/// The struct `id` in `arena`, its fields read from `slots` from `cursor` on.
+fn zigStruct(self: *FunctionEmitter, arena: []const u8, id: ir.StructId, slots: []const LeafSlot, cursor: *usize) Error![]const u8 {
+    const object = try structs.newStruct(self, arena, id);
+    for (self.e.layout.struct_fields[id], 0..) |t, i| {
+        const v = switch (t) {
+            .Struct => |inner| try zigStruct(self, arena, inner, slots, cursor),
+            else => blk: {
+                const slot = slots[cursor.*];
+                cursor.* += 1;
+                break :blk switch (t) {
+                    .String => try self.loadString(slot.at, slot.len.?),
+                    .Tetra => try self.tmp("zext i1 {s} to i2", .{try self.tmp("trunc i8 {s} to i1", .{try self.tmp("load i8, ptr {s}", .{slot.at})})}),
+                    else => try self.tmp("load {s}, ptr {s}", .{ layout.doxaType(t), slot.at }),
+                };
+            },
+        };
+        try structs.storeField(self, object, arena, id, @intCast(i), t, v);
+    }
+    return object;
 }
 
 /// A fallible Zig call (`DoxaError_<path>!<payload>`): the wrapper
 /// returns -1 on success, else the error's variant, and writes a payload
 /// through out-parameters. The result is the union, boxed either way.
-pub fn fallibleZig(self: *FunctionEmitter, inst: *const ir.Inst, symbol: []const u8, args: []const u8, result_type: HIRType) Error!void {
+pub fn fallibleZig(self: *FunctionEmitter, inst: *const ir.Inst, symbol: []const u8, args: []const u8, result_type: HIRType, values: []const ValueId, roles: []const ir.ParamRole) Error!void {
     var error_index: u32 = 0;
     var payload_index: u32 = 0;
     var payload: HIRType = .Nothing;
@@ -100,6 +172,27 @@ pub fn fallibleZig(self: *FunctionEmitter, inst: *const ir.Inst, symbol: []const
             try self.line("store {s} {s}, ptr {s}", .{ if (payload == .Int) "i64" else "ptr", if (payload == .Int) "0" else "null", slot });
             const r = try self.tmp("call i64 {s}({s}{s}ptr {s})", .{ symbol, args, sep, slot });
             word = if (payload == .Int) try self.tmp("load i64, ptr {s}", .{slot}) else try self.tmp("ptrtoint ptr {s} to i64", .{try self.tmp("load ptr, ptr {s}", .{slot})});
+            break :blk r;
+        },
+        // The struct is built only on success: a failed call leaves its
+        // leaves unwritten, and builds nothing in the caller's arena.
+        .Struct => |id| blk: {
+            var slots: std.ArrayListUnmanaged(LeafSlot) = .empty;
+            try leafSlots(self, id, &slots);
+            const r = try self.tmp("call i64 {s}({s}{s}{s})", .{ symbol, args, sep, try leafArgs(self, slots.items) });
+            const ok = try self.tmp("icmp eq i64 {s}, -1", .{r});
+            const failed_from = self.label;
+            const build = try self.split("zig.struct");
+            const join = try self.split("zig.joined");
+            try self.line("br i1 {s}, label %{s}, label %{s}", .{ ok, build, join });
+            try self.enter(build);
+            var cursor: usize = 0;
+            const object = try zigStruct(self, callerArena(self, values, roles), id, slots.items, &cursor);
+            const bits = try self.tmp("ptrtoint ptr {s} to i64", .{object});
+            const built_from = self.label;
+            try self.line("br label %{s}", .{join});
+            try self.enter(join);
+            word = try self.tmp("phi i64 [ {s}, %{s} ], [ 0, %{s} ]", .{ bits, built_from, failed_from });
             break :blk r;
         },
         else => return self.e.faultf("a fallible Zig call has an unsupported {s} payload", .{@tagName(payload)}),

@@ -8,6 +8,7 @@ const builtin = @import("builtin");
 const testing = std.testing;
 
 const harness = @import("harness.zig");
+const process = @import("process.zig");
 
 /// Compiles `source` with `opt` and returns the emitted (unoptimized)
 /// `<stem>.ll`. The unoptimized artifact is what shows the shape the emitter
@@ -720,6 +721,35 @@ test "param effects: a parameter lent as ^ is copied only if the callee writes t
     try testing.expect(std.mem.indexOf(u8, relay, "@doxa_array_clone") != null);
 }
 
+// The element of `each n in ^path` lent on as `^` shares the element (B057):
+// the call's temporary lives in the array's arena, so the write-back after
+// the call keeps the element as it is, with no copy per call.
+const eachLendSource =
+    \\struct Item { public count :: int, public names :: string[] }
+    \\function bump(^it :: Item) { it.count += 1 }
+    \\function bumpAll(n :: int) returns int {
+    \\    var items :: Item[] is [$Item { count is n, names is ["a"] }]
+    \\    each it in ^items { bump(^it) }
+    \\    return items[0].count
+    \\}
+    \\public entry function main() {
+    \\    @print("{bumpAll(1)}\n")
+    \\}
+;
+
+test "each over ^path: lending the element on copies nothing" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, eachLendSource, "--opt=0");
+    defer allocator.free(ir_text);
+
+    const body = functionBody(ir_text, "bumpAll") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, body, "_clone") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "rehome") == null);
+}
+
 test "module: every function carries the tune-cpu attribute group" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1218,8 +1248,26 @@ const globalFaultSource =
     \\}
 ;
 
+/// Recursion with no end: the call is not in tail position, so no
+/// optimization turns it into a loop.
+const overflowSource =
+    \\function down(n :: int) returns int {
+    \\    return down(n + 1) + 1
+    \\}
+    \\
+    \\entry function main() {
+    \\    @print("{down(0)}")
+    \\}
+;
+
 /// Runs `source` with `flags` through `doxa run` and returns its stderr.
 fn runFault(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8, flags: []const []const u8) ![]u8 {
+    const run = try runFaultStatus(allocator, tmp, source, flags);
+    return run.stderr;
+}
+
+/// `runFault`, with how the run ended.
+fn runFaultStatus(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8, flags: []const []const u8) !struct { stderr: []u8, end: @FieldType(process.Capture, "end") } {
     const io = testing.io;
     try tmp.dir.writeFile(io, .{ .sub_path = "probe.doxa", .data = source });
     const slot: harness.Slot = try .claim(allocator, io, "probe");
@@ -1234,7 +1282,7 @@ fn runFault(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []co
     defer allocator.free(args);
     const capture = try doxa.run(allocator, io, .{ .args = args, .cwd = cwd });
     defer capture.deinit(allocator);
-    return allocator.dupe(u8, capture.stderr);
+    return .{ .stderr = try allocator.dupe(u8, capture.stderr), .end = capture.end };
 }
 
 test "fault: with debug info a backtrace names each Doxa frame, under --strip the line alone" {
@@ -1307,6 +1355,99 @@ test "fault: with debug info a backtrace names each Doxa frame, under --strip th
     defer allocator.free(bare);
     try testing.expect(std.mem.indexOf(u8, bare, "doxa_enable_backtrace") == null);
     try testing.expect(std.mem.indexOf(u8, bare, "__doxa_enter") == null);
+}
+
+test "fault: a stack overflow is a fault with a bounded, folded backtrace" {
+    // Each platform traps differently: Windows raises EXCEPTION_STACK_OVERFLOW
+    // to a vectored handler, Linux and macOS a SIGSEGV or SIGBUS told apart by
+    // its address (`fault.handleSegfault`). The fault is the same on all of
+    // them, so CI's runners check each.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+    const headline = "Stack overflow\n";
+
+    const plain = try runFaultStatus(allocator, &tmp, overflowSource, &.{"--strip"});
+    defer allocator.free(plain.stderr);
+    try testing.expectEqualStrings(headline, plain.stderr);
+    try testing.expect(plain.end == .exited and plain.end.exited == 1);
+
+    // In every runtime mode: the trace is the one frame, folded, cut at the
+    // bound. The innermost frame may stand at the function's entry rather
+    // than its call, so a second frame of `down` may print before the fold.
+    for ([_][]const u8{ "--opt-mode=debug", "--opt-mode=fast" }) |mode| {
+        const traced = try runFaultStatus(allocator, &tmp, overflowSource, &.{ "-O0", mode });
+        defer allocator.free(traced.stderr);
+        errdefer std.debug.print("{s}:\n{s}", .{ mode, traced.stderr });
+        try testing.expect(traced.end == .exited and traced.end.exited == 1);
+        try testing.expectStringStartsWith(traced.stderr, headline);
+        try testing.expectStringEndsWith(traced.stderr, "  ... more frames not shown\n");
+        var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, traced.stderr[headline.len..], "\n"), '\n');
+        var frames: usize = 0;
+        var folded: usize = 0;
+        while (lines.next()) |line| {
+            if (std.mem.startsWith(u8, line, "  in down at probe.doxa:")) {
+                frames += 1;
+            } else if (std.mem.startsWith(u8, line, "  ... the frame above ")) {
+                try testing.expectStringEndsWith(line, " more times");
+                const count = line["  ... the frame above ".len .. line.len - " more times".len];
+                folded += try std.fmt.parseInt(usize, count, 10);
+            } else {
+                try testing.expectEqualStrings("  ... more frames not shown", line);
+            }
+        }
+        try testing.expect(frames >= 1 and frames <= 2);
+        try testing.expectEqual(@as(usize, 64), frames + folded);
+    }
+}
+
+/// A bad access in an inline `zig` block: a crash, not a fault.
+const crashSource =
+    \\zig Crash {
+    \\    pub fn now() void {
+    \\        const p: *volatile u8 = @ptrFromInt(0x10);
+    \\        p.* = 1;
+    \\    }
+    \\}
+    \\
+    \\entry function main() {
+    \\    Crash.now()
+    \\}
+;
+
+test "fault: a crash prints its line and Doxa frames, then ends with the platform's status" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+    const headline = "Invalid memory access at address 0x10\n";
+
+    // `doxa run` names how the program ended, and exits 1 for any crash.
+    const ending = if (builtin.os.tag == .windows)
+        "doxa: the program crashed: access violation (0xC0000005)\n"
+    else
+        "doxa: the program was stopped by signal ";
+
+    const plain = try runFaultStatus(allocator, &tmp, crashSource, &.{"--strip"});
+    defer allocator.free(plain.stderr);
+    errdefer std.debug.print("--strip:\n{s}", .{plain.stderr});
+    try testing.expect(plain.end == .exited and plain.end.exited == 1);
+    try testing.expectStringStartsWith(plain.stderr, headline ++ ending);
+
+    // The inline Zig function's frames are not the program's: the trace
+    // starts at its caller.
+    const traced = try runFaultStatus(allocator, &tmp, crashSource, &.{"-O0"});
+    defer allocator.free(traced.stderr);
+    errdefer std.debug.print("-O0:\n{s}", .{traced.stderr});
+    try testing.expect(traced.end == .exited and traced.end.exited == 1);
+    try testing.expectStringStartsWith(traced.stderr, headline ++ "  in main at probe.doxa:9:");
+    const rest = traced.stderr[std.mem.indexOfScalar(u8, traced.stderr[headline.len..], '\n').? + headline.len + 1 ..];
+    try testing.expectStringStartsWith(rest, ending);
+    // A bad access ends a POSIX program with SIGSEGV, or SIGBUS on macOS for
+    // some unmapped addresses.
+    if (builtin.os.tag != .windows) {
+        const signal = std.mem.trimEnd(u8, rest[ending.len..], "\n");
+        try testing.expect(std.mem.eql(u8, signal, "SEGV") or std.mem.eql(u8, signal, "BUS"));
+    }
 }
 
 // ── Instrumentation: --instrument=calls and doxa report ──
@@ -1570,6 +1711,22 @@ const memorySource =
     \\    var t is "x"
     \\    rename(^t, 2)
     \\    @print("{last} {t} {total([1, 2])}\n")
+    \\    var items :: Item[] is [$Item { count is 1 }]
+    \\    sweep(^items)
+    \\}
+    \\
+    \\struct Item {
+    \\    public count :: int,
+    \\}
+    \\
+    \\function bump(^it :: Item) {
+    \\    it.count += 1
+    \\}
+    \\
+    \\function sweep(^items :: Item[]) {
+    \\    each it in ^items {
+    \\        bump(^it)
+    \\    }
     \\}
 ;
 
@@ -1593,20 +1750,23 @@ test "memory: where allocations live, the copies kept and removed, the arenas dr
     try expectContains(text, "  mem.doxa:10:12\tname\tstring\tin name's arena; reclaimed when it returns (line 10)\n");
     try expectContains(text, "  mem.doxa:10:5\tname\tstring\tin the caller's arena; reclaimed when the caller returns\n");
     // Copies: a static clone out to the caller, one carried out of a loop,
-    // and the runtime check a `^` target needs.
+    // and one through a `^` target, which outlives the loop's arena. An
+    // element lent on from `each … in ^items` lives in an arena known only at
+    // run time, so its write-back is the runtime check.
     try expectContains(text, "  mem.doxa:10:5\tname\tstring\tcopied here: returned\n");
     try expectContains(text, "  mem.doxa:22:9\tmain\tstring\tcopied here: carried out of a branch or loop\n");
-    try expectContains(text, "  mem.doxa:15:9\trename\tstring\tcopied at run time unless it already lives there: stored to a longer-lived variable\n");
+    try expectContains(text, "  mem.doxa:15:9\trename\tstring\tcopied here: stored to a longer-lived variable\n");
+    try expectContains(text, "  mem.doxa:41:9\tsweep\tItem\tcopied at run time unless it already lives there: stored to a longer-lived variable\n");
     // `t is "x"` is a literal: its copy is the value itself.
     try expectContains(text, "\tmain\tstring\tthe value itself, which already lives there: stored to a longer-lived variable\n");
     // `total` allocates nothing: its arenas and its `@caller` are gone.
     try expectContains(text, "  mem.doxa:1:10\ttotal\tthe function's arena: nothing allocates in it\n");
     try expectContains(text, "  mem.doxa:3:5\ttotal\ta loop body's arena: nothing allocates in it\n");
     try expectContains(text, "  total\tits @caller arena: it returns nothing that lives there\n");
-    try expectContains(text, " Copies: 3 kept (2 clone, 1 runtime), ");
+    try expectContains(text, " Copies: 5 kept (3 clone, 2 runtime), ");
 
     // The runtime copy is in a loop, so step 6's findings name it too.
-    try expectContains(text, "  mem.doxa:15:9\trename\tin the loop at mem.doxa:14:5: a copy the arena pass left to a runtime check\n");
+    try expectContains(text, "  mem.doxa:41:9\tsweep\tin the loop at mem.doxa:40:10: a copy the arena pass left to a runtime check\n");
 
     // A side file only: the IR is the same without the flag.
     const with = try emitIrFor(allocator, &tmp, memorySource, "--emit-memory");
@@ -1773,6 +1933,22 @@ const memtraceSource =
     \\    keep(^a, b)
     \\    var text :: string is @string(b)
     \\    @print("{@length(a)} {text}\n")
+    \\    var items :: Item[] is [$Item { count is 1 }]
+    \\    sweep(^items)
+    \\}
+    \\
+    \\struct Item {
+    \\    public count :: int,
+    \\}
+    \\
+    \\function bump(^it :: Item) {
+    \\    it.count += 1
+    \\}
+    \\
+    \\function sweep(^items :: Item[]) {
+    \\    each it in ^items {
+    \\        bump(^it)
+    \\    }
     \\}
 ;
 
@@ -1791,20 +1967,23 @@ test "memtrace: runtime-checked copies, arenas opened and reset, bytes by site" 
     const text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "trace" });
     defer allocator.free(text);
 
-    // A store through `^` of a fresh value is decided at run time: `fresh`'s
-    // new array lives in its own arena, so each of the three calls copies it
-    // out. `keep` stores a parameter, a value its caller still holds, which
-    // plain stores always copy: a static clone, no runtime check.
-    try expectContains(text, "  3 copied, 0 kept\ttrace.doxa:2:5\tfresh\n");
+    // A store through `^` of a fresh value is a static clone: `fresh`'s new
+    // array lives in an arena it opened, which the `^` argument's outlives.
+    // `keep` stores a parameter, a value its caller still holds, which plain
+    // stores always copy: a static clone too. Neither is checked at run time.
+    // The element `sweep` lends on lives in an arena known only at run time;
+    // its write-back is checked, and keeps the element where it already is.
     try expectContains(text, "\ttrace.doxa:6:5\tkeep\tclone\n");
+    try testing.expect(std.mem.indexOf(u8, text, "kept\ttrace.doxa:2:5\tfresh") == null);
     try testing.expect(std.mem.indexOf(u8, text, "kept\ttrace.doxa:6:5\tkeep") == null);
+    try expectContains(text, "  0 copied, 1 kept\ttrace.doxa:32:9\tsweep\n");
     // `fresh` opens its arena once a call; the loop resets its body's twice
     // an iteration (at the top and before the step).
     try expectContains(text, "\t3 opened, 0 resets\ttrace.doxa:1:10\tfresh\n");
     try expectContains(text, "\t1 opened, 6 resets\ttrace.doxa:11:5\tmain\n");
     // Every byte the copies took is counted to the copy's own site, and
     // `fresh`'s literal is gone with each call: its peak is one call's.
-    try expectContains(text, "\ttrace.doxa:2:5\tfresh\trehome\n");
+    try expectContains(text, "\ttrace.doxa:2:5\tfresh\tclone\n");
     try expectContains(text, "\ttrace.doxa:2:12\tfresh\talloc\n");
     // Text renders in its destination arena and is trimmed there: `[7]` is
     // three bytes, asked for by the `@string` that made it.

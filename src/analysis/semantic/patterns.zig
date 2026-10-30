@@ -185,6 +185,7 @@ fn groupPath(self: *SemanticAnalyzer, path: *ast.MatchCase.PathPattern, group: T
     const through_group = tokens.len >= 2 and if (try names.resolveTypeName(self, tokens[0].lexeme, self.current_module)) |ref| ref.eql(group) else false;
     if (through_group) {
         const rest = tokens[1..];
+        if (try reportSharedQualifier(self, group, rest[0])) return null;
         if (try self.groupMemberType(group, rest[0].lexeme)) |member| {
             if (rest.len > 2 or (whole and rest.len > 1)) return null;
             if (rest.len == 2) path.variant = rest[1];
@@ -217,14 +218,39 @@ fn memberNamed(self: *SemanticAnalyzer, group: TypeRef, tokens: []const Token) E
     return null;
 }
 
-/// The member of `group` written with `qualifier`.
+/// The member of `group` written with `qualifier`: null when no member, or
+/// more than one, has that bare name (`reportSharedQualifier` tells them
+/// apart).
 pub fn groupMemberType(self: *SemanticAnalyzer, group: TypeRef, qualifier: []const u8) ErrorList!?TypeRef {
     try self.ensureTypes(group.module);
     const id = self.group_table.idOf(group) orelse return null;
+    var found: ?TypeRef = null;
     for (self.group_table.members(id) orelse &.{}) |member| {
-        if (std.mem.eql(u8, member.qualifier, qualifier)) return member.ref;
+        if (!std.mem.eql(u8, member.qualifier, qualifier)) continue;
+        if (found != null) return null;
+        found = member.ref;
     }
-    return null;
+    return found;
+}
+
+/// Whether several members of `group` share the bare name `qualifier`, so it
+/// names none of them. Reported where the name is written through the group
+/// (`Group.Member…`), which asks for the member's own path instead.
+pub fn reportSharedQualifier(self: *SemanticAnalyzer, group: TypeRef, qualifier: Token) ErrorList!bool {
+    const id = self.group_table.idOf(group) orelse return false;
+    var count: usize = 0;
+    for (self.group_table.members(id) orelse &.{}) |member| {
+        if (std.mem.eql(u8, member.qualifier, qualifier.lexeme)) count += 1;
+    }
+    if (count < 2) return false;
+    self.reporter.reportCompileError(
+        ast.SourceSpan.fromToken(qualifier).location,
+        ErrorCode.AMBIGUOUS_GROUP_VARIANT,
+        "Group '{s}' has {d} members named '{s}'; name the member by its own path, as its declaration is reached",
+        .{ group.name, count, qualifier.lexeme },
+    );
+    self.fatal_error = true;
+    return true;
 }
 
 /// The enum member of `group` declaring the variant `name`, for `Group.Variant`
@@ -255,12 +281,24 @@ pub fn groupVariantMember(self: *SemanticAnalyzer, group: TypeRef, name: Token) 
                 if (i > 0) try listed.appendSlice("', '");
                 try listed.appendSlice(member.qualifier);
             }
-            self.reporter.reportCompileError(
-                location,
-                ErrorCode.AMBIGUOUS_GROUP_VARIANT,
-                "'{s}.{s}' is ambiguous: members '{s}' all declare the variant '{s}'. Name the member: '{s}.{s}.{s}'",
-                .{ group.name, name.lexeme, listed.items, name.lexeme, group.name, declaring.items[0].qualifier, name.lexeme },
-            );
+            // The suggestion goes through the group only while that names
+            // the member; a shared bare name points at the member's own path.
+            const first = declaring.items[0];
+            if (try groupMemberType(self, group, first.qualifier) != null) {
+                self.reporter.reportCompileError(
+                    location,
+                    ErrorCode.AMBIGUOUS_GROUP_VARIANT,
+                    "'{s}.{s}' is ambiguous: members '{s}' all declare the variant '{s}'. Name the member: '{s}.{s}.{s}'",
+                    .{ group.name, name.lexeme, listed.items, name.lexeme, group.name, first.qualifier, name.lexeme },
+                );
+            } else {
+                self.reporter.reportCompileError(
+                    location,
+                    ErrorCode.AMBIGUOUS_GROUP_VARIANT,
+                    "'{s}.{s}' is ambiguous: members '{s}' all declare the variant '{s}'. Name the member by its own path, as its declaration is reached",
+                    .{ group.name, name.lexeme, listed.items, name.lexeme },
+                );
+            }
         },
     }
     self.fatal_error = true;

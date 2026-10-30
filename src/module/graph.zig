@@ -354,6 +354,30 @@ pub const ZigUnit = struct {
     /// The wrapper generator turns each into a Zig error set with these variant
     /// names, so a shim body can `return error.<Variant>`.
     error_sets: []const ZigErrorSet = &.{},
+    /// Every struct a signature returns, and every struct one of those holds,
+    /// filled in by the analyzer's Types stage once each is checked to cross
+    /// (`plan/inline-zig-structs.md`). A struct precedes any struct holding it.
+    structs: []const ZigStruct = &.{},
+};
+
+/// A struct crossing from Zig, resolved: what the wrapper needs to declare its
+/// Zig mirror (`__DoxaStruct_<index>`) and to hand each field back.
+pub const ZigStruct = struct {
+    /// Each spelling after `DoxaStruct_` a signature names the struct by,
+    /// which the wrapper declares as an alias of the mirror; none for a
+    /// struct reached only as a field of another.
+    aliases: []const []const u8,
+    ref: ast.TypeRef,
+    /// In declaration order: the order the wrapper's out-parameters follow.
+    fields: []const ZigStructField,
+};
+
+pub const ZigStructField = struct {
+    name: []const u8,
+    /// The field's type as it crosses: an enum is `.Enum` (an `i64`
+    /// discriminant), at any array depth, and a nested struct is `.Custom`,
+    /// described by its own `ZigStruct` entry.
+    type_info: ast.TypeInfo,
 };
 
 /// A fallible return's error set, resolved: the enum path exactly as written

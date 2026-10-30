@@ -231,8 +231,10 @@ pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) Err
 
 /// The value of a `const` initializer that is a constant expression;
 /// null for a `var`, whose value is never known at compile time, and for
-/// any other initializer. A fault is reported here.
-pub fn constantInitializer(self: *SemanticAnalyzer, init_expr: *const ast.Expr, is_const: bool) error{ConstantFault}!?TokenLiteral {
+/// any other initializer. A fault is reported here and makes `type_info`,
+/// the declaration's type, poison: the name is still declared, so its uses
+/// report nothing more.
+pub fn constantInitializer(self: *SemanticAnalyzer, init_expr: *const ast.Expr, is_const: bool, type_info: *ast.TypeInfo) ?TokenLiteral {
     if (!is_const) return null;
     return switch (consteval.evaluate(init_expr, ConstantNames{ .analyzer = self })) {
         .value => |value| value,
@@ -240,7 +242,8 @@ pub fn constantInitializer(self: *SemanticAnalyzer, init_expr: *const ast.Expr, 
         .fault => |fault| {
             consteval.report(self.reporter, getLocationFromBase(fault.site.base), fault.fault);
             self.fatal_error = true;
-            return error.ConstantFault;
+            type_info.* = .{ .base = .Error, .is_mutable = type_info.is_mutable };
+            return null;
         },
     };
 }

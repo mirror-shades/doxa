@@ -1,0 +1,30 @@
+# A client that gives up while the server answers it (B058) ends the server's
+# connection with nothing on stderr: on Windows the transport sees an OS status
+# Zig's standard library does not map, which reaches the engine as an error,
+# not as a Zig stack trace. Judged as a peek case, so any stray stderr line
+# fails it.
+module std from @std()
+
+var answered is 0
+var closed is 0
+const l is std.http.listen(0) as int else -1
+const p is std.http.localAddr(l) as int else -1
+const r is std.http.getWithTimeout("http://127.0.0.1:{p}/x", 200)
+var gave_up is true
+r as std.http.Response then gave_up is false else {}
+for i while i < 20 do i += 1 {
+    each e in std.http.poll(l, 50) {
+        if e.kind == std.http.EventKind.Readable then {
+            if std.http.readRequest(e.handle) == 1 then {
+                match std.http.respond(e.handle, 200, "", "hello") {
+                    nothing then answered += 1,
+                    else {},
+                }
+            }
+        }
+        if e.kind == std.http.EventKind.Closed then closed += 1
+    }
+}
+gave_up?
+answered?
+closed?

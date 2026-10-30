@@ -93,9 +93,12 @@ zig JSON {
         w.finished = false;
     }
 
+    /// Only `finish` ends a document, on every path, so the first write after it
+    /// starts the next one. A refusal holds until then: a later write in the
+    /// same document is refused with it. The reset waits for that first write,
+    /// so the text `finish` returned stays valid until the next document starts.
     fn ensureFresh() void {
-        const w = writerStateType();
-        if (w.finished or (w.failed and w.stack.items.len == 0)) resetWriter();
+        if (writerStateType().finished) resetWriter();
     }
 
     fn guard() bool {
@@ -284,9 +287,10 @@ zig JSON {
     }
 
     pub fn writerFinish() []const u8 {
-        if (!guard()) return "";
+        ensureFresh();
         const w = writerStateType();
         defer w.finished = true;
+        if (!guard()) return "";
         if (w.stack.items.len != 0) {
             fail(1);
             return "";

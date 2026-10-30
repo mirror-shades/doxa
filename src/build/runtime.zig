@@ -159,12 +159,19 @@ fn buildRootSource(allocator: std.mem.Allocator, members: instrument.Members) ![
     errdefer content.deinit();
     try content.appendSlice("const std = @import(\"std\");\n");
     try content.appendSlice("const doxa_rt = @import(\"runtime/doxa_rt.zig\");\n");
+    // As each inline-Zig wrapper's: an unmapped OS status reaches the runtime
+    // as `error.Unexpected`, without a Zig stack trace on stderr. The runtime
+    // owns the traps where it reports them (`fault.installHandlers`); on any
+    // other target Zig's handler stays on, in every mode, so a trap still
+    // prints a line rather than the process vanishing.
+    try content.appendSlice("\npub const std_options: std.Options = .{ .unexpected_error_tracing = false, .enable_segfault_handler = std.debug.have_segfault_handling_support and !doxa_rt.owns_traps };\n");
 
     try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
     if (members.any()) {
         try content.print("\npub const doxa_instrument: doxa_rt.instrument.Members = .{{ .calls = {}, .lines = {}, .memtrace = {}, .memcheck = {} }};\n", .{ members.calls, members.lines, members.memtrace, members.memcheck });
     }
     try content.appendSlice("\npub fn main(init: std.process.Init) void {\n");
+    try content.appendSlice("    doxa_rt.installFaultHandlers();\n");
     if (members.any()) try content.appendSlice("    defer doxa_rt.instrument.flush();\n");
     try content.appendSlice("    const args = init.minimal.args.toSlice(init.arena.allocator()) catch {\n");
     try content.appendSlice("        doxa_program_main();\n");

@@ -1,0 +1,14 @@
+# minInt % -1 is 0 at run time, as in a constant expression: a remainder by -1
+# always is. Next to it, the operands that sit beside the faulting pair.
+function minInt() returns int {
+    return -9223372036854775807 - 1
+}
+
+function negOne(x :: int) returns int {
+    return x - x - 1
+}
+
+const folded is (-9223372036854775807 - 1) % -1
+const m is minInt()
+const d is negOne(m)
+@print("{m % d} {folded} {(m + 1) % d} {(m + 1) // d} {m // 1} {m % 3}\n")

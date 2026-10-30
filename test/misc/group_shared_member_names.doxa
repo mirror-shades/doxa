@@ -1,0 +1,45 @@
+# A group is the union of its members (docs/groups.md 3.1). Members are
+# types, so two that share a bare name (`fs.File.OpenError`, `fs.Dir.OpenError`)
+# join one group; each is named by its own path. A group widens into any group
+# holding all of its members. The shape the std's Zig error sets take
+# (plan/std-errors.md).
+module zerr from "./moddata/zerr/zerr.doxa"
+enum Parse { Empty }
+
+group ZigErr { zerr.fs.File.OpenError, zerr.fs.Dir.OpenError, zerr.process.Child.SpawnError }
+group AppError { ZigErr, Parse }
+# The same members as `ZigErr`, under another name: the same union.
+group Mirror { zerr.fs.Dir.OpenError, zerr.process.Child.SpawnError, zerr.fs.File.OpenError }
+
+function openFile(path :: string) returns int | zerr.fs.File.OpenError {
+    if path == "" then return zerr.fs.File.OpenError.FileNotFound
+    if path == "/" then return zerr.fs.File.OpenError.AccessDenied
+    return 3
+}
+
+function describe(e :: AppError) returns string {
+    return match e {
+        zerr.fs.File.OpenError.AccessDenied then "file: denied",
+        zerr.fs.File.OpenError.* then "file: other",
+        zerr.fs.Dir.OpenError.* then "dir",
+        zerr.process.Child.SpawnError.* then "spawn",
+        Parse.* then "parse",
+    }
+}
+
+# A `ZigErr` passed where an `AppError` is expected.
+function viaZig(e :: ZigErr) returns string {
+    return describe(e)
+}
+
+const r is openFile("/")
+r as int then @print("ok {r}\n")
+else {
+    @print("{viaZig(r)}\n")
+    @print("{r == zerr.fs.File.OpenError.AccessDenied}\n")
+}
+const d :: ZigErr is zerr.fs.Dir.OpenError.NotDir
+d as zerr.fs.Dir.OpenError then @print("narrowed {d}\n") else @print("not dir\n")
+@print("{describe(d)} {describe(Parse.Empty)}\n")
+const m :: Mirror is d
+@print("{viaZig(m)}\n")
