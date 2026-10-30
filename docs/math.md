@@ -115,7 +115,7 @@ Anything else is not a constant, and the compiler never guesses its value. That 
 
 ## Overflow and wrapping
 
-`+`, `-`, `*` and `**` on `int` and `byte`, and unary `-`, fault when the result leaves the type: an `int` is a signed 64-bit integer, a `byte` an unsigned 8-bit one, so `0xFF + 0x01` and `0x00 - 0x01` are faults just as `maxInt() + 1` is (`Integer overflow at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)). This holds in every `--opt-mode`. The compiler drops a check only where it proves the result fits.
+`+`, `-`, `*` and `**` on `int` and `byte`, and unary `-`, fault when the result leaves the type: an `int` is a signed 64-bit integer, a `byte` an unsigned 8-bit one, so `0xFF + 0x01` and `0x00 - 0x01` are faults just as `maxInt() + 1` is (`Integer overflow at <file>:<line>:<column>`, exit 1; see [Runtime faults](methods.md#runtime-faults)). `//` leaves the type in one case, `minInt() // -1`, whose quotient 2^63 has no `int`, and faults the same way; `minInt() % -1` is `0`, as every remainder by -1 is. This holds in every `--opt-mode`. The compiler drops a check only where it proves the result fits.
 
 Modular arithmetic is explicit, through the wrapping operators. `+%`, `-%` and `*%` (and unary `-%x`) wrap modulo 2^64 on `int` and modulo 256 on `byte`, and never fault. They take `int` and `byte` operands only and type like `+`, `-` and `*`; each has a compound form (`+%=`, `-%=`, `*%=`). A wrapping operator costs exactly the bare instruction. Hashes, random number generators, checksums and byte codecs use them:
 

@@ -14,8 +14,9 @@ This document specifies **groups**: a nominal type that merges existing enums, s
 | Group membership is flattened | Transitive group members are expanded into a flat member list at the declaration site |
 | Groups do not create new values | `Error.IO.NotFound` is the same value as `IO.NotFound` |
 | A type appears at most once | Deduplication during flattening; reaching the same type through multiple paths is harmless |
+| Members are types, not names | Two distinct types may share a bare name (`fs.File.OpenError`, `fs.Dir.OpenError`); each is named by its own path |
 | Cycles are illegal | A group may not include itself directly or transitively |
-| Nominal type | Each `group` declaration introduces a distinct type; two groups with identical members are different types |
+| A group is the union of its members | A group value fits wherever all of its members do: in a group holding them all, and in another group with the same members |
 
 ---
 
@@ -90,6 +91,16 @@ G.X                              // ERROR: ambiguous — X exists in both A and 
 G.A.X                            // OK
 ```
 
+A member's qualifier is its bare type name, and it reaches the member only while
+no other member shares it. Members that share a bare name are named by their own
+paths, which always work:
+
+```doxa
+group ZigErr { zerr.fs.File.OpenError, zerr.fs.Dir.OpenError }
+ZigErr.OpenError.AccessDenied    // ERROR: two members are named OpenError (E1039)
+zerr.fs.Dir.OpenError.NotDir     // OK: the member's own path
+```
+
 Only the variants of a group's enum members count toward `Group.Variant`. A
 struct member is a type, not a value, so a struct member sharing a variant's
 name makes nothing ambiguous.
@@ -102,23 +113,28 @@ another module is reached through it, like any type: `errs.Error.NotFound`.
 
 ## 3. Type system
 
-### 3.1 Nominal identity
+### 3.1 A union of its members
 
-Each `group` declaration introduces a distinct nominal type. `AppError` is not the same type as `CoreError`, `IOError`, or `UserCancelled`. Two groups with identical member lists are distinct types.
+A group names the union of its flattened members; the name adds no identity of
+its own. A group value is assignable wherever every one of its members is:
+to a group that holds them all (`CoreError` into `AppError`, which includes
+it), and to another group with the same members. A member type is not the
+group: `IOError` widens to `AppError`, and narrows back only explicitly.
 
 ### 3.2 Member identity preserved
 
-A value's identity is determined by its source type — not by the group that wraps it. `Error.IOError.NotFound` and `IOError.NotFound` are the same value.
+A value's identity is determined by its source type — not by the group that wraps it. `Error.IOError.NotFound` and `IOError.NotFound` are the same value, of the same type: a group creates no values, so spelling a variant through the group names the member's value and types it as the member. It widens to the group wherever one is expected.
 
 | Expression | Type | Identity |
 |---|---|---|
 | `IOError.NotFound` | `IOError` | `IOError::NotFound` |
-| `Error.IOError.NotFound` | `Error` | `IOError::NotFound` (same) |
-| `AppError.IOError.NotFound` | `AppError` | `IOError::NotFound` (same) |
+| `Error.IOError.NotFound` | `IOError` | `IOError::NotFound` (same) |
+| `Error.NotFound` (unique in `Error`) | `IOError` | `IOError::NotFound` (same) |
+| `const e :: Error is IOError.NotFound` | `Error` | `IOError::NotFound` (same) |
 
 ### 3.3 Widening and narrowing
 
-**Widening (implicit):** A value of a member type is assignable where the group type is expected. The compiler inserts a tag to track which member the value belongs to at runtime.
+**Widening (implicit):** A value of a member type is assignable where the group type is expected, and so is a value of a group whose members the target holds (3.1). The compiler inserts a tag to track which member the value belongs to at runtime, and re-indexes it for the target group.
 
 ```doxa
 function open(path: string) -> string | Error {
@@ -138,10 +154,13 @@ No implicit narrowing from a group type to a member type.
 
 ### 3.4 Equality
 
-Values compare equal when they carry the same source type and same payload.
+Values compare equal when they carry the same source type and same payload. A
+group value compares with a value of one of its members; a group-qualified
+variant is such a value (3.2).
 
 ```
 Error.IOError.NotFound == IOError.NotFound     → true
+e == Error.IOError.NotFound  (e :: Error)      → true when e holds IOError.NotFound
 IOError.NotFound == FileError { path: "x" }    → type error (different members)
 ```
 
@@ -229,8 +248,8 @@ match result {
 
 | Situation | Verdict |
 |-----------|---------|
-| Two members with the same qualifier after flattening | **Error** |
-| Unqualified name exists in more than one member | **Error** (ambiguous access) |
+| Two members with the same bare name after flattening | Allowed; the bare name reaches neither through the group (E1039 where it is written), and a non-exhaustive match names each by its module |
+| Unqualified variant name exists in more than one member | **Error** (ambiguous access, E1039) |
 | Cycle in group membership | **Error** |
 | Empty group (no members) | **Error** |
 | Group member is not a declared type | **Error** |
@@ -293,7 +312,9 @@ TypePath        := IDENT ( '.' IDENT )*
 - [x] Implement domain wildcard patterns (`Group.Member.*`) that narrow the matched value to the member type.
 - [x] Implement struct destructuring patterns (`Group.Member { field }`) inside `match` arms, including binding the fields as arm locals.
 - [x] Implement `match` exhaustiveness checking across the flat expanded member list per §4.1: an arm list that leaves a member uncovered is a compile error (`E1033`) unless it ends in `else`.
-- [ ] Implement `as` narrowing from a group type to a member type as a value transform. The cast decides correctly and the semantic side narrows the bound name, but reading the narrowed binding inside the branch is broken — and so is reading a narrowed union binding on `master`, so the defect sits in the shared narrowing path rather than in groups.
+- [ ] Implement `as` narrowing from a group type to a member type as a value transform. Observed working on 2026-10-19 (`d as zerr.fs.Dir.OpenError then` reads the narrowed binding; `test/misc/group_shared_member_names.doxa`); re-verify the case this item recorded before ticking it.
+- [x] A group is the union of its members: a group widens into a group holding all of its members (`helpers.groupWithin`), re-indexed by `repack`.
+- [x] Members sharing a bare name: allowed; the qualifier reaches a member only while unique (`patterns.groupMemberType`), and written through the group a shared one is E1039 (`reportSharedQualifier`).
 - [ ] Implement cross-member equality as a compile error.
 - [x] Add group type handling to the native LLVM backend: `GroupCheck` and `GroupExtractPayload` lower against `%DoxaValue`, and group members are wrapped like union arms.
 - [x] Validate that `registerSpecificSymbol` uses the correct `.Group` kind instead of `.Enum` for imported group symbols.

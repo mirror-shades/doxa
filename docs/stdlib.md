@@ -6,6 +6,21 @@ The standard library is imported like any other module. `@std()` is its specifie
 module std from @std()
 ```
 
+## Zig errors
+
+`std.zerr.ZigError` is an ordinary enum holding every error name in the bundled
+Zig standard library. It is opt-in:
+
+```doxa
+import zerr from @std()
+
+const e is zerr.ZigError.AccessDenied
+```
+
+Like any enum, a `match` on it needs an `else` (or every variant). The enum is
+generated from the bundled Zig sources by `zig build zerr`; `zig build test`
+runs `check zerr` and fails when the committed `std/zerr/zerr.doxa` is stale.
+
 ## Build
 
 
@@ -306,7 +321,9 @@ match result {
 - Writing mirrors the document shape: `beginObject()` / `beginArray()` open a
   container, `writeKey(name)` precedes a member value, and `end()` closes it.
   `finish()` returns the escaped text as `string | error.StdError` and releases
-  the writer; the next writer call starts a fresh document.
+  the writer; the next writer call starts a fresh document. A refused write
+  refuses the rest of its document, and `finish()` reports it; the document
+  after it starts clean.
 - The writer emits `\b`, `\f`, `\n`, `\r`, `\t` as their two-character escapes
   and any other control byte below `0x20` as a lowercase `\u00xx` sequence. It
   validates UTF-8 before quoting and refuses NaN or infinity.
@@ -336,6 +353,44 @@ function inRange(x :: int, delta :: int) returns tetra {
 
 ## Process
 
+`std.process` runs other programs and reads the program's own arguments and
+environment. Running a program comes in two forms: one passes a command line
+to the platform shell, the other starts a program directly with its arguments.
+
+```doxa
+import process from @std()
+
+# Portable: no shell, so the path and arguments arrive as written.
+const out is process.execCaptureArgs("bin/tool", ["--version"]) as string else ""
+
+# Shell: the command line is cmd.exe's on Windows, `sh`'s elsewhere.
+const built is process.execOk("make all")
+```
+
+- **Shell commands.** `exec(command)` runs `command` and waits for it;
+  `execCapture(command)` returns its standard output; `execOk(command)`
+  says whether it ran and exited 0. The text is handed to the platform shell
+  unchanged: `cmd.exe` on Windows, `sh -c` elsewhere. Its grammar is that
+  shell's: quoting, pipes, `%VAR%` or `$VAR`. On Windows `/` begins a switch,
+  so an unquoted relative program path must use `\` (`bin\tool`) or be quoted
+  (`"bin/tool"`); `bin/tool` runs `bin` with the switch `/tool`.
+- **Programs.** `execArgs(program, arguments)` runs `program` and waits for
+  it; `execCaptureArgs(program, arguments)` returns its standard
+  output. No shell is involved: `program` is a path (`/` or `\` on Windows) or
+  a name looked up on `PATH`, and each argument arrives as one argument. These
+  are the form to use for a path a program computed, such as a build script
+  running what it just compiled. `execArgsEnv` and `execCaptureEnv` take two
+  more arrays, `env_keys` and `env_values`, set in the child's environment on
+  top of the parent's.
+- **Failures** are `error.StdError` values: `Process.CommandNotFound` for a
+  program that does not exist, `Process.SpawnFailed`, and
+  `Process.NonZeroExit` when the program exits with a status other than 0, so
+  the `int` the `exec` forms return is always 0. The non-zero status itself,
+  and a capture's output, are not reported yet.
+- **The program itself.** `args()` returns every argument, the program's own
+  path first; `argc()` and `argv(index)` read them one at a time. `cwd()` is
+  the working directory, `getenv(name)` an environment variable, and
+  `exit(code)` ends the program with `code`.
 
 ## Random
 

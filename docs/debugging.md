@@ -85,8 +85,35 @@ shown under the function it was inlined into, at its own line. The trace goes to
 and doesn't change the exit status. Under `--strip` the fault prints its line
 alone.
 
+A trace shows at most 64 frames. A run of one frame, as deep recursion makes,
+prints once and then its count, and a trace cut short says so:
+
+```
+Stack overflow
+  in walk at t.doxa:1:61
+  in walk at t.doxa:1:72
+  ... the frame above 62 more times
+  ... more frames not shown
+```
+
 When no frame can be shown, a line says why instead, such as
 `  (no backtrace: the stack could not be unwound to the faulting frame)`.
+
+A trap that is not a fault is a crash: a bad access or an illegal
+instruction in an inline `zig` block, say. It prints its line and the Doxa
+frames that led to it, and the program ends with the platform's crash status
+(an access violation on Windows, a signal elsewhere), as a native program
+would:
+
+```
+Invalid memory access at address 0x10
+  in main at crash.doxa:9:5
+```
+
+`doxa run` then names how the program ended, as in
+`doxa: the program crashed: access violation (0xC0000005)` or
+`doxa: the program was stopped by signal SEGV`, and exits 1. A program that
+exits on its own passes its status through.
 
 ## Finding the source
 

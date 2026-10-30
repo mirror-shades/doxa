@@ -419,18 +419,18 @@ not (forall x in arr where x > 3) # true
 
 ### Paradoxical logic
 
-There are currently two paradoxical operators, `and` and `not`. These can be represented by the following truth tables:
+Every binary tetra operator reads whether each operand holds (`true` and `both` hold, `false` and `neither` do not) and answers `true` or `false`; `not` is the one operator that keeps a contradiction. The rule is in [Tetras](tetras.md), "Intentionality". For `and` (rows are the left operand) and `not`:
 
-| ^     | T   | F   | B   | N   |
+| and   | T   | F   | B   | N   |
 | ----- | --- | --- | --- | --- |
-| **F** | F   | B   | B   | N   |
-| **T** | B   | T   | B   | N   |
-| **B** | B   | B   | B   | N   |
-| **N** | N   | N   | N   | N   |
+| **T** | T   | F   | T   | F   |
+| **F** | F   | F   | F   | F   |
+| **B** | T   | F   | T   | F   |
+| **N** | F   | F   | F   | F   |
 
-| ~     |     |
+| not   |     |
 | ----- | --- |
-| **F** | T   |
 | **T** | F   |
-| **B** | N   |
-| **N** | B   |
+| **F** | T   |
+| **B** | B   |
+| **N** | N   |

@@ -40,6 +40,8 @@ const n is Math.double(21)
 - Doxa `T[][]` <-> additional `[]const` levels (nesting is unlimited)
 - Doxa `enum` <-> Zig `DoxaEnum_<name>` (an injected alias for `i64`; the value is the variant's discriminant)
 - Doxa `enum[]` <-> Zig `[]const DoxaEnum_<name>`
+- Doxa `struct` <- Zig `DoxaStruct_<name>`, as a result only (see [Struct results](#struct-results))
+- Doxa `T | <enum>` <- Zig `DoxaError_<name>!T`, as a result only (see [Error model](#error-model))
 
 Arrays of scalars, strings, and enums cross in both directions at any depth; the
 `[]const` element slices a Zig function receives are borrowed for the call. A
@@ -83,6 +85,12 @@ A link name has the form `__doxa_m1_<tag>__f<len>$<name>`: `<tag>` is a hash of
 the declaring module's stable key, and every component is length-prefixed, so
 no two declarations in a program share one. Diagnostics, `peek`, and
 reflection show the declared name, never the link name.
+
+The wrapper is the root of its object, and it declares `std_options`, so a
+`zig` block may not declare its own. It sets `unexpected_error_tracing = false`:
+an OS status Zig's standard library does not recognise is still returned as
+`error.Unexpected`, but no Zig stack trace is printed to the program's stderr.
+The runtime's root does the same.
 
 The body is a thin adapter from the ABI types below to the user's Zig
 signature: it re-slices string parameters and, for string returns, performs the
@@ -152,11 +160,55 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
   as a returned string. Nested levels are deep-cloned as they are
   stored.
 
+### Struct results
+
+A Zig function may return a Doxa struct, spelled `DoxaStruct_<path>`, where
+`<path>` names the struct through the bindings of the file declaring the `zig`
+block, as for `DoxaEnum_` (`@"DoxaStruct_ns.Run"` for a qualified path). The
+Zig code declares nothing: the wrapper generates the mirror from the Doxa
+declaration, with the same field names and the types of the table above, so
+the body builds it like any Zig struct and the two cannot drift.
+
+```doxa
+struct Run {
+    public status :: int,
+    output :: string,
+}
+
+zig Proc {
+    pub fn run() DoxaStruct_Run {
+        return .{ .status = 0, .output = "done" };
+    }
+}
+```
+
+- **Plain data only.** Every field is a scalar, `string`, enum, an array of
+  those, or another struct that follows these rules. A union, group, function
+  value, or array of structs is refused (`E8002`), naming the field.
+- **Results only.** A struct parameter is refused (`E8002`); pass its fields.
+- **Private fields.** The wrapper sets a private field only in a struct the
+  file declaring the block declares, as that file's own struct literal could.
+  A struct from another file must have only public fields.
+- **Ownership.** The struct, and every string and array it holds, is built in
+  the caller's arena. It is a fresh value that follows the ordinary arena
+  rules (`docs/memory.md`).
+- **Layout stays with Doxa.** The bridge never writes a Doxa struct. It hands
+  each field back through an out-parameter of its own (a nested struct's
+  fields in turn), and the caller builds the struct the way a struct literal
+  is built.
+- A `.zig` file has no Doxa bindings, so it cannot name a `DoxaStruct_`.
+
 ### Error model
 
-There is no runtime ABI error channel to translate into a Doxa error — the
-shape of the call is settled at compile time. Only scalars, `string`, `enum`,
-and (nested) arrays of those cross the boundary; structs, unions, and
-functions are rejected with `E8002` while the wrapper is generated, before Zig
-is invoked. A Zig function is not a value Doxa can hold or pass — Doxa only
-*calls* the exported functions.
+A Zig function can fail into Doxa by returning `DoxaError_<path>!T`, where
+`<path>` names a Doxa enum as for `DoxaEnum_`. The wrapper declares a Zig error
+set of that name holding the enum's variants, so the body returns
+`error.<Variant>`. Doxa sees `T | <enum>`, the error as the enum variant of the
+same name, and narrows it with `as` or `match` like any union. `T` may be
+`void` (`nothing`), `i64`, `string`, an array, or a `DoxaStruct_`. On failure
+nothing of `T` is built.
+
+No other error crosses: a Zig function that cannot fail returns its value, and
+one that panics ends the program. Unions, groups, and functions do not cross
+the boundary (`E8002`). A Zig function is not a value Doxa can hold or pass;
+Doxa only *calls* the exported functions.

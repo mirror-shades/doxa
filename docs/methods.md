@@ -81,15 +81,16 @@ Every way a program fails at run time is a *fault*: it writes one line to stderr
 | `@panic(message)` | `Panic at main.doxa:3:5: message` | 1 |
 | `@assert` with a false condition | `Assertion failed at main.doxa:4:5: message` (no `: message` without one) | 1 |
 | Integer `//` or `%` by zero | `Division by zero at main.doxa:2:12` | 1 |
-| `int` or `byte` `+`, `-`, `*` or `**`, or unary `-`, whose result leaves the type: `int` overflow, `255 + 1`, `0 - 1` on a `byte`; `@byte` of a number with no byte | `Integer overflow at main.doxa:2:12` | 1 |
+| `int` or `byte` `+`, `-`, `*` or `**`, or unary `-`, whose result leaves the type: `int` overflow, `255 + 1`, `0 - 1` on a `byte`; `minInt // -1`; `@byte` of a number with no byte; `@int` of a float with no int | `Integer overflow at main.doxa:2:12` | 1 |
 | An array or string index out of bounds, read or written; an `@insert` or `@remove` index out of bounds | `Index out of bounds at main.doxa:5:9: index 7, length 3` | 1 |
 | `@pop` of an empty array | `Pop from an empty array at main.doxa:6:5` | 1 |
 | `@int`, `@float` or `@byte` of text that names no such number | `Not a valid int at main.doxa:2:14: "abc"` | 1 |
 | The system has no memory left for an allocation | `Out of memory` (no location: see below) | 1 |
+| The program's stack runs out (recursion too deep) | `Stack overflow` (no location: see below) | 1 |
 | Reaching `unreachable` | `Reached unreachable code at main.doxa:7:9` | 2 |
 | A read of reclaimed memory, under `--instrument=memcheck` only ([memory](memory.md#seeing-where-memory-goes)) | `Read of memory its arena reclaimed at main.doxa:7:9` | 2 |
 
-Wrapping arithmetic is never implicit: the operators `+%`, `-%` and `*%` are how a program asks for it ([Overflow and wrapping](math.md#overflow-and-wrapping)). Exit status 2 is reserved for `unreachable`, which marks code the program's author claims can never run, and for memcheck's fault, which only a compiler or runtime bug can raise. The location is the start of the expression that faulted. Out of memory is the one fault without a location: it is raised inside the runtime's allocator, which does not know which expression asked, so its backtrace shows the frames that led to it (not under `--strip`). A file under the entry file's directory is named relative to it (`main.doxa`, `lib/util.doxa`); a file under another root keeps the root's tag (`std//io/io.doxa`). A string's `@insert` and `@remove`, and `@slice`, clamp to the bounds instead of faulting.
+Wrapping arithmetic is never implicit: the operators `+%`, `-%` and `*%` are how a program asks for it ([Overflow and wrapping](math.md#overflow-and-wrapping)). Exit status 2 is reserved for `unreachable`, which marks code the program's author claims can never run, and for memcheck's fault, which only a compiler or runtime bug can raise. The location is the start of the expression that faulted. Out of memory and stack overflow are the faults without a location: out of memory is raised inside the runtime's allocator, which does not know which expression asked, and a stack overflow is the processor's trap on the stack's end, which can strike in any call. Their backtraces show the frames that led to them (not under `--strip`), the innermost first. A file under the entry file's directory is named relative to it (`main.doxa`, `lib/util.doxa`); a file under another root keeps the root's tag (`std//io/io.doxa`). A string's `@insert` and `@remove`, and `@slice`, clamp to the bounds instead of faulting.
 
 ### Collection
 
@@ -128,6 +129,7 @@ Wrapping arithmetic is never implicit: the operators `+%`, `-%` and `*%` are how
 - `@int(value)`
   - Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.
   - Text may be decimal, `0x` hex, or a decimal float (truncated toward zero), with surrounding whitespace. Text that names no int faults: `Not a valid int at main.doxa:2:14: "abc"`.
+  - Numeric conversion path faults for a float with no int (truncated toward zero, it leaves the int range, or it is `inf` or NaN): `Integer overflow at main.doxa:3:14`, exit 1. A constant operand is folded, so `@int(1e300)` is the compile error `E1032` instead ([constant folding](math.md)).
 - `@float(value)`
   - Fails at runtime for invalid parse, non-finite values, or unsupported source type.
   - Text may be a decimal float (`inf` and `nan` included) or `0x` hex. Text that names no float faults.
