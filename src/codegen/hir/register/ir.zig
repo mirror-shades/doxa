@@ -87,7 +87,9 @@ pub const Type = union(enum) {
     /// A scope arena (`*Scope` at runtime).
     arena,
     /// The address of a slot holding a value of this Doxa type: a `^`
-    /// argument or parameter.
+    /// argument or parameter. The storage a `ref` to a string addresses is a
+    /// string buffer (`plan/strings.md`): `str_view`, `str_set` and
+    /// `str_append` reach it, never `load` or `store`.
     ref: HIRType,
 
     pub fn eql(a: Type, b: Type) bool {
@@ -142,9 +144,6 @@ pub const CondOp = enum { @"and", @"or" };
 /// One operand.
 pub const Unary = struct { operand: ValueId };
 
-/// A string and the arena a result derived from it is allocated in.
-pub const ArenaString = struct { arena: ValueId, string: ValueId };
-
 /// A string, a byte index into it, and the arena the result is allocated in.
 pub const StringIndex = struct { arena: ValueId, string: ValueId, index: ValueId };
 
@@ -190,27 +189,42 @@ pub const Op = union(enum) {
     member_index: Unary,
 
     // ── Strings ──
-    str_concat: struct { arena: ValueId, lhs: ValueId, rhs: ValueId },
+    /// One string of `parts` in order, measured, allocated in `arena` once
+    /// and written once (`plan/strings.md`, Phase 3). A part is a string or a
+    /// scalar (`int`, `float`, `byte`, `tetra`) written as `to_string` writes it.
+    str_concat: struct { arena: ValueId, parts: []const ValueId },
     str_len: Unary,
-    str_substring: struct { arena: ValueId, string: ValueId, start: ValueId, length: ValueId },
-    /// The last character of a string, as a string.
-    str_last: ArenaString,
-    /// A string without its last character.
-    str_drop_last: ArenaString,
+    /// A view of `string`'s bytes from `start`, `length` long, clamped to its
+    /// end; allocates nothing (`plan/strings.md`, Phase 2).
+    str_substring: struct { string: ValueId, start: ValueId, length: ValueId },
+    /// The value a string buffer holds. `buffer` is a `ref` to a string.
+    str_view: struct { buffer: ValueId },
+    /// Store `value` into a string buffer, which keeps no spare room.
+    str_set: struct { buffer: ValueId, value: ValueId },
+    /// The buffer becomes `from` followed by `parts`, which are as
+    /// `str_concat`'s: in place when it still holds `from` and the parts fit
+    /// in its spare room, else in a new buffer in `arena`, the buffer's own
+    /// (`doxa_str_append`).
+    str_append: struct { buffer: ValueId, arena: ValueId, from: ValueId, parts: []const ValueId },
     str_find: struct { string: ValueId, needle: ValueId },
     /// `string` with `insert` placed before byte `index`, clamped to the
     /// string's bounds.
     str_insert: struct { arena: ValueId, string: ValueId, index: ValueId, insert: ValueId },
     /// `string` without the byte at `index`; an index out of range leaves it
-    /// whole.
+    /// whole. A view when the byte is the first or the last; otherwise a new
+    /// string in `arena`.
     str_remove: StringIndex,
-    /// The byte at `index`, as a one-byte string. Bounds-checked, like an
-    /// array element read.
-    str_char: StringIndex,
+    /// A view of the byte at `index`, a one-byte string. Bounds-checked, like
+    /// an array element read.
+    str_char: struct { string: ValueId, index: ValueId },
     str_to_int: Unary,
     str_to_float: Unary,
     str_to_byte: Unary,
+    /// `@pack`: a copy of a `byte[]`'s bytes in `arena`.
     str_pack: struct { arena: ValueId, bytes: ValueId },
+    /// `@pack` of a fresh `byte[]`, which nothing else holds: the string is
+    /// the array's own bytes (`plan/strings.md`, Phase 4).
+    str_pack_move: struct { bytes: ValueId },
     str_unpack: struct { arena: ValueId, string: ValueId },
     to_string: ArenaOperand,
 
@@ -361,14 +375,17 @@ pub const Block = struct {
     term_span: SrcSpan,
 };
 
-/// Addressable storage: a local lent as `^`, or a narrowed receiver read
-/// through its box. Its heap contents live in `arena`, which must outlive
-/// every value stored in it. A slot a program binds is named by the `LocalInfo`
-/// that holds it; a slot lowering makes for itself (a converted loan) has no
-/// name.
+/// Addressable storage: a local lent as `^`, a string variable's buffer, or a
+/// narrowed receiver read through its box. Its heap contents live in `arena`,
+/// which every value stored in it must outlive. A string slot whose arena the
+/// arena pass dropped (nothing allocates in it) moves to the nearest arena
+/// still open around it, or has none when there is none in this function:
+/// every value it holds then outlives every arena the function opens. A slot
+/// a program binds is named by the `LocalInfo` that holds it; a slot lowering
+/// makes for itself (a converted loan) has no name.
 pub const SlotInfo = struct {
     ty: HIRType,
-    arena: ValueId,
+    arena: ?ValueId,
 };
 
 /// A name a debugger shows for one binding. The slot a lent local holds is

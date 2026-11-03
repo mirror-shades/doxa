@@ -85,6 +85,8 @@ pub fn copyReason(f: *const ir.Function, value: ValueId) ir.CopyReason {
             const reason: ?ir.CopyReason = switch (inst.op) {
                 .store => |st| if (st.value == value) .store else null,
                 .global_store => |g| if (g.value == value) .global else null,
+                // A string variable's buffer: a global's, or a local's.
+                .str_set => |st| if (st.value != value) null else if (definedBy(f, st.buffer) == .global_addr) .global else .store,
                 .array_set => |st| if (st.value == value) .element else null,
                 .array_push => |st| if (st.value == value) .element else null,
                 .array_insert => |st| if (st.value == value) .element else null,
@@ -111,6 +113,14 @@ pub fn copyReason(f: *const ir.Function, value: ValueId) ir.CopyReason {
         if (found) return .merge;
     }
     return .other;
+}
+
+/// The kind of instruction that defines `v`; null for a parameter.
+fn definedBy(f: *const ir.Function, v: ValueId) ?std.meta.Tag(ir.Op) {
+    return switch (f.values[@intFromEnum(v)].def) {
+        .param => null,
+        .inst => |at| std.meta.activeTag(f.blocks[@intFromEnum(at.block)].insts[at.index].op),
+    };
 }
 
 /// What the arena opened by the `scope_enter` defining `arena` is for.
@@ -222,8 +232,7 @@ fn isRemovable(op: ir.Op) bool {
         .str_concat,
         .str_len,
         .str_substring,
-        .str_last,
-        .str_drop_last,
+        .str_view,
         .str_find,
         .str_insert,
         .str_remove,
@@ -232,6 +241,7 @@ fn isRemovable(op: ir.Op) bool {
         .str_to_float,
         .str_to_byte,
         .str_pack,
+        .str_pack_move,
         .str_unpack,
         .to_string,
         .array_new,
@@ -310,7 +320,9 @@ fn markUses(f: *const ir.Function, used: []bool, edit: *const Edit) Alloc.Error!
         }
     };
     const m = Mark{ .used = used };
-    for (f.slots) |slot| used[@intFromEnum(slot.arena)] = true;
+    for (f.slots) |slot| if (slot.arena) |a| {
+        used[@intFromEnum(a)] = true;
+    };
     for (f.blocks, 0..) |block, b| {
         for (block.insts, 0..) |inst, i| {
             if (edit.drop_inst[b][i]) continue;
@@ -387,6 +399,16 @@ fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signa
                 }
             }
         }
+        // A string slot whose arena is dropped moves out of it (`SlotInfo`).
+        var slots: ?[]ir.SlotInfo = null;
+        for (f.slots, 0..) |slot, k| {
+            const arena = slot.arena orelse continue;
+            if (slot.ty != .String or fam.used[fam.of(arena)]) continue;
+            if (slots == null) slots = try alloc.dupe(ir.SlotInfo, f.slots);
+            slots.?[k].arena = survivingArena(f, fam, arena);
+            touched = true;
+        }
+        if (slots) |s| f.slots = s;
         if (dead_caller[i]) {
             try record.callers.append(alloc, @enumFromInt(i));
             edit.drop_param[0][f.callerArena().?] = true;
@@ -415,6 +437,30 @@ fn dropDeadArenas(alloc: Alloc, functions: []ir.Function, signatures: []ir.Signa
         };
     }
     return any;
+}
+
+/// The nearest arena around `arena` still used: where a string slot whose own
+/// arena was dropped belongs. Null once the chain reaches an arena the
+/// function was given (`@caller`, the root): no arena it opens is needed, and
+/// every value the slot holds outlives them all.
+fn survivingArena(f: *const ir.Function, fam: *const Families, arena: ValueId) ?ValueId {
+    var at = arena;
+    while (true) {
+        const parent = openedIn(f, fam, at) orelse return null;
+        if (fam.used[fam.of(at)]) return at;
+        at = parent;
+    }
+}
+
+/// The arena the family of `arena` was opened in, or null when this
+/// function did not open it.
+fn openedIn(f: *const ir.Function, fam: *const Families, arena: ValueId) ?ValueId {
+    const family = fam.of(arena);
+    for (f.blocks) |block| for (block.insts) |inst| switch (inst.op) {
+        .scope_enter => |s| if (fam.of(inst.result.?) == family) return s.parent,
+        else => {},
+    };
+    return null;
 }
 
 fn without(alloc: Alloc, comptime T: type, items: []const T, index: usize) Alloc.Error![]const T {
@@ -477,7 +523,9 @@ pub const Families = struct {
             }
         };
         const use = Use{ .fam = self, .f = f };
-        for (f.slots) |slot| use.mark(slot.arena) catch unreachable;
+        // A string slot is storage on the stack: its arena is used only by
+        // what allocates in it (an append, a copy into it) or lends it.
+        for (f.slots) |slot| if (slot.ty != .String) if (slot.arena) |a| use.mark(a) catch unreachable;
         for (f.blocks) |block| {
             for (block.insts) |inst| switch (inst.op) {
                 .scope_enter, .scope_exit, .scope_reset, .debug_value => {},
@@ -623,7 +671,7 @@ const Edit = struct {
         const slots = try alloc.alloc(ir.SlotInfo, f.slots.len);
         for (f.slots, slots) |slot, *out| {
             out.* = slot;
-            out.arena = try map.value(slot.arena);
+            out.arena = if (slot.arena) |a| try map.value(a) else null;
         }
         // A loop whose arena was dropped allocates nothing in it.
         const loops = try alloc.alloc(ir.LoopInfo, f.loops.len);

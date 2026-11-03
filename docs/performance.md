@@ -160,8 +160,9 @@ runtime-generic representation even though the static type is sitting right ther
   and consults the per-object `struct_scopes` / `ArrayHeader.scope` registries. But the allocating
   scope of every value is a *compile-time* fact — its defining block — and lifetimes are lexical and
   nested. The runtime walk is a dynamic emulation of a static region calculation. A2 has already
-  retired strings from this path: immutable, their store is decided entirely at compile time (an
-  unknown string is simply cloned, which is observably identical to preserving its identity), so
+  retired strings from this path: a string's bytes are written once (`plan/strings.md`), so its store is
+  decided entirely at compile time (an unknown string is simply cloned, which is observably identical
+  to preserving its identity), so
   `string_scopes` and the string rehome exports are gone. A3 has started retiring the clone-on-return:
   a struct or array literal that is the top-level value of a `return`, or stored into a container, is
   born in its destination arena at construction instead of being deep-copied there, with only
@@ -265,6 +266,27 @@ gaps exceed theirs.
 These numbers are a snapshot of the *lowering*, not the language. The workloads that exercise
 section 3's floor match C; the workloads that exercise section 4's conservatism are the ones that do
 not.
+
+### Strings (November 2026)
+
+Six string workloads joined the suite with `plan/strings.md`, which made a string variable a
+growable buffer whose bytes are written once, slices views, and a concatenation one allocation.
+Doxa compute time, two `--runs 10` passes each (in `stats.csv`), before and after the plan:
+
+| test          | before (Doxa / C)     | after (Doxa / C)       |
+| ------------- | --------------------- | ---------------------- |
+| `strbuild`    | 0.578 s / 0.0009 s    | 0.0019 s / 0.0008 s    |
+| `strbuildx10` | did not run (~3 GB)   | 0.019 s / 0.008 s      |
+| `strfmt`      | 0.135 s / 0.22 s      | 0.109 s / 0.21 s       |
+| `strscan`     | 0.105 s / 0.0006 s    | 0.0146 s / 0.0005 s    |
+| `strsplit`    | 0.40 s / 0.0035 s     | 0.0034 s / 0.0033 s    |
+| `strpop`      | 0.48 s / 0.0001 s     | 0.0026 s / 0.0001 s    |
+
+`strbuildx10` does ten times `strbuild`'s appends in ten times its time: appending is linear.
+Four C twins finish in under a millisecond, so their percentage rows swing by hundreds of
+points between same-build runs; judge those rows by Doxa's own time. What the timing cannot
+see, the memory gate does: cases in `zig build test` cap the bytes a string loop asks for
+(`test/cases.zig`, `max_bytes_asked`).
 
 ---
 

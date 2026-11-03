@@ -119,12 +119,17 @@ pub const Region = union(enum) {
     /// caller's innermost arena or an ancestor of it, so it outlives
     /// `@caller` and everything the function opens.
     outer,
+    /// Owned outside the function, by a caller, in one of several arenas
+    /// it was given: the join of a parameter's value and a `^` argument's,
+    /// or of two `^` arguments'. It outlives every arena the function
+    /// opens; against `@caller` it is unordered, like a `^` argument's.
+    given,
     arena: ValueId,
 
     fn eql(a: Region, b: Region) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
         return switch (a) {
-            .static, .root, .outer => true,
+            .static, .root, .outer, .given => true,
             .arena => |x| x == b.arena,
         };
     }
@@ -242,7 +247,11 @@ const Verifier = struct {
         }
         self.block = null;
         for (f.slots, 0..) |slot, i| {
-            if (self.typeOf(slot.arena) != .arena) return self.fail("slot s{d}'s arena %{d} is not an arena", .{ i, @intFromEnum(slot.arena) });
+            const arena = slot.arena orelse {
+                if (slot.ty != .String) return self.fail("slot s{d} has no arena, which only a string slot may lack", .{i});
+                continue;
+            };
+            if (self.typeOf(arena) != .arena) return self.fail("slot s{d}'s arena %{d} is not an arena", .{ i, @intFromEnum(arena) });
         }
     }
 
@@ -430,6 +439,20 @@ const Verifier = struct {
         if (self.typeOf(v) != .arena) return self.fail("%{d} is not an arena", .{@intFromEnum(v)});
     }
 
+    /// A concatenation's parts: at least one, each a string or a scalar.
+    fn expectParts(self: *Verifier, parts: []const ValueId) Error!void {
+        if (parts.len == 0) return self.fail("concatenates no parts", .{});
+        for (parts) |p| switch (try self.doxa(p)) {
+            .String, .Int, .Float, .Byte, .Tetra => {},
+            else => return self.fail("%{d} is not a string or a scalar, so it is no part of a concatenation", .{@intFromEnum(p)}),
+        };
+    }
+
+    /// A string buffer: the address of string storage.
+    fn expectStringBuffer(self: *Verifier, v: ValueId) Error!void {
+        try self.expect(v, .{ .ref = .String });
+    }
+
     fn expectTag(self: *Verifier, v: ValueId, comptime tag: std.meta.Tag(HIRType)) Error!@FieldType(HIRType, @tagName(tag)) {
         const t = try self.doxa(v);
         if (t != tag) return self.fail("%{d} is not a {s}", .{ @intFromEnum(v), @tagName(tag) });
@@ -589,8 +612,7 @@ const Verifier = struct {
             },
             .str_concat => |s| {
                 try self.expectArena(s.arena);
-                try self.expectDoxa(s.lhs, .String);
-                try self.expectDoxa(s.rhs, .String);
+                try self.expectParts(s.parts);
                 try self.resultIs(inst, .{ .doxa = .String });
             },
             .str_len => |u| {
@@ -598,16 +620,26 @@ const Verifier = struct {
                 try self.resultIs(inst, .{ .doxa = .Int });
             },
             .str_substring => |s| {
-                try self.expectArena(s.arena);
                 try self.expectDoxa(s.string, .String);
                 try self.expectDoxa(s.start, .Int);
                 try self.expectDoxa(s.length, .Int);
                 try self.resultIs(inst, .{ .doxa = .String });
             },
-            .str_last, .str_drop_last => |s| {
-                try self.expectArena(s.arena);
-                try self.expectDoxa(s.string, .String);
+            .str_view => |v| {
+                try self.expectStringBuffer(v.buffer);
                 try self.resultIs(inst, .{ .doxa = .String });
+            },
+            .str_set => |s| {
+                try self.expectStringBuffer(s.buffer);
+                try self.expectDoxa(s.value, .String);
+                try self.noResult(inst);
+            },
+            .str_append => |a| {
+                try self.expectStringBuffer(a.buffer);
+                try self.expectArena(a.arena);
+                try self.expectDoxa(a.from, .String);
+                try self.expectParts(a.parts);
+                try self.noResult(inst);
             },
             .str_insert => |s| {
                 try self.expectArena(s.arena);
@@ -616,8 +648,13 @@ const Verifier = struct {
                 try self.expectDoxa(s.insert, .String);
                 try self.resultIs(inst, .{ .doxa = .String });
             },
-            .str_remove, .str_char => |s| {
+            .str_remove => |s| {
                 try self.expectArena(s.arena);
+                try self.expectDoxa(s.string, .String);
+                try self.expectDoxa(s.index, .Int);
+                try self.resultIs(inst, .{ .doxa = .String });
+            },
+            .str_char => |s| {
                 try self.expectDoxa(s.string, .String);
                 try self.expectDoxa(s.index, .Int);
                 try self.resultIs(inst, .{ .doxa = .String });
@@ -640,6 +677,11 @@ const Verifier = struct {
                 try self.expectArena(s.arena);
                 const bytes = try self.expectTag(s.bytes, .Array);
                 if (bytes.element.* != .Byte) return self.fail("packs an array that is not a byte[]", .{});
+                try self.resultIs(inst, .{ .doxa = .String });
+            },
+            .str_pack_move => |s| {
+                const bytes = try self.expectTag(s.bytes, .Array);
+                if (bytes.size != null or bytes.element.* != .Byte) return self.fail("moves the bytes of an array that is not a dynamic byte[]", .{});
                 try self.resultIs(inst, .{ .doxa = .String });
             },
             .str_unpack => |s| {
@@ -780,6 +822,7 @@ const Verifier = struct {
                     .ref => |t| t,
                     else => return self.fail("loads through %{d}, which is not a ref", .{@intFromEnum(u.operand)}),
                 };
+                if (t == .String) return self.fail("loads a string buffer; str.view reads it", .{});
                 try self.resultIs(inst, .{ .doxa = t });
             },
             .store => |s| {
@@ -787,15 +830,18 @@ const Verifier = struct {
                     .ref => |t| t,
                     else => return self.fail("stores through %{d}, which is not a ref", .{@intFromEnum(s.ref)}),
                 };
+                if (t == .String) return self.fail("stores into a string buffer; str.set writes it", .{});
                 try self.storesAs(s.value, t);
                 try self.noResult(inst);
             },
             .global_load => |g| {
                 const info = try self.globalInfo(g);
+                if (info.ty == .String) return self.fail("loads a string global; str.view of its address reads it", .{});
                 try self.resultIs(inst, .{ .doxa = info.ty });
             },
             .global_store => |g| {
                 const info = try self.globalInfo(g.global);
+                if (info.ty == .String) return self.fail("stores into a string global; str.set of its address writes it", .{});
                 try self.storesAs(g.value, info.ty);
                 try self.noResult(inst);
             },
@@ -987,6 +1033,8 @@ const Verifier = struct {
         return switch (region) {
             .static, .root => true,
             .outer => self.arena_kind[@intFromEnum(self.baseOf(dest))].? == .caller,
+            // What both a parameter's value and a `^` argument's outlive.
+            .given => !self.isFunctionLevel(dest) and self.outlives(.outer, dest),
             .arena => |a| blk: {
                 switch (self.arena_kind[@intFromEnum(a)].?) {
                     .root => break :blk true,
@@ -1011,18 +1059,26 @@ const Verifier = struct {
             .static => a == .static,
             .root => a == .static or a == .root or (a == .arena and self.arena_kind[@intFromEnum(a.arena)].? == .root),
             .outer => a == .static or a == .root or a == .outer or (a == .arena and self.arena_kind[@intFromEnum(a.arena)].? == .root),
+            .given => switch (a) {
+                .static, .root, .outer, .given => true,
+                // Arenas the function is given outlive every arena it opens.
+                .arena => |x| switch (self.arena_kind[@intFromEnum(x)].?) {
+                    .root, .caller, .alias => true,
+                    .held, .opened => false,
+                },
+            },
             .arena => |d| self.outlives(a, d),
         };
     }
 
     /// The shorter-lived of two regions, or null when neither is sure to
-    /// outlive the other.
-    // TODO: two caller-owned regions (a `^` argument's and a by-value
-    // parameter's, or two `^` arguments') are unordered, so a join of them
-    // still faults; both outlive every arena the function opens.
+    /// outlive the other. Two caller-owned regions that are not ordered (a
+    /// `^` argument's and a parameter's value, or two `^` arguments') meet
+    /// in `given`.
     fn meet(self: *const Verifier, a: Region, b: Region) ?Region {
         if (self.regionOutlives(a, b)) return b;
         if (self.regionOutlives(b, a)) return a;
+        if (self.regionOutlives(a, .given) and self.regionOutlives(b, .given)) return .given;
         return null;
     }
 
@@ -1080,11 +1136,19 @@ const Verifier = struct {
         return switch (inst.op) {
             .constant => .static,
             .str_concat => |s| .{ .arena = s.arena },
-            .str_substring => |s| .{ .arena = s.arena },
-            .str_last, .str_drop_last => |s| .{ .arena = s.arena },
+            // A view lives where its string does.
+            .str_substring => |s| self.region[@intFromEnum(s.string)],
+            .str_char => |s| self.region[@intFromEnum(s.string)],
+            // What a buffer holds outlives the buffer's own arena: a store
+            // into it is placed there, and an append allocates there.
+            .str_view => |v| if (self.refArena(v.buffer)) |a| .{ .arena = a } else .given,
             .str_insert => |s| .{ .arena = s.arena },
-            .str_remove, .str_char => |s| .{ .arena = s.arena },
+            // The rest is a view of the string or a new one in `arena`: it
+            // lives in the shorter-lived of the two.
+            .str_remove => |s| if (self.region[@intFromEnum(s.string)]) |r| self.meet(r, .{ .arena = s.arena }) orelse
+                return self.fail("removes from a string whose arena is unrelated to %{d}", .{@intFromEnum(s.arena)}) else null,
             .str_pack => |s| .{ .arena = s.arena },
+            .str_pack_move => |s| self.region[@intFromEnum(s.bytes)],
             .str_unpack => |s| .{ .arena = s.arena },
             .to_string => |s| .{ .arena = s.arena },
             .array_new => |a| .{ .arena = a.arena },
@@ -1101,7 +1165,7 @@ const Verifier = struct {
             .field_get => |g| self.region[@intFromEnum(g.object)],
             // A box shares its member's storage.
             .box, .unbox, .repack => |u| if (self.typeOf(u.operand).isHeap()) self.region[@intFromEnum(u.operand)] else .static,
-            .load => |u| .{ .arena = self.refArena(u.operand) },
+            .load => |u| if (self.refArena(u.operand)) |a| .{ .arena = a } else .given,
             .global_load => .root,
             .call => |c| try self.callResultRegion(self.program.functions[@intFromEnum(c.callee)], c.args),
             .call_zig => |c| try self.callResultRegion(self.program.zig_functions[@intFromEnum(c.callee)], c.args),
@@ -1118,8 +1182,10 @@ const Verifier = struct {
         return .{ .arena = args[index] };
     }
 
-    /// The arena that owns the slot a ref addresses.
-    fn refArena(self: *const Verifier, ref: ValueId) ValueId {
+    /// The arena that owns the slot a ref addresses. Null for a string slot
+    /// with none (`SlotInfo`): what it holds outlives every arena the function
+    /// opens, the `given` region.
+    fn refArena(self: *const Verifier, ref: ValueId) ?ValueId {
         return switch (self.f.values[@intFromEnum(ref)].def) {
             .param => |p| self.f.params()[self.f.roles[p.index].alias.arena],
             .inst => |d| switch (self.f.blocks[@intFromEnum(d.block)].insts[d.index].op) {
@@ -1241,6 +1307,10 @@ const Verifier = struct {
                 open.items[open.items.len - 1] = inst.result.?;
             },
             .store => |s| try self.checkStore(s.value, self.refArena(s.ref)),
+            .str_set => |s| try self.checkStore(s.value, self.refArena(s.buffer)),
+            .str_append => |a| if (self.refArena(a.buffer) != a.arena) {
+                return self.fail("appends to %{d} in %{d}, which is not the arena that owns it", .{ @intFromEnum(a.buffer), @intFromEnum(a.arena) });
+            },
             .struct_new => |s| for (s.fields) |field| try self.checkStore(field, s.arena),
             .array_set => |s| try self.checkElementStore(s.array, s.value),
             .array_push => |s| try self.checkElementStore(s.array, s.value),
@@ -1250,8 +1320,7 @@ const Verifier = struct {
                 const region = self.region[@intFromEnum(g.value)].?;
                 if (!self.regionOutlives(region, .root)) return self.fail("stores %{d} into a global without re-homing it to the root arena", .{@intFromEnum(g.value)});
             },
-            .slot_addr => |slot| {
-                const arena = self.f.slots[@intFromEnum(slot)].arena;
+            .slot_addr => |slot| if (self.f.slots[@intFromEnum(slot)].arena) |arena| {
                 if (!self.isOpen(open.items, arena)) return self.fail("addresses slot s{d}, whose arena %{d} is closed", .{ @intFromEnum(slot), @intFromEnum(arena) });
             },
             .call => |c| try self.checkCallerArena(self.program.functions[@intFromEnum(c.callee)], c.args, open.items),
@@ -1260,10 +1329,16 @@ const Verifier = struct {
         }
     }
 
-    fn checkStore(self: *Verifier, value: ValueId, dest: ValueId) Error!void {
+    /// A store into storage owned by `dest`; null for a string slot with no
+    /// arena (`SlotInfo`), whose values must outlive every arena opened here.
+    fn checkStore(self: *Verifier, value: ValueId, dest: ?ValueId) Error!void {
         const region = self.region[@intFromEnum(value)] orelse return;
-        if (!self.outlives(region, dest)) {
-            return self.fail("stores %{d} where it may outlive its arena; rehome or clone it into %{d}", .{ @intFromEnum(value), @intFromEnum(dest) });
+        const arena = dest orelse {
+            if (!self.regionOutlives(region, .given)) return self.fail("stores %{d} into a slot with no arena, where it may outlive its own", .{@intFromEnum(value)});
+            return;
+        };
+        if (!self.outlives(region, arena)) {
+            return self.fail("stores %{d} where it may outlive its arena; rehome or clone it into %{d}", .{ @intFromEnum(value), @intFromEnum(arena) });
         }
     }
 
@@ -1333,7 +1408,7 @@ const Verifier = struct {
         };
         return switch (self.f.blocks[@intFromEnum(at.block)].insts[at.index].op) {
             .rehome => |c| .{ .arena = c.arena },
-            .load => |u| .{ .arena = self.refArena(u.operand) },
+            .load => |u| if (self.refArena(u.operand)) |a| .{ .arena = a } else null,
             .global_load => .root,
             .call => |c| if (self.program.functions[@intFromEnum(c.callee)].callerArena()) |i| .{ .arena = c.args[i] } else null,
             // A nested fixed array is stored inline in its parent.
@@ -1423,7 +1498,7 @@ const Verifier = struct {
                 if (earlier != .alias) continue;
                 if (std.meta.eql(self.storageOf(args[j]), storage)) return self.fail("lends one slot to two ^ parameters of one call", .{});
             }
-            if (args[a.arena] != self.refArena(args[i])) return self.fail("passes ^ argument {d} with an arena that does not own its slot", .{i});
+            if (self.refArena(args[i]) != args[a.arena]) return self.fail("passes ^ argument {d} with an arena that does not own its slot", .{i});
         }
     }
 };

@@ -574,7 +574,7 @@ pub const FunctionBuilder = struct {
         const slots = try self.alloc.alloc(ir.SlotInfo, self.slots.items.len);
         for (self.slots.items, slots) |slot, *out| {
             out.* = slot;
-            out.arena = try map.value(slot.arena);
+            out.arena = if (slot.arena) |a| try map.value(a) else null;
         }
         // A loop whose arena only a dead block defined keeps none.
         const loops = try self.alloc.alloc(ir.LoopInfo, self.loops.items.len);

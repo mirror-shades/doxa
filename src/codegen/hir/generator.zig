@@ -391,9 +391,11 @@ pub const Generator = struct {
             } else {
                 var value = values[next];
                 // A by-value heap parameter the body writes through is copied,
-                // so the caller's object is not changed (`docs/alias.md`).
-                if (mutated and ir.isHeapType(ty)) value = try l.b.define(.{ .clone = .{ .arena = body, .operand = value } }, .of(ty));
-                try l.declareLocal(storage, param.name.lexeme, ty, value, arg);
+                // so the caller's object is not changed (`docs/alias.md`). A
+                // string needs no copy: its buffer starts with no spare room,
+                // so the first append moves it into this function's arena.
+                if (mutated and ir.isHeapType(ty) and ty != .String) value = try l.b.define(.{ .clone = .{ .arena = body, .operand = value } }, .of(ty));
+                try l.declareLocal(storage, param.name.lexeme, ty, value, arg, true);
                 next += 1;
             }
         }
@@ -911,11 +913,23 @@ pub const Lowering = struct {
     }
 
     /// Bind a new local of `ty`, initialized to `value`, in the innermost
-    /// arena. A local lent as `^` is a slot; any other is an SSA variable. A
-    /// `name` is one a debugger shows; a null one is a desugaring's binding.
-    /// `arg` is the parameter it is, or 0 (`LocalInfo.arg`).
-    pub fn declareLocal(self: *Lowering, storage: u32, name: ?[]const u8, ty: HIRType, value: ValueId, arg: u32) Error!void {
-        if (self.g.semantic.effects.isLent(storage)) {
+    /// arena. A string variable (`variable`: a `var` or a parameter) and a
+    /// local lent as `^` are slots; any other is an SSA variable. A string
+    /// slot is a buffer (`plan/strings.md`): the value starts with no spare
+    /// room. A `name` is one a debugger shows; a null one is a desugaring's
+    /// binding. `arg` is the parameter it is, or 0 (`LocalInfo.arg`).
+    pub fn declareLocal(self: *Lowering, storage: u32, name: ?[]const u8, ty: HIRType, value: ValueId, arg: u32, variable: bool) Error!void {
+        const lent = self.g.semantic.effects.isLent(storage);
+        if (ty == .String and (lent or variable)) {
+            const home = try self.arena();
+            const slot = try self.b.addSlot(ty, home);
+            if (name) |n| _ = try self.b.addLocal(n, self.b.span, slot, arg);
+            const buffer = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty });
+            try self.b.effect(.{ .str_set = .{ .buffer = buffer, .value = try self.rehome(home, value, ty) } });
+            try self.locals.put(self.g.alloc, storage, .{ .slot = slot });
+            return;
+        }
+        if (lent) {
             const home = try self.arena();
             const slot = try self.b.addSlot(ty, home);
             if (name) |n| _ = try self.b.addLocal(n, self.b.span, slot, arg);
@@ -937,9 +951,35 @@ pub const Lowering = struct {
         try self.storeGlobal(try self.g.declareGlobal(name, ty, self.b.span), ty, value, copy);
     }
 
+    /// A string buffer: the address of a string variable's storage, and the
+    /// arena that owns it, where an append grows it.
+    pub const Buffer = struct { ref: ValueId, arena: ValueId };
+
+    /// The buffer `target` names: a string global, slot or `^` parameter.
+    /// Null for any other storage, which holds its value.
+    pub fn bufferOf(self: *Lowering, target: StoreTarget, name: []const u8) Error!?Buffer {
+        const ty = try self.g.lowerType(target.slot);
+        if (ty != .String) return null;
+        if (target.global) return try self.globalBuffer(try self.g.globalId(name, ty, self.b.span));
+        return switch (self.local(target.storage)) {
+            .slot => |slot| .{
+                .ref = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty }),
+                .arena = self.b.slots.items[@intFromEnum(slot)].arena.?,
+            },
+            .alias => |a| .{ .ref = a.ref, .arena = a.arena },
+            .ssa, .element => null,
+        };
+    }
+
+    /// A string global's buffer, in the root arena.
+    fn globalBuffer(self: *Lowering, id: ir.GlobalId) Error!Buffer {
+        return .{ .ref = try self.b.define(.{ .global_addr = .{ .global = id, .root = self.root } }, .{ .ref = .String }), .arena = self.root };
+    }
+
     /// Read the storage `target` names, of its slot type.
     pub fn readStorage(self: *Lowering, target: StoreTarget, name: []const u8) Error!ValueId {
         const ty = try self.g.lowerType(target.slot);
+        if (try self.bufferOf(target, name)) |buffer| return self.b.define(.{ .str_view = .{ .buffer = buffer.ref } }, .of(ty));
         if (target.global) {
             return self.b.define(.{ .global_load = try self.g.globalId(name, ty, self.b.span) }, .of(ty));
         }
@@ -961,11 +1001,15 @@ pub const Lowering = struct {
             try self.storeGlobal(try self.g.globalId(name, ty, self.b.span), ty, value, copy);
             return;
         }
+        if (try self.bufferOf(target, name)) |buffer| {
+            try self.b.effect(.{ .str_set = .{ .buffer = buffer.ref, .value = try self.place(buffer.arena, value, ty, copy) } });
+            return;
+        }
         switch (self.local(target.storage)) {
             .ssa => |s| try self.b.defineVar(s.v, try self.place(try self.b.useVar(s.home), value, ty, copy)),
             .slot => |slot| {
                 const ref = try self.b.define(.{ .slot_addr = slot }, .{ .ref = ty });
-                const home = self.b.slots.items[@intFromEnum(slot)].arena;
+                const home = self.b.slots.items[@intFromEnum(slot)].arena.?;
                 try self.b.effect(.{ .store = .{ .ref = ref, .value = try self.place(home, value, ty, copy) } });
             },
             .alias => |a| try self.b.effect(.{ .store = .{ .ref = a.ref, .value = try self.place(a.arena, value, ty, copy) } }),
@@ -992,9 +1036,15 @@ pub const Lowering = struct {
         try self.b.effect(.{ .debug_value = .{ .local = id, .value = (try self.expr(at)).? } });
     }
 
-    /// Store `value` into the global `id`, in the root arena.
+    /// Store `value` into the global `id`, in the root arena. A string
+    /// global is a buffer.
     fn storeGlobal(self: *Lowering, id: ir.GlobalId, ty: HIRType, value: ValueId, copy: bool) Error!void {
-        try self.b.effect(.{ .global_store = .{ .global = id, .value = try self.place(self.root, value, ty, copy) } });
+        const placed = try self.place(self.root, value, ty, copy);
+        if (ty == .String) {
+            try self.b.effect(.{ .str_set = .{ .buffer = (try self.globalBuffer(id)).ref, .value = placed } });
+        } else {
+            try self.b.effect(.{ .global_store = .{ .global = id, .value = placed } });
+        }
     }
 
     /// `value` placed in `into` for a store: a copy there when `copy`, else
@@ -1145,14 +1195,18 @@ pub const Lowering = struct {
             .Grouping => |inner| if (inner) |x| self.builtInPlace(x, to) else false,
             .StructLiteral => (try self.g.typeOf(e)).eql(to),
             .Array => try self.literalAs(e, to) != null,
+            // A template or a `+` of strings is one allocation, made where
+            // its value goes (`plan/strings.md`, Phase 3).
+            .InterpolatedString => to == .String,
+            .Binary => to == .String and lower_expr.isStringSum(self, e),
             else => false,
         };
     }
 
     /// Lower `e` as `to`, living in `into`. A struct or array literal is
     /// built there, and so are the literals nested in it, so it needs no
-    /// copy; any other value is placed there (`place`), a copy when it is
-    /// one a binding holds.
+    /// copy, and so is a string concatenation; any other value is placed
+    /// there (`place`), a copy when it is one a binding holds.
     pub fn placedAs(self: *Lowering, e: *ast.Expr, to: HIRType, into: ValueId) Error!?ValueId {
         if (try self.builtInPlace(e, to)) {
             var at = e;
@@ -1160,6 +1214,7 @@ pub const Lowering = struct {
             return switch (at.data) {
                 .StructLiteral => lower_expr.structLiteralIn(self, at, into),
                 .Array => lower_expr.arrayLiteralIn(self, at, (try self.literalAs(at, to)).?, into),
+                .InterpolatedString, .Binary => lower_expr.textIn(self, at, into),
                 else => unreachable,
             };
         }

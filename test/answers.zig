@@ -103,6 +103,15 @@ pub const expected_alias_string_mutation_results = [_]print_result{
     .{ .value = "union str again" },
 };
 
+pub const expected_string_pop_bytes_results = [_]print_result{
+    .{ .value = "4" },
+    .{ .value = "[165] 3" },
+    .{ .value = "[151] 2" },
+    .{ .value = "[230] 1" },
+    .{ .value = "[97] 0" },
+    .{ .value = "0 0" },
+};
+
 pub const expected_alias_repush_union_results = [_]print_result{
     .{ .value = "3 123" },
     .{ .value = "hello world" },
@@ -471,6 +480,46 @@ pub const expected_memory_join_fresh_with_held_results = [_]print_result{
     .{ .value = "group value match: dot 6 dot 6 line [1, 2]" },
     .{ .value = "group local match: dot 5 line [1, 2]" },
     .{ .value = "group global match: dot 7 dot 7 line [1, 2]" },
+};
+
+pub const expected_memory_string_interpolation_loop_results = [_]print_result{
+    .{ .value = "247780" },
+};
+
+pub const expected_memory_string_buffers_results = [_]print_result{
+    .{ .value = "abcdef2" },
+    .{ .value = "<abcdef2" },
+    .{ .value = "xyxyxyx" },
+    .{ .value = "base base-more base-more-most" },
+    .{ .value = "mine+lent mine+callee" },
+    .{ .value = "012x" },
+    .{ .value = "12 !" },
+    .{ .value = "c abZ" },
+    .{ .value = "abc e" },
+    .{ .value = "0123!" },
+    .{ .value = "w w2" },
+};
+
+pub const expected_memory_string_push_loop_results = [_]print_result{
+    .{ .value = "10000" },
+};
+
+pub const expected_memory_string_pop_loop_results = [_]print_result{
+    .{ .value = "3334" },
+};
+
+pub const expected_memory_string_each_scan_results = [_]print_result{
+    .{ .value = "10000 3334" },
+};
+
+pub const expected_memory_join_caller_owned_results = [_]print_result{
+    .{ .value = "array mix if: [9] [9] [6]" },
+    .{ .value = "array two if: [5, 9] [6, 9] [6]" },
+    .{ .value = "array mix match: [9] [9] [6]" },
+    .{ .value = "array two match: [5, 9] [6, 9] [6]" },
+    .{ .value = "array return: [9] [8] [5] [6]" },
+    .{ .value = "struct: [9] [6] [7]" },
+    .{ .value = "group: line [6] line [6] line [6]" },
 };
 
 pub const expected_float_compare_results = [_]print_result{
@@ -959,8 +1008,8 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"!\"" },
     .{ .type = "int[]", .value = "[]" },
     .{ .type = "string", .value = "\"\"" },
-    .{ .type = "string", .value = "\"é\"" },
-    .{ .type = "string", .value = "\"caf\"" },
+    .{ .type = "byte[]", .value = "[169]" },
+    .{ .type = "byte[]", .value = "[99, 97, 102, 195]" },
     .{ .type = "int[]", .value = "[5, 6]" },
     .{ .type = "int[][]", .value = "[[1, 2], [3, 4]]" },
     .{ .type = "int", .value = "123" },

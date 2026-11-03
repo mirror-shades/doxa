@@ -248,7 +248,7 @@ const Rows = struct {
         try self.w.print("{s}\t{s}\t", .{ kind, self.f.display_name });
         try site(self.w, self.module, inst.span);
         try self.w.writeAll("\t");
-        try print.writeHIRType(self.w, &self.module.program, self.f.typeOf(inst.result.?).doxa);
+        try print.writeHIRType(self.w, &self.module.program, loops.allocType(self.f, inst));
     }
 };
 

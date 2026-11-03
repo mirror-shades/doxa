@@ -65,6 +65,10 @@ pub const FaultKind = enum(u32) {
     /// stack's guard page (`installHandlers`). It has no site: under `-g` the
     /// backtrace names the frames, starting from the one that overflowed.
     stack_overflow,
+    /// `--instrument=memcheck`: an append about to write string bytes that
+    /// were already written, which only two buffers sharing spare room could
+    /// do. The buffer rule rules it out, so it is a compiler or runtime bug.
+    string_rewritten,
 
     fn headline(self: FaultKind) []const u8 {
         return switch (self) {
@@ -81,12 +85,16 @@ pub const FaultKind = enum(u32) {
             .use_after_reclaim => "Read of memory its arena reclaimed",
             .out_of_memory => "Out of memory",
             .stack_overflow => "Stack overflow",
+            .string_rewritten => "String bytes written twice",
         };
     }
 
     /// 2 is reserved for a compiler-internal trap; every program fault is 1.
     fn exitCode(self: FaultKind) u8 {
-        return if (self == .unreachable_code or self == .use_after_reclaim) 2 else 1;
+        return switch (self) {
+            .unreachable_code, .use_after_reclaim, .string_rewritten => 2,
+            else => 1,
+        };
     }
 };
 
@@ -288,7 +296,7 @@ pub fn report(kind: FaultKind, site: ?*const DoxaFaultSite, text: []const u8, au
             writeStderr("\"");
         },
         .index_out_of_bounds => writeStderr(std.fmt.bufPrint(&buffer, ": index {d}, length {d}", .{ aux0, aux1 }) catch unreachable),
-        .unreachable_code, .div_by_zero, .overflow, .pop_empty, .use_after_reclaim, .out_of_memory, .stack_overflow => {},
+        .unreachable_code, .div_by_zero, .overflow, .pop_empty, .use_after_reclaim, .out_of_memory, .stack_overflow, .string_rewritten => {},
     }
     writeStderr("\n");
     if (backtrace_enabled) writeBacktrace(trace);
@@ -299,6 +307,11 @@ pub fn report(kind: FaultKind, site: ?*const DoxaFaultSite, text: []const u8, au
 /// An allocation failed: the out-of-memory fault, from the caller's frame.
 pub fn outOfMemory() noreturn {
     report(.out_of_memory, null, "", 0, 0, .{ .unwind_from = @returnAddress() });
+}
+
+/// Under memcheck, an append found its spare room already written.
+pub fn stringRewritten() noreturn {
+    report(.string_rewritten, null, "", 0, 0, .{ .unwind_from = @returnAddress() });
 }
 
 /// Report the fault at `site` and terminate (`fault.report`).

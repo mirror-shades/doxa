@@ -1,0 +1,16 @@
+# A 10,000-byte string built in a byte array, packed once, then scanned byte by
+# byte with `each`. Each byte is a one-byte string, so the bytes asked for grow
+# with the length, never with its square (plan/strings.md, the memory gate).
+
+entry function main() {
+    var bytes :: byte[] is []
+    for i while i < 10000 do i += 1 {
+        @push(bytes, if i % 3 == 0 then 0x61 else 0x62)
+    }
+    const text is @pack(bytes)
+    var hits is 0
+    each c in text {
+        if c == "a" then hits += 1
+    }
+    @print("{@length(text)} {hits}\n")
+}

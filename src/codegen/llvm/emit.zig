@@ -205,7 +205,7 @@ pub const Emitter = struct {
             try w.print("@.doxa.counts = internal global [{d} x i64] zeroinitializer\n", .{self.site_count});
         }
         for (self.module.program.globals) |g| {
-            try w.print("@{s} = internal global {s} zeroinitializer", .{ g.name, layout_mod.doxaType(g.ty) });
+            try w.print("@{s} = internal global {s} zeroinitializer", .{ g.name, layout_mod.storageType(g.ty) });
             // Under `-g`, the global is described where it is defined.
             if (self.debug) |*d| try w.print(", !dbg !{d}", .{try d.global(g)});
             try w.writeAll("\n");
@@ -458,6 +458,7 @@ pub fn zigOutParams(t: HIRType) []const []const u8 {
 
 const prelude =
     \\%DoxaString = type { ptr, i64 }
+    \\%DoxaStringBuffer = type { ptr, i64, i64 }
     \\%DoxaValue = type { i32, i32, i64, i64 }
     \\%ArrayHeader = type { ptr, i64, i64, i64, i64, ptr, i64 }
     \\%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }
@@ -489,13 +490,13 @@ const prelude =
     \\declare void @doxa_print_enum(ptr, i64)
     \\declare i1 @doxa_str_eq(ptr, i64, ptr, i64)
     \\declare i32 @doxa_str_cmp(ptr, i64, ptr, i64)
-    \\declare void @doxa_str_concat(ptr, ptr, i64, ptr, i64, ptr, ptr)
+    \\declare void @doxa_str_concat(ptr, ptr, i64, ptr, ptr)
     \\declare void @doxa_str_clone(ptr, ptr, i64, ptr, ptr)
-    \\declare void @doxa_substring(ptr, ptr, i64, i64, i64, ptr, ptr)
+    \\declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)
+    \\declare void @doxa_str_append(ptr, ptr, ptr, i64, ptr, i64)
+    \\declare void @doxa_str_append_string(ptr, ptr, ptr, i64, ptr, i64)
     \\declare void @doxa_str_insert(ptr, ptr, i64, i64, ptr, i64, ptr, ptr)
-    \\declare i8 @doxa_str_remove(ptr, ptr, i64, i64, ptr, ptr)
-    \\declare i8 @doxa_str_pop(ptr, ptr, i64, ptr, ptr)
-    \\declare void @doxa_char_to_string(ptr, i8, ptr, ptr)
+    \\declare void @doxa_str_remove(ptr, ptr, i64, i64, ptr, ptr)
     \\declare i64 @doxa_find_str(ptr, i64, ptr, i64)
     \\declare i64 @doxa_int_from_string(ptr, i64, ptr)
     \\declare double @doxa_float_from_string(ptr, i64, ptr)
@@ -510,6 +511,7 @@ const prelude =
     \\declare void @doxa_array_to_string(ptr, ptr, ptr, ptr)
     \\declare void @doxa_value_to_string(ptr, ptr, ptr, ptr)
     \\declare void @doxa_pack_bytes(ptr, ptr, ptr, ptr)
+    \\declare void @doxa_bytes_view(ptr, ptr, ptr)
     \\declare ptr @doxa_unpack_bytes(ptr, ptr, i64)
     \\declare ptr @doxa_array_new(ptr, i64, i64, i64)
     \\declare void @doxa_array_set_elem_words(ptr, i64)

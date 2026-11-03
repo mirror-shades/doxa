@@ -270,6 +270,19 @@ pub fn allocSlice(scope: *Scope, comptime T: type, n: usize) []T {
     return @as([*]T, @ptrCast(@alignCast(raw)))[0..n];
 }
 
+/// The least capacity a growable buffer (an array, a string buffer) is given.
+pub const min_capacity: u64 = 8;
+
+/// The capacity a growable buffer of `current` moves to when it must hold
+/// `required`: the least doubling of `current` (at least `min_capacity`) that
+/// does. The old buffer is abandoned, never freed, so the bytes a buffer
+/// leaves behind stay below what it holds.
+pub fn grownCapacity(current: u64, required: u64) u64 {
+    var cap: u64 = if (current == 0) min_capacity else current;
+    while (cap < required) cap = std.math.mul(u64, cap, 2) catch return required;
+    return cap;
+}
+
 test "memcheck: a buried arena's memory is poisoned, kept and recognised" {
     const scope = enter(root());
     defer exit(scope);

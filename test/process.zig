@@ -56,10 +56,15 @@ pub const Capture = struct {
     stdout: []u8,
     stderr: []u8,
     end: End,
+    /// Empty unless `.timed_out`: the processes still running at the deadline,
+    /// one per line as `<pid> <command line>`, taken just before the kill. A
+    /// timeout is a hang, and this names where it is.
+    stuck: []u8,
 
     pub fn deinit(capture: Capture, gpa: Allocator) void {
         gpa.free(capture.stdout);
         gpa.free(capture.stderr);
+        gpa.free(capture.stuck);
     }
 
     /// Exited with status 0.
@@ -102,9 +107,13 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !Capture {
 
     const deadline = (Io.Timeout{ .duration = .{ .raw = options.timeout, .clock = .awake } }).toDeadline(io);
     var timed_out = false;
+    var stuck: []u8 = &.{};
+    errdefer gpa.free(stuck);
     reader.fillRemaining(deadline) catch |err| switch (err) {
         error.Timeout => {
             timed_out = true;
+            stuck = tree.list(gpa, io) catch |list_err|
+                try std.fmt.allocPrint(gpa, "(could not list the tree: {s})\n", .{@errorName(list_err)});
             tree.kill();
             // Reads still pending belong to a killed tree; keep what arrived.
             reader.batch.cancel(io);
@@ -121,6 +130,7 @@ pub fn run(gpa: Allocator, io: Io, options: Options) !Capture {
     return .{
         .stdout = stdout,
         .stderr = stderr,
+        .stuck = stuck,
         .end = if (timed_out) .timed_out else switch (term) {
             .exited => |code| .{ .exited = code },
             else => .{ .abnormal = term },
@@ -180,6 +190,40 @@ const WindowsJob = struct {
         _ = TerminateJobObject(tree.job, 1);
     }
 
+    /// Every process in the job with its command line.
+    fn list(tree: WindowsJob, gpa: Allocator, io: Io) ![]u8 {
+        _ = io;
+        var ids: JOBOBJECT_BASIC_PROCESS_ID_LIST = undefined;
+        if (QueryInformationJobObject(tree.job, JobObjectBasicProcessIdList, &ids, @sizeOf(JOBOBJECT_BASIC_PROCESS_ID_LIST), null) == .FALSE)
+            return error.QueryInformationJobObjectFailed;
+
+        var text: Io.Writer.Allocating = .init(gpa);
+        errdefer text.deinit();
+        for (ids.ProcessIdList[0..ids.NumberOfProcessIdsInList]) |pid| {
+            try text.writer.print("{d} ", .{pid});
+            try writeCommandLine(gpa, &text.writer, @intCast(pid));
+            try text.writer.writeByte('\n');
+        }
+        if (ids.NumberOfAssignedProcesses > ids.NumberOfProcessIdsInList)
+            try text.writer.print("({d} more not listed)\n", .{ids.NumberOfAssignedProcesses - ids.NumberOfProcessIdsInList});
+        return text.toOwnedSlice();
+    }
+
+    fn writeCommandLine(gpa: Allocator, w: *Io.Writer, pid: windows.DWORD) !void {
+        const process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, .FALSE, pid) orelse
+            return w.writeAll("(exited)");
+        defer windows.CloseHandle(process_handle);
+        // A UNICODE_STRING header followed by the text it points at.
+        var buffer: [32 * 1024]u8 align(@alignOf(windows.UNICODE_STRING)) = undefined;
+        const status = windows.ntdll.NtQueryInformationProcess(process_handle, .CommandLineInformation, &buffer, buffer.len, null);
+        if (status != .SUCCESS) return w.print("(command line unavailable: {t})", .{status});
+        const line: *const windows.UNICODE_STRING = @ptrCast(&buffer);
+        const units = line.Buffer.?[0 .. line.Length / 2];
+        const utf8 = try std.unicode.utf16LeToUtf8Alloc(gpa, units);
+        defer gpa.free(utf8);
+        try w.writeAll(utf8);
+    }
+
     /// Closing the last handle to a kill-on-close job ends every process still
     /// in it.
     fn close(tree: WindowsJob) void {
@@ -199,6 +243,29 @@ const ProcessGroup = struct {
     /// been reused.
     fn kill(tree: ProcessGroup) void {
         std.posix.kill(-tree.leader, .KILL) catch {};
+    }
+
+    /// Every process in the group with its command line, from `ps`: the one
+    /// listing Linux and macOS share.
+    fn list(tree: ProcessGroup, gpa: Allocator, io: Io) ![]u8 {
+        const result = blk: {
+            spawn_lock.lockUncancelable(io);
+            defer spawn_lock.unlock(io);
+            break :blk try std.process.run(gpa, io, .{ .argv = &.{ "ps", "-A", "-o", "pgid=,pid=,args=" } });
+        };
+        defer gpa.free(result.stdout);
+        defer gpa.free(result.stderr);
+
+        var text: Io.Writer.Allocating = .init(gpa);
+        errdefer text.deinit();
+        var lines = std.mem.splitScalar(u8, result.stdout, '\n');
+        while (lines.next()) |line| {
+            var fields = std.mem.tokenizeScalar(u8, line, ' ');
+            const pgid = fields.next() orelse continue;
+            if ((std.fmt.parseInt(std.posix.pid_t, pgid, 10) catch continue) != tree.leader) continue;
+            try text.writer.print("{s}\n", .{std.mem.trim(u8, fields.rest(), " ")});
+        }
+        return text.toOwnedSlice();
     }
 
     fn close(tree: ProcessGroup) void {
@@ -227,6 +294,15 @@ const STD_ERROR_HANDLE: windows.DWORD = @bitCast(@as(i32, -12));
 const HANDLE_FLAG_INHERIT: windows.DWORD = 0x00000001;
 const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: windows.DWORD = 0x00002000;
 const JobObjectExtendedLimitInformation: c_int = 9;
+const JobObjectBasicProcessIdList: c_int = 3;
+const PROCESS_QUERY_LIMITED_INFORMATION: windows.DWORD = 0x1000;
+
+/// Room for more processes than a doxa compile ever starts at once.
+const JOBOBJECT_BASIC_PROCESS_ID_LIST = extern struct {
+    NumberOfAssignedProcesses: windows.DWORD,
+    NumberOfProcessIdsInList: windows.DWORD,
+    ProcessIdList: [64]usize,
+};
 
 const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
     PerProcessUserTimeLimit: windows.LARGE_INTEGER,
@@ -263,5 +339,7 @@ extern "kernel32" fn SetHandleInformation(h_object: windows.HANDLE, mask: window
 extern "kernel32" fn CreateJobObjectW(attributes: ?*anyopaque, name: ?[*:0]const u16) callconv(.winapi) ?windows.HANDLE;
 extern "kernel32" fn SetInformationJobObject(job: windows.HANDLE, class: c_int, info: *const anyopaque, length: windows.DWORD) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn AssignProcessToJobObject(job: windows.HANDLE, process: windows.HANDLE) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn QueryInformationJobObject(job: windows.HANDLE, class: c_int, info: *anyopaque, length: windows.DWORD, return_length: ?*windows.DWORD) callconv(.winapi) windows.BOOL;
+extern "kernel32" fn OpenProcess(access: windows.DWORD, inherit: windows.BOOL, pid: windows.DWORD) callconv(.winapi) ?windows.HANDLE;
 extern "kernel32" fn TerminateJobObject(job: windows.HANDLE, exit_code: windows.UINT) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn ResumeThread(thread: windows.HANDLE) callconv(.winapi) windows.DWORD;

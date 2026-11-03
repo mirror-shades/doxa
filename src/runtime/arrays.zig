@@ -14,24 +14,13 @@ const ArrayHeader = abi.ArrayHeader;
 const ARRAY_TAG = abi.ARRAY_TAG;
 const VALUE_TAG = abi.VALUE_TAG;
 
-const ARRAY_MIN_CAPACITY: u64 = 8;
-
 fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
 
 fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
     if (required_len <= hdr.cap) return true;
-
-    // Grow exponentially to avoid repeated reallocations on append-heavy paths.
-    var new_cap: u64 = if (hdr.cap == 0) ARRAY_MIN_CAPACITY else hdr.cap;
-    while (new_cap < required_len) {
-        const doubled = std.math.mul(u64, new_cap, 2) catch {
-            new_cap = required_len;
-            break;
-        };
-        new_cap = doubled;
-    }
+    const new_cap = scope_arena.grownCapacity(hdr.cap, required_len);
 
     if (hdr.elem_size == 0) {
         hdr.cap = new_cap;
@@ -80,7 +69,7 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
 /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index),
 /// 9=value(DoxaValue, a union or group element).
 pub fn arrayNewIn(scope: *Scope, elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
-    const cap = clampMin(init_len, ARRAY_MIN_CAPACITY);
+    const cap = clampMin(init_len, scope_arena.min_capacity);
     const hdr_ptr = scope_arena.create(scope, ArrayHeader);
     const data_bytes: usize = @intCast(elem_size * cap);
     var data_ptr: ?*anyopaque = null;
@@ -461,27 +450,33 @@ pub export fn doxa_array_set_value(hdr: *ArrayHeader, idx: u64, value: *const ab
     slots[@intCast(idx)] = value.*;
 }
 
-pub export fn doxa_pack_bytes(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    if (hdr == null) {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    }
-    const arr = hdr.?;
-    const buf = scope_arena.allocSlice(scope, u8, @intCast(arr.len));
-    for (0..@intCast(arr.len)) |i| {
-        buf[i] = @intCast(doxa_array_get_i64(arr, i));
-    }
-    out_ptr.* = buf.ptr;
-    out_len.* = @intCast(arr.len);
+/// A `byte[]`'s bytes: it stores one byte per element.
+fn byteSlice(hdr: ?*ArrayHeader) []u8 {
+    const arr = hdr orelse return &.{};
+    const data = arr.data orelse return &.{};
+    return @as([*]u8, @ptrCast(data))[0..@intCast(arr.len)];
 }
 
+/// `@pack`: a copy of a byte array's bytes as a string in `scope`.
+pub export fn doxa_pack_bytes(scope: *Scope, hdr: ?*ArrayHeader, out_ptr: *?[*]const u8, out_len: *u64) callconv(.c) void {
+    const copy = strings.allocDoxaString(scope, byteSlice(hdr));
+    out_ptr.* = copy.ptr;
+    out_len.* = copy.len;
+}
+
+/// `@pack` of a fresh byte array, which nothing else holds: its own bytes,
+/// now a string's, never written again (`plan/strings.md`, Phase 4).
+pub export fn doxa_bytes_view(hdr: ?*ArrayHeader, out_ptr: *?[*]const u8, out_len: *u64) callconv(.c) void {
+    const bytes = byteSlice(hdr);
+    out_ptr.* = if (bytes.len == 0) null else bytes.ptr;
+    out_len.* = bytes.len;
+}
+
+/// `@unpack`: a byte array in `scope` holding a copy of a string's bytes.
 pub export fn doxa_unpack_bytes(scope: *Scope, ptr: ?[*]const u8, len: u64) callconv(.c) ?*ArrayHeader {
     const bytes = strings.sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     const result = doxa_array_new(scope, 1, 1, bytes.len);
-    for (bytes, 0..) |ch, i| {
-        doxa_array_set_i64(result, i, ch);
-    }
+    @memcpy(byteSlice(result), bytes);
     return result;
 }
 

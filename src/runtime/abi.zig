@@ -26,6 +26,16 @@ pub const DoxaString = extern struct {
     len: u64,
 };
 
+/// A string variable's storage (`plan/strings.md`): its value, `(ptr, len)`,
+/// then the bytes it may still append into without moving, `[len, cap)`.
+/// Its first two fields are a `DoxaString`, so reading the value is a load.
+/// Only an append writes string bytes, and only into its own spare room.
+pub const DoxaStringBuffer = extern struct {
+    ptr: ?[*]u8,
+    len: u64,
+    cap: u64,
+};
+
 pub const DoxaPeekInfo = extern struct {
     file: ?[*:0]const u8,
     name: ?[*:0]const u8,

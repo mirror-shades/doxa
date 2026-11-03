@@ -360,7 +360,7 @@ test "register hir verifier: a slot outlives what is stored in it" {
         var s = try fx.greeting(inner);
         if (rehomed) s = try fx.b.define(.{ .rehome = .{ .arena = fx.body, .operand = s } }, string);
         const ref = try fx.b.define(.{ .slot_addr = slot }, .{ .ref = .String });
-        try fx.b.effect(.{ .store = .{ .ref = ref, .value = s } });
+        try fx.b.effect(.{ .str_set = .{ .buffer = ref, .value = s } });
         try fx.b.effect(.{ .scope_exit = .{ .arena = inner } });
         try fx.b.effect(.{ .scope_exit = .{ .arena = fx.body } });
         try fx.b.ret(null);
@@ -369,6 +369,48 @@ test "register hir verifier: a slot outlives what is stored in it" {
             try expectValid(a, &no_program, &f);
         } else {
             try expectFault(a, &no_program, &f, "rehome or clone");
+        }
+    }
+}
+
+test "register hir verifier: a string buffer is reached only through its own instructions" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // A plain load or store of string storage is refused.
+    for ([_]bool{ false, true }) |loads| {
+        var fx = try ArenaFixture.init(a, "plain", .Nothing);
+        const slot = try fx.b.addSlot(.String, fx.body);
+        const ref = try fx.b.define(.{ .slot_addr = slot }, .{ .ref = .String });
+        if (loads) {
+            _ = try fx.b.define(.{ .load = .{ .operand = ref } }, string);
+        } else {
+            try fx.b.effect(.{ .store = .{ .ref = ref, .value = try fx.greeting(fx.body) } });
+        }
+        try fx.b.effect(.{ .scope_exit = .{ .arena = fx.body } });
+        try fx.b.ret(null);
+        const f = try fx.b.finish();
+        try expectFault(a, &no_program, &f, if (loads) "str.view reads it" else "str.set writes it");
+    }
+
+    // An append grows the buffer in the arena that owns it, and no other.
+    for ([_]bool{ false, true }) |owned| {
+        var fx = try ArenaFixture.init(a, "append", .Nothing);
+        const slot = try fx.b.addSlot(.String, fx.body);
+        const inner = try fx.b.define(.{ .scope_enter = .{ .parent = fx.body } }, .arena);
+        const ref = try fx.b.define(.{ .slot_addr = slot }, .{ .ref = .String });
+        const from = try fx.b.define(.{ .str_view = .{ .buffer = ref } }, string);
+        const part = try fx.greeting(inner);
+        try fx.b.effect(.{ .str_append = .{ .buffer = ref, .arena = if (owned) fx.body else inner, .from = from, .parts = &.{part} } });
+        try fx.b.effect(.{ .scope_exit = .{ .arena = inner } });
+        try fx.b.effect(.{ .scope_exit = .{ .arena = fx.body } });
+        try fx.b.ret(null);
+        const f = try fx.b.finish();
+        if (owned) {
+            try expectValid(a, &no_program, &f);
+        } else {
+            try expectFault(a, &no_program, &f, "not the arena that owns it");
         }
     }
 }

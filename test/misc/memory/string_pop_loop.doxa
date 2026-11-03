@@ -1,0 +1,17 @@
+# A 10,000-byte string popped to empty. The popped byte and the rest are views
+# of the bytes already there (plan/strings.md, Phase 2), so the bytes asked for
+# are the text's own, never a copy of the rest at every pop.
+
+entry function main() {
+    var bytes :: byte[] is []
+    for i while i < 10000 do i += 1 {
+        @push(bytes, if i % 3 == 0 then 0x61 else 0x62)
+    }
+    var s is @pack(bytes)
+    var hits is 0
+    while @length(s) > 0 {
+        const c is @pop(s)
+        if c == "a" then hits += 1
+    }
+    @print("{hits}\n")
+}

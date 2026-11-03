@@ -357,6 +357,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&wiring.step);
     test_step.dependOn(&TypeAuthority.create(b).step);
+    test_step.dependOn(&ArenaBytes.create(b).step);
     if (check_zerr_step) |step| test_step.dependOn(step);
     test_step.dependOn(check_docs_step);
     if (can_run_target) {
@@ -714,5 +715,56 @@ const TypeAuthority = struct {
                 else => {},
             }
         }
+    }
+};
+
+/// `plan/strings.md` rule 4: the runtime never frees, shrinks or rewrites
+/// arena bytes before the arena resets, because a string value may still show
+/// bytes its buffer has grown out of. Only `scope_arena.zig`, the allocator
+/// itself, calls an allocator's free, resize or remap.
+const ArenaBytes = struct {
+    step: std.Build.Step,
+
+    const verbs = [_][]const u8{ "free", "destroy", "resize", "remap", "realloc", "rawFree", "rawResize", "rawRemap" };
+
+    fn create(b: *std.Build) *ArenaBytes {
+        const check = b.allocator.create(ArenaBytes) catch @panic("OOM");
+        check.* = .{ .step = .init(.{ .id = .custom, .name = "check arena bytes", .owner = b, .makeFn = make }) };
+        return check;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        const b = step.owner;
+        const io = b.graph.io;
+        var arena_state: std.heap.ArenaAllocator = .init(options.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        var dir = try b.build_root.handle.openDir(io, "src/runtime", .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(arena);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
+            if (std.mem.eql(u8, entry.path, "scope_arena.zig")) continue;
+            const path = try std.fmt.allocPrint(arena, "src/runtime/{s}", .{entry.path});
+            std.mem.replaceScalar(u8, path, '\\', '/');
+            const source = try b.build_root.handle.readFileAllocOptions(io, path, arena, .unlimited, .of(u8), 0);
+            // Tokenized, so comments and string contents never count.
+            var tokens: std.zig.Tokenizer = .init(source);
+            var previous: std.zig.Token.Tag = .invalid;
+            while (true) {
+                const token = tokens.next();
+                if (token.tag == .eof) break;
+                defer previous = token.tag;
+                if (token.tag != .identifier or previous != .period) continue;
+                const text = source[token.loc.start..token.loc.end];
+                for (verbs) |verb| {
+                    if (!std.mem.eql(u8, text, verb)) continue;
+                    try step.addError("{s}: calls `.{s}`; only `scope_arena.zig` gives memory back, and only on a reset or exit (`plan/strings.md`, rule 4)", .{ path, text });
+                }
+            }
+        }
+        if (step.result_error_msgs.items.len != 0) return error.MakeFailed;
     }
 };

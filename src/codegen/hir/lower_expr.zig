@@ -16,6 +16,7 @@ const lower_control = @import("lower_control.zig");
 const ir = @import("register/ir.zig");
 
 const Lowering = generator.Lowering;
+const StoreTarget = @import("../../analysis/semantic/semantic.zig").StoreTarget;
 const Error = generator.Error;
 const HIRType = ir.HIRType;
 const ValueId = ir.ValueId;
@@ -27,7 +28,7 @@ pub fn expr(l: *Lowering, e: *ast.Expr) Error!?ValueId {
 
     return switch (e.data) {
         .Literal => |lit| literal(l, e, lit),
-        .InterpolatedString => |template| interpolated(l, template),
+        .InterpolatedString => interpolated(l, e),
         .Variable => readName(l, e),
         .Grouping => |inner| if (inner) |g| expr(l, g) else try l.nothing(),
         .EnumMember => |member| enumConstant(l, e, member),
@@ -136,19 +137,67 @@ pub fn literalConstant(lit: ast.TokenLiteral) ?struct { c: ir.Constant, ty: HIRT
     };
 }
 
-fn interpolated(l: *Lowering, template: *ast.FormatTemplate) Error!?ValueId {
-    var acc: ?ValueId = null;
-    for (template.parts) |part| {
-        const piece = switch (part) {
-            .String => |text| blk: {
-                if (text.len == 0 and acc != null) continue;
-                break :blk try l.constant(.{ .string = text }, .String);
-            },
-            .Expression => |inner| try toString(l, inner) orelse return null,
-        };
-        acc = if (acc) |lhs| try l.define(.{ .str_concat = .{ .arena = try l.arena(), .lhs = lhs, .rhs = piece } }, .String) else piece;
+fn interpolated(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    return textIn(l, e, try l.arena());
+}
+
+/// The text of `e`, a template or a `+` of strings, built in `arena` with one
+/// allocation (`plan/strings.md`, Phase 3).
+pub fn textIn(l: *Lowering, e: *ast.Expr, arena: ValueId) Error!?ValueId {
+    var parts: Parts = .empty;
+    defer parts.deinit(l.g.alloc);
+    const complete = switch (e.data) {
+        .InterpolatedString => |template| try templateParts(l, template.parts, &parts),
+        else => try sumParts(l, e, false, &parts),
+    };
+    if (!complete) return null;
+    return try joinIn(l, parts.items, arena);
+}
+
+const Parts = std.ArrayListUnmanaged(ValueId);
+
+/// One string of `parts`, in `arena`: `""` for none, the part itself for a
+/// single string, else one `str_concat`.
+fn joinIn(l: *Lowering, parts: []const ValueId, arena: ValueId) Error!ValueId {
+    if (parts.len == 0) return l.constant(.{ .string = "" }, .String);
+    if (parts.len == 1 and l.b.values.items[@intFromEnum(parts[0])].ty.doxa == .String) return parts[0];
+    return l.define(.{ .str_concat = .{ .arena = arena, .parts = try l.g.alloc.dupe(ValueId, parts) } }, .String);
+}
+
+/// Append a template's parts to `out`: each piece of text, and each
+/// placeholder's value (`part`). False when control leaves a placeholder.
+fn templateParts(l: *Lowering, pieces: []const ast.FormatPart, out: *Parts) Error!bool {
+    for (pieces) |piece| switch (piece) {
+        .String => |text| if (text.len != 0) try out.append(l.g.alloc, try l.constant(.{ .string = text }, .String)),
+        .Expression => |inner| try out.append(l.g.alloc, try part(l, inner) orelse return false),
+    };
+    return true;
+}
+
+/// Append the operands of the `+` chain `sum` to `out`, left to right,
+/// leaving out its leftmost when `after_first`. False when control leaves.
+fn sumParts(l: *Lowering, sum: *ast.Expr, after_first: bool, out: *Parts) Error!bool {
+    var chain: std.ArrayListUnmanaged(*ast.Expr) = .empty;
+    defer chain.deinit(l.g.alloc);
+    var at = sum;
+    while (isStringSum(l, at)) : (at = at.data.Binary.left.?) try chain.append(l.g.alloc, at);
+    if (!after_first) try out.append(l.g.alloc, try l.exprAs(at, .String) orelse return false);
+    var i = chain.items.len;
+    while (i > 0) {
+        i -= 1;
+        try out.append(l.g.alloc, try l.exprAs(chain.items[i].data.Binary.right.?, .String) orelse return false);
     }
-    return acc orelse try l.constant(.{ .string = "" }, .String);
+    return true;
+}
+
+/// `e` as a part of a concatenation: a string or a scalar as it is, which the
+/// concatenation writes as `to_string` would; anything else, its text.
+fn part(l: *Lowering, e: *ast.Expr) Error!?ValueId {
+    const ty = try l.g.typeOf(e);
+    return switch (ty) {
+        .String, .Int, .Float, .Byte, .Tetra => l.exprAs(e, ty),
+        else => toString(l, e),
+    };
 }
 
 /// `e` as a string: itself, or its text (`@string`, interpolation).
@@ -235,11 +284,11 @@ fn binary(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     };
     // Arithmetic computes in the type analysis gave the expression: the
     // operands' common type, or `float` for `/`. `+` of strings and of
-    // arrays concatenates.
+    // arrays concatenates; a chain of string `+`s is one concatenation.
     const ty = try l.g.typeOf(e);
+    if (op == .Add and ty == .String) return textIn(l, e, try l.arena());
     const lhs = try l.exprAs(bin.left.?, ty) orelse return null;
     const rhs = try l.exprAs(bin.right.?, ty) orelse return null;
-    if (op == .Add and ty == .String) return try l.define(.{ .str_concat = .{ .arena = try l.arena(), .lhs = lhs, .rhs = rhs } }, ty);
     if (op == .Add and ty == .Array) return try l.define(.{ .array_concat = .{ .arena = try l.arena(), .lhs = lhs, .rhs = rhs } }, ty);
     return try l.define(.{ .arith = .{ .op = op, .lhs = lhs, .rhs = rhs } }, ty);
 }
@@ -385,14 +434,95 @@ fn assignment(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const assign = e.data.Assignment;
     const target = try l.g.storeTarget(&e.base);
     const slot_type = try l.g.lowerType(target.slot);
-    const v = try l.exprAs(assign.value.?, slot_type) orelse return null;
+    if (leadingRead(l, target, assign.value.?)) |lead| if (try l.bufferOf(target, assign.name.lexeme)) |buffer| {
+        // `s is s + a` or `s is "{s}a"`: `s` is read first, as before, then
+        // what follows it, then appended (`plan/strings.md`, "The leading
+        // read").
+        const from = try readName(l, lead.read) orelse return null;
+        var parts: Parts = .empty;
+        defer parts.deinit(l.g.alloc);
+        const complete = switch (lead.rest) {
+            .sum => |chain| try sumParts(l, chain, true, &parts),
+            .text => |rest| try templateParts(l, rest, &parts),
+        };
+        if (!complete) return null;
+        try appendParts(l, buffer, from, parts.items);
+        const now = try l.define(.{ .str_view = .{ .buffer = buffer.ref } }, .String);
+        return try result(l, e, now, slot_type);
+    };
+    // A string stored into a variable is built in the variable's arena.
+    const v = if (try l.bufferOf(target, assign.name.lexeme)) |buffer|
+        try l.placedAs(assign.value.?, slot_type, buffer.arena) orelse return null
+    else
+        try l.exprAs(assign.value.?, slot_type) orelse return null;
     try l.writeStorage(target, assign.name.lexeme, v, l.mustCopy(assign.value.?, slot_type));
     return try result(l, e, v, slot_type);
 }
 
+/// Append `parts` to `buffer`, which held `from` when it was read.
+fn appendParts(l: *Lowering, buffer: Lowering.Buffer, from: ValueId, parts: []const ValueId) Error!void {
+    if (parts.len == 0) return;
+    try l.effect(.{ .str_append = .{ .buffer = buffer.ref, .arena = buffer.arena, .from = from, .parts = try l.g.alloc.dupe(ValueId, parts) } });
+}
+
+/// The buffer an append to `subject` grows: a string variable, by its name.
+/// Null for any other subject (a field, an element), which is rebuilt and
+/// stored.
+fn appendBuffer(l: *Lowering, subject: *ast.Expr) Error!?Lowering.Buffer {
+    if (subject.data != .Variable) return null;
+    return l.bufferOf(try l.g.storeTarget(&subject.base), subject.data.Variable.lexeme);
+}
+
+/// A string value that begins by reading the variable it is stored into:
+/// `s + a + …`, or a template whose first piece is `{s}`. `read` is that
+/// read; `rest`, what follows it.
+const LeadingRead = struct {
+    read: *ast.Expr,
+    rest: union(enum) {
+        /// The `+` chain whose leftmost operand is `read`.
+        sum: *ast.Expr,
+        /// The template's parts after `{s}`.
+        text: []const ast.FormatPart,
+    },
+};
+
+/// `value`'s leading read of `target`'s storage, or null when it has none.
+fn leadingRead(l: *Lowering, target: StoreTarget, value: *ast.Expr) ?LeadingRead {
+    switch (value.data) {
+        .Binary => {
+            var leftmost = value;
+            while (isStringSum(l, leftmost)) leftmost = leftmost.data.Binary.left.?;
+            if (leftmost == value or !readsTarget(l, target, leftmost)) return null;
+            return .{ .read = leftmost, .rest = .{ .sum = value } };
+        },
+        .InterpolatedString => |template| {
+            var first: usize = 0;
+            while (first < template.parts.len and template.parts[first] == .String and template.parts[first].String.len == 0) first += 1;
+            if (first == template.parts.len or template.parts[first] != .Expression) return null;
+            const read = template.parts[first].Expression;
+            if (!readsTarget(l, target, read)) return null;
+            return .{ .read = read, .rest = .{ .text = template.parts[first + 1 ..] } };
+        },
+        else => return null,
+    }
+}
+
+/// Whether `e` is a `+` of strings.
+pub fn isStringSum(l: *Lowering, e: *ast.Expr) bool {
+    if (e.data != .Binary or e.data.Binary.operator.type != .PLUS) return false;
+    return (l.g.typeOf(e) catch return false) == .String;
+}
+
+/// Whether `e` is a plain read of `target`'s storage.
+fn readsTarget(l: *Lowering, target: StoreTarget, e: *ast.Expr) bool {
+    if (e.data != .Variable) return false;
+    const read = l.g.storeTarget(&e.base) catch return false;
+    return read.global == target.global and read.storage == target.storage;
+}
+
 /// `target op= value`: the target's place is evaluated once, its current
 /// value is what the operation's `Held` reads, and the result is stored back
-/// into the same place.
+/// into the same place. `s += t` on a string variable appends.
 fn compoundAssign(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     const compound = e.data.CompoundAssign;
     const target = compound.target;
@@ -400,7 +530,13 @@ fn compoundAssign(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     switch (target.data) {
         .Variable => |name| {
             const store = try l.g.storeTarget(&target.base);
-            try l.held.put(l.g.alloc, e.base.id, try readName(l, target) orelse return null);
+            const current = try readName(l, target) orelse return null;
+            try l.held.put(l.g.alloc, e.base.id, current);
+            if (heldSum(compound.operation, e.base.id)) |added| if (try l.bufferOf(store, name.lexeme)) |buffer| {
+                const tail = try l.exprAs(added, .String) orelse return null;
+                try appendParts(l, buffer, current, &.{tail});
+                return try l.nothing();
+            };
             const slot_type = try l.g.lowerType(store.slot);
             const v = try l.exprAs(compound.operation, slot_type) orelse return null;
             try l.writeStorage(store, name.lexeme, v, false);
@@ -425,6 +561,17 @@ fn compoundAssign(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         else => unreachable, // the parser admits only these targets
     }
     return try l.nothing();
+}
+
+/// The right operand of `operation` when it is `+` of the current value its
+/// owner `owner` holds: what `s += t` adds.
+fn heldSum(operation: *ast.Expr, owner: ast.NodeId) ?*ast.Expr {
+    if (operation.data != .Binary) return null;
+    const bin = operation.data.Binary;
+    if (bin.operator.type != .PLUS) return null;
+    const left = bin.left orelse return null;
+    if (left.data != .Held or left.data.Held != owner) return null;
+    return bin.right;
 }
 
 /// Store `value`, of `ty`, back into what `target` names: a name, or a field.
@@ -482,7 +629,7 @@ fn index(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         },
         .String => {
             const at = try l.exprAs(idx.index, .Int) orelse return null;
-            return try l.define(.{ .str_char = .{ .arena = try l.arena(), .string = container, .index = at } }, .String);
+            return try l.define(.{ .str_char = .{ .string = container, .index = at } }, .String);
         },
         else => return unexpected(l, e),
     }
@@ -783,7 +930,7 @@ fn lendArgument(l: *Lowering, e: *ast.Expr, param_type: HIRType, args: *std.Arra
     switch (l.local(target.storage)) {
         .slot => |slot| {
             try args.append(l.g.alloc, try l.b.define(.{ .slot_addr = slot }, .{ .ref = slot_type }));
-            try args.append(l.g.alloc, l.b.slots.items[@intFromEnum(slot)].arena);
+            try args.append(l.g.alloc, l.b.slots.items[@intFromEnum(slot)].arena.?);
         },
         .alias => |a| {
             try args.append(l.g.alloc, a.ref);
@@ -865,6 +1012,13 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .string => return toString(l, subject),
         .pack => {
             const v = try expr(l, subject) orelse return null;
+            // A fresh byte array is moved, as any fresh value is stored: the
+            // string takes its bytes. One a binding holds is copied, since the
+            // binding could still write them.
+            const bytes = l.b.values.items[@intFromEnum(v)].ty.doxa;
+            if (!generator.readsStorage(subject) and bytes.Array.size == null) {
+                return try l.define(.{ .str_pack_move = .{ .bytes = v } }, .String);
+            }
             return try l.define(.{ .str_pack = .{ .arena = try l.arena(), .bytes = v } }, .String);
         },
         .unpack => {
@@ -875,8 +1029,11 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
             const target = try expr(l, subject) orelse return null;
             if (subject_type == .String) {
                 const tail = try l.exprAs(args[0], .String) orelse return null;
-                const joined = try l.define(.{ .str_concat = .{ .arena = try l.arena(), .lhs = target, .rhs = tail } }, .String);
-                try storeBack(l, subject, joined, .String);
+                if (try appendBuffer(l, subject)) |buffer| {
+                    try appendParts(l, buffer, target, &.{tail});
+                } else {
+                    try storeBack(l, subject, try joinIn(l, &.{ target, tail }, try l.arena()), .String);
+                }
             } else {
                 const element = subject_type.Array.element.*;
                 const v = try l.stored(target, args[0], element) orelse return null;
@@ -887,8 +1044,15 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
         .pop => {
             const target = try expr(l, subject) orelse return null;
             if (subject_type == .String) {
-                const last = try l.define(.{ .str_last = .{ .arena = try l.arena(), .string = target } }, .String);
-                const rest = try l.define(.{ .str_drop_last = .{ .arena = try l.arena(), .string = target } }, .String);
+                // The last byte, and the bytes before it, as every string
+                // operation addresses bytes. An empty string gives two empty
+                // strings: a negative start or length is the empty substring.
+                const len = try l.define(.{ .str_len = .{ .operand = target } }, .Int);
+                const one = try l.constant(.{ .int = 1 }, .Int);
+                const at = try l.define(.{ .arith = .{ .op = .Sub, .lhs = len, .rhs = one } }, .Int);
+                const zero = try l.constant(.{ .int = 0 }, .Int);
+                const last = try l.define(.{ .str_substring = .{ .string = target, .start = at, .length = one } }, .String);
+                const rest = try l.define(.{ .str_substring = .{ .string = target, .start = zero, .length = at } }, .String);
                 try storeBack(l, subject, rest, .String);
                 return try result(l, e, last, .String);
             }
@@ -917,7 +1081,7 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
                 // The removed byte, empty when `at` is out of range, as the
                 // remaining string is then the whole one.
                 const one = try l.constant(.{ .int = 1 }, .Int);
-                const removed = try l.define(.{ .str_substring = .{ .arena = try l.arena(), .string = target, .start = at, .length = one } }, .String);
+                const removed = try l.define(.{ .str_substring = .{ .string = target, .start = at, .length = one } }, .String);
                 const rest = try l.define(.{ .str_remove = .{ .arena = try l.arena(), .string = target, .index = at } }, .String);
                 try storeBack(l, subject, rest, .String);
                 return try result(l, e, removed, .String);
@@ -931,7 +1095,7 @@ fn internalCall(l: *Lowering, e: *ast.Expr) Error!?ValueId {
             const start = try l.exprAs(args[0], .Int) orelse return null;
             const length = try l.exprAs(args[1], .Int) orelse return null;
             if (subject_type == .String) {
-                return try l.define(.{ .str_substring = .{ .arena = try l.arena(), .string = target, .start = start, .length = length } }, .String);
+                return try l.define(.{ .str_substring = .{ .string = target, .start = start, .length = length } }, .String);
             }
             return try l.define(.{ .array_slice = .{ .arena = try l.arena(), .array = target, .start = start, .length = length } }, try l.g.typeOf(e));
         },

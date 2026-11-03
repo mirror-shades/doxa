@@ -1,0 +1,55 @@
+module std from @std()
+
+# Split a text on commas, then join it back (plan/strings.md, Phase 0). `std`
+# has no split function, so the workload writes its own. The text is built in a
+# byte array before the timer.
+
+function split(text :: string) returns string[] {
+    var parts :: string[] is []
+    var rest is text
+    var comma is @find(rest, ",")
+    while comma >= 0 {
+        @push(parts, @slice(rest, 0, comma))
+        rest is @slice(rest, comma + 1, @length(rest) - comma - 1)
+        comma is @find(rest, ",")
+    }
+    @push(parts, rest)
+    return parts
+}
+
+function join(parts :: string[]) returns string {
+    var out is ""
+    each part at index in parts {
+        if index > 0 then @push(out, ",")
+        @push(out, part)
+    }
+    return out
+}
+
+public entry function main() {
+    const words is ["red", "green", "blue", "cyan", "magenta", "yellow"]
+    const count is 1_700
+    const rounds is 50
+    var bytes :: byte[] is []
+    for i while i < count do i += 1 {
+        if i > 0 then @push(bytes, @byte(44))
+        each b in @unpack(words[(i * 5) % 6]) {
+            @push(bytes, b)
+        }
+    }
+    const text is @pack(bytes)
+    var checksum is 0
+
+    const t0 is std.time.monotonic()
+
+    for r while r < rounds do r += 1 {
+        const parts is split(text)
+        const back is join(parts)
+        checksum += @length(parts) + @length(back)
+        if back == text then checksum += 1
+    }
+
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {checksum}")
+}

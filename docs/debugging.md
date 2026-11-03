@@ -49,12 +49,14 @@ What a debugger sees:
   was running.
 - **Locals, parameters and globals** under the names the program spells: a
   `var`, a parameter, `this`, a `^` parameter, a binding an `as` or a `match`
-  arm declares, and a module-level global. A local lent as `^` is read from its
-  storage; every other is named where it is defined, so an assignment inside a
-  branch shows the value it holds there.
+  arm declares, and a module-level global. A local lent as `^`, and a string
+  variable, are read from their storage; every other is named where it is
+  defined, so an assignment inside a branch shows the value it holds there.
 - **Types.** `int`, `float` and `byte` are their scalar types; `tetra` and
-  every enum are enumerations of their values; a `string` is its pointer and
-  length; a struct is its fields, each at the offset the runtime lays it at; a
+  every enum are enumerations of their values; a `string` value is its pointer
+  and length, and a string variable's storage adds `cap`, the bytes its buffer
+  can hold before it moves ([strings](strings.md#values-and-variables)); a
+  struct is its fields, each at the offset the runtime lays it at; a
   union or group is its box. A fixed array expands element by element. A
   dynamic array points at its header: `len` is its length and `data` points at
   its elements, so view `data` as an array of `len` to browse them. A function value is a

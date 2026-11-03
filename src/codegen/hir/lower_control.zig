@@ -70,7 +70,7 @@ pub fn statement(l: *Lowering, stmt: ast.Stmt) Error!bool {
                 try l.declareElement((try l.g.storeTarget(&stmt.base)).storage, decl.name.lexeme, decl.initializer.?);
                 return true;
             }
-            return varDecl(l, stmt, decl.name, decl.initializer);
+            return varDecl(l, stmt, decl.name, decl.initializer, decl.type_info.is_mutable);
         },
         .Return => |r| {
             _ = try returnFrom(l, r.value);
@@ -102,7 +102,8 @@ pub fn effect(l: *Lowering, e: *ast.Expr) Error!?ValueId {
     };
 }
 
-fn varDecl(l: *Lowering, stmt: ast.Stmt, name: ast.Token, initializer: ?*ast.Expr) Error!bool {
+/// `variable`: a `var`, which may change, not a `const`.
+fn varDecl(l: *Lowering, stmt: ast.Stmt, name: ast.Token, initializer: ?*ast.Expr, variable: bool) Error!bool {
     const target = try l.g.storeTarget(&stmt.base);
     const ty = try l.g.lowerType(target.slot);
     const value = if (initializer) |init| blk: {
@@ -119,7 +120,7 @@ fn varDecl(l: *Lowering, stmt: ast.Stmt, name: ast.Token, initializer: ?*ast.Exp
         // A token the parser synthesized (an `each` index) is not a name the
         // program spells.
         const owned = if (copy) try l.place(try l.arena(), value, ty, true) else value;
-        try l.declareLocal(target.storage, if (name.synthetic) null else name.lexeme, ty, owned, 0);
+        try l.declareLocal(target.storage, if (name.synthetic) null else name.lexeme, ty, owned, 0, variable);
     }
     return true;
 }
@@ -445,7 +446,7 @@ pub fn quantifier(l: *Lowering, variable: ast.Token, array: *ast.Expr, condition
 
     l.b.switchTo(body);
     const item = try l.define(.{ .array_get = .{ .array = items, .index = i } }, element);
-    if (storage) |s| try l.declareLocal(s, variable.lexeme, element, item, 0);
+    if (storage) |s| try l.declareLocal(s, variable.lexeme, element, item, 0, false);
     if (try l.cond(condition)) |holds| {
         if (kind == .exists) {
             try l.b.branch(holds, .{ .block = done, .args = &.{decided} }, .{ .block = next });
@@ -516,7 +517,7 @@ pub fn cast(l: *Lowering, e: *ast.Expr, want: bool) Error!?ValueId {
 /// branch's narrowed type.
 fn bindCast(l: *Lowering, name: []const u8, binding: ast.CastBinding, subject: ValueId, subject_type: HIRType) Error!void {
     const narrowed = try l.g.lowerType(binding.type_info);
-    try l.declareLocal(binding.storage, name, narrowed, try l.convert(subject, subject_type, narrowed), 0);
+    try l.declareLocal(binding.storage, name, narrowed, try l.convert(subject, subject_type, narrowed), 0, false);
 }
 
 const Test = union(enum) {
@@ -792,6 +793,6 @@ fn bindDestructured(l: *Lowering, case: ast.MatchCase, subject: ValueId, subject
             if (std.mem.eql(u8, f.name, name.lexeme)) break f;
         } else unreachable; // analysis bound only declared fields
         const v = try l.define(.{ .field_get = .{ .object = object, .index = field.index } }, field.hir_type);
-        try l.declareLocal(storage, name.lexeme, field.hir_type, v, 0);
+        try l.declareLocal(storage, name.lexeme, field.hir_type, v, 0, false);
     }
 }

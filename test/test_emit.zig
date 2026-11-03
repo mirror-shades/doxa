@@ -78,7 +78,7 @@ fn compileProbe(
     const capture = try doxa.run(allocator, io, .{ .args = args, .cwd = cwd });
     defer capture.deinit(allocator);
     if (!capture.succeeded()) {
-        std.debug.print("doxa compile failed ({any}):\n{s}\n{s}\n", .{ capture.end, capture.stdout, capture.stderr });
+        std.debug.print("doxa compile failed ({any}):\n{s}\n{s}\n{s}", .{ capture.end, capture.stdout, capture.stderr, capture.stuck });
         return error.ProbeDidNotCompile;
     }
 
@@ -1478,7 +1478,7 @@ fn doxaStdout(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, slot: harn
     const capture = try doxa.run(allocator, io, .{ .args = all, .cwd = cwd });
     defer capture.deinit(allocator);
     if (!capture.succeeded()) {
-        std.debug.print("doxa {s} failed ({any}):\n{s}\n{s}\n", .{ args[0], capture.end, capture.stdout, capture.stderr });
+        std.debug.print("doxa {s} failed ({any}):\n{s}\n{s}\n{s}", .{ args[0], capture.end, capture.stdout, capture.stderr, capture.stuck });
         return error.DoxaFailed;
     }
     return allocator.dupe(u8, capture.stdout);
@@ -1745,17 +1745,17 @@ test "memory: where allocations live, the copies kept and removed, the arenas dr
     const text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "mem" });
     defer allocator.free(text);
 
-    // An explicit return closes `name`'s arena at its line; the value it
-    // returns lives in its caller's.
-    try expectContains(text, "  mem.doxa:10:12\tname\tstring\tin name's arena; reclaimed when it returns (line 10)\n");
+    // The template `name` returns is built where it goes, in its caller's
+    // arena (`plan/strings.md`, Phase 3), so returning it copies nothing.
     try expectContains(text, "  mem.doxa:10:5\tname\tstring\tin the caller's arena; reclaimed when the caller returns\n");
-    // Copies: a static clone out to the caller, one carried out of a loop,
-    // and one through a `^` target, which outlives the loop's arena. An
-    // element lent on from `each … in ^items` lives in an arena known only at
-    // run time, so its write-back is the runtime check.
-    try expectContains(text, "  mem.doxa:10:5\tname\tstring\tcopied here: returned\n");
-    try expectContains(text, "  mem.doxa:22:9\tmain\tstring\tcopied here: carried out of a branch or loop\n");
-    try expectContains(text, "  mem.doxa:15:9\trename\tstring\tcopied here: stored to a longer-lived variable\n");
+    try expectContains(text, "  mem.doxa:10:5\tname\tstring\tthe value itself, which already lives there: returned\n");
+    // Copies: one stored from a loop into a string variable that outlives
+    // it. A template stored through a `^` target is built in the target's
+    // arena, so it is no copy. An element lent on from `each … in ^items`
+    // lives in an arena known only at run time, so its write-back is the
+    // runtime check.
+    try expectContains(text, "  mem.doxa:22:9\tmain\tstring\tcopied here: stored to a longer-lived variable\n");
+    try expectContains(text, "  mem.doxa:15:9\trename\tstring\tthe value itself, which already lives there: stored to a longer-lived variable\n");
     try expectContains(text, "  mem.doxa:41:9\tsweep\tItem\tcopied at run time unless it already lives there: stored to a longer-lived variable\n");
     // `t is "x"` is a literal: its copy is the value itself.
     try expectContains(text, "\tmain\tstring\tthe value itself, which already lives there: stored to a longer-lived variable\n");
@@ -1763,7 +1763,7 @@ test "memory: where allocations live, the copies kept and removed, the arenas dr
     try expectContains(text, "  mem.doxa:1:10\ttotal\tthe function's arena: nothing allocates in it\n");
     try expectContains(text, "  mem.doxa:3:5\ttotal\ta loop body's arena: nothing allocates in it\n");
     try expectContains(text, "  total\tits @caller arena: it returns nothing that lives there\n");
-    try expectContains(text, " Copies: 5 kept (3 clone, 2 runtime), ");
+    try expectContains(text, " Copies: 3 kept (1 clone, 2 runtime), ");
 
     // The runtime copy is in a loop, so step 6's findings name it too.
     try expectContains(text, "  mem.doxa:41:9\tsweep\tin the loop at mem.doxa:40:10: a copy the arena pass left to a runtime check\n");
@@ -1774,6 +1774,111 @@ test "memory: where allocations live, the copies kept and removed, the arenas dr
     const without = try emitIrFor(allocator, &tmp, memorySource, "-O0");
     defer allocator.free(without);
     try testing.expectEqualStrings(without, with);
+}
+
+// ── String buffers ──
+
+const stringPushSource =
+    \\function build(n :: int) returns int {
+    \\    var s is ""
+    \\    for i while i < n do i += 1 {
+    \\        @push(s, "a")
+    \\    }
+    \\    const t is s
+    \\    return @length(t)
+    \\}
+    \\public entry function main() {
+    \\    @print("{build(3)}\n")
+    \\}
+;
+
+test "string buffers: a push loop appends in place, with no copy and no loop arena" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, stringPushSource, "--opt=0");
+    defer allocator.free(ir_text);
+    const body = functionBody(ir_text, "build") orelse return error.FunctionNotEmitted;
+    // `s` is a buffer the push grows (`plan/strings.md`): nothing builds a
+    // new string, nothing copies one out of the loop, and the loop's arenas
+    // hold nothing, so they are gone. `const t is s` shares the bytes.
+    try testing.expect(std.mem.indexOf(u8, body, "call void @doxa_str_append_string(") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "@doxa_str_concat") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "@doxa_str_clone") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_reset") == null);
+}
+
+const stringViewSource =
+    \\var kept is ""
+    \\function window(s :: string) returns int {
+    \\    const head is @slice(s, 0, 3)
+    \\    return @length(head) + @length(s[1])
+    \\}
+    \\function keep(s :: string) {
+    \\    kept is @slice(s, 1, 2)
+    \\}
+    \\public entry function main() {
+    \\    keep("abcd")
+    \\    @print("{window("abcd")} {kept}\n")
+    \\}
+;
+
+test "string views: a slice or an index allocates nothing; one kept longer is copied" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, stringViewSource, "--opt=0");
+    defer allocator.free(ir_text);
+    // `@slice` and `s[i]` are views of the parameter's bytes, so `window`
+    // allocates nothing and drops its arena (`plan/strings.md`, Phase 2).
+    const window = functionBody(ir_text, "window") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, window, "@doxa_substring") != null);
+    try testing.expect(std.mem.indexOf(u8, window, "@doxa_str_clone") == null);
+    try testing.expect(std.mem.indexOf(u8, window, "@doxa_scope_enter") == null);
+    // A view stored into a global outlives the caller's bytes: it is copied
+    // into the root arena.
+    const keep = functionBody(ir_text, "keep") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, keep, "@doxa_str_clone") != null);
+}
+
+const stringJoinSource =
+    \\function line(i :: int, name :: string) returns string {
+    \\    const x is @float(i) + 0.25
+    \\    return "{i}: {x} {name}|"
+    \\}
+    \\function fresh() returns string {
+    \\    return @pack([0x68, 0x69])
+    \\}
+    \\function held(bytes :: byte[]) returns string {
+    \\    return @pack(bytes)
+    \\}
+    \\public entry function main() {
+    \\    @print("{line(3, "n")} {fresh()} {held([0x6F, 0x6B])}\n")
+    \\}
+;
+
+test "string joins: an interpolation is one allocation; @pack of a fresh array keeps its bytes" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, stringJoinSource, "--opt=0");
+    defer allocator.free(ir_text);
+    // The int and the float are written into the one string the template
+    // makes; no piece is a string of its own (`plan/strings.md`, Phase 3).
+    const line = functionBody(ir_text, "line") orelse return error.FunctionNotEmitted;
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, line, "call void @doxa_str_concat("));
+    try testing.expect(std.mem.indexOf(u8, line, "@doxa_int_to_string") == null);
+    try testing.expect(std.mem.indexOf(u8, line, "@doxa_float_to_string") == null);
+    // A fresh array's bytes become the string; a held array's are copied,
+    // since its binding could still write them (Phase 4).
+    const fresh = functionBody(ir_text, "fresh") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, fresh, "@doxa_bytes_view") != null);
+    try testing.expect(std.mem.indexOf(u8, fresh, "@doxa_pack_bytes") == null);
+    const held = functionBody(ir_text, "held") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, held, "@doxa_pack_bytes") != null);
 }
 
 // ── Block arenas ──
@@ -1889,9 +1994,11 @@ test "retention: what a loop makes that no iteration reclaims, and what it grew 
     defer allocator.free(text);
     // A push into a global in a loop grows the root every iteration.
     try expectContains(text, "  ret.doxa:5:9\trecord\tstring\tin the loop at ret.doxa:4:5: escapes into global `log`, kept until the program ends\n");
-    // A value carried across iterations lands in the function's arena; a
-    // block around the loop and its variable is the fix.
-    try expectContains(text, "  ret.doxa:12:9\tjoined\tstring\tin the loop at ret.doxa:11:5: lands in joined's arena, reclaimed when it returns; a block around the loop and the variable that keeps it reclaims it at its `}`\n");
+    // An append to a string variable grows its buffer in the function's
+    // arena: an allocation, not something every iteration makes and keeps
+    // (B034, `plan/strings.md`).
+    try expectContains(text, "  ret.doxa:12:9\tjoined\tstring\tin joined's arena; reclaimed when it returns (line 14)\n");
+    try testing.expect(std.mem.indexOf(u8, text, "\tjoined\tstring\tin the loop at") == null);
     // What a block in the loop allocates is reclaimed every iteration.
     try testing.expect(std.mem.indexOf(u8, text, "\tscoped\tstring\tin the loop at") == null);
 
@@ -1902,8 +2009,9 @@ test "retention: what a loop makes that no iteration reclaims, and what it grew 
     const joined_text = try doxaStdout(allocator, &tmp, slot, &.{ "report", "ret" });
     defer allocator.free(joined_text);
     try expectContains(joined_text, "escapes into global `log`, kept until the program ends (this run: 21 B in 3 allocations, 21 B into the root arena)\n");
-    // The copy into the global's array is the compiler's placement there.
-    try expectContains(joined_text, "  21 B\tret.doxa:5:9\trecord\trehome\n");
+    // The template pushed into the global's array is built in the array's
+    // arena: an allocation there, with no copy after it.
+    try expectContains(joined_text, "  21 B\tret.doxa:5:9\trecord\talloc\n");
 
     // A side file only: the IR is the same without the flag.
     const with = try emitIrFor(allocator, &tmp, retentionSource, "--emit-memory");

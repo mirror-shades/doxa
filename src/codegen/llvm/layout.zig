@@ -34,6 +34,13 @@ pub fn doxaType(t: HIRType) []const u8 {
     };
 }
 
+/// The LLVM type of storage holding a `t`: a slot or a global. A string's
+/// storage is a buffer (`plan/strings.md`), whose first two fields are the
+/// `%DoxaString` it holds.
+pub fn storageType(t: HIRType) []const u8 {
+    return if (t == .String) "%DoxaStringBuffer" else doxaType(t);
+}
+
 /// What a function returning `t` returns in LLVM.
 pub fn returnType(t: HIRType) []const u8 {
     return if (t == .Nothing) "void" else doxaType(t);

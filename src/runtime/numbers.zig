@@ -92,13 +92,8 @@ pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: u64, site: *const f
 }
 
 pub export fn doxa_int_to_string(scope: *Scope, value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var buf: [64]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{value}) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    const ds = strings.allocDoxaString(scope, s);
+    var buf: Scratch = undefined;
+    const ds = strings.allocDoxaString(scope, intText(&buf, value));
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
@@ -108,9 +103,22 @@ pub export fn doxa_int_to_string(scope: *Scope, value: i64, out_ptr: *?[*]u8, ou
 /// The longest integral value (309 digits and ".0") fits well beneath it.
 pub const max_float_text_len = 1 + 2 + 323 + 17;
 
+/// Room for any scalar's text: a float's is the longest.
+pub const Scratch = [max_float_text_len]u8;
+
+/// An int's text.
+pub fn intText(buf: *Scratch, value: i64) []const u8 {
+    return std.fmt.bufPrint(buf, "{d}", .{value}) catch unreachable;
+}
+
+/// A byte's text, `0x` and two hex digits.
+pub fn byteText(buf: *Scratch, value: u8) []const u8 {
+    return std.fmt.bufPrint(buf, "0x{X:0>2}", .{value}) catch unreachable;
+}
+
 /// A float's text: the shortest positional decimal that reads back as the same
 /// value, with ".0" on an integral one so a float never reads as an int.
-pub fn formatFloat(buf: *[max_float_text_len]u8, value: f64) []const u8 {
+pub fn formatFloat(buf: *Scratch, value: f64) []const u8 {
     const integral = value - std.math.floor(value) == 0;
     const rendered = if (integral)
         std.fmt.bufPrint(buf, "{d}.0", .{value})
@@ -120,21 +128,15 @@ pub fn formatFloat(buf: *[max_float_text_len]u8, value: f64) []const u8 {
 }
 
 pub export fn doxa_float_to_string(scope: *Scope, value: f64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var buf: [max_float_text_len]u8 = undefined;
+    var buf: Scratch = undefined;
     const ds = strings.allocDoxaString(scope, formatFloat(&buf, value));
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
 
 pub export fn doxa_byte_to_string(scope: *Scope, value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var buf: [16]u8 = undefined;
-    const byte_val: u8 = @intCast(value & 0xff);
-    const s = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch {
-        out_ptr.* = null;
-        out_len.* = 0;
-        return;
-    };
-    const ds = strings.allocDoxaString(scope, s);
+    var buf: Scratch = undefined;
+    const ds = strings.allocDoxaString(scope, byteText(&buf, @intCast(value & 0xff)));
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }

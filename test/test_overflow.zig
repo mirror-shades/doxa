@@ -17,9 +17,30 @@ test "overflow: bounded operands prove the operation safe" {
     try testing.expect(overflow.arithCannotOverflow(.Sub, .Int, byte, byte));
     try testing.expect(overflow.arithCannotOverflow(.Mul, .Int, byte, byte));
 
-    // An unknown operand proves nothing.
+    // An operand unbounded at both ends can carry the result out of `i64`.
     try testing.expect(!overflow.arithCannotOverflow(.Add, .Int, byte, IntRange.unknown()));
     try testing.expect(!overflow.arithCannotOverflow(.Mul, .Int, IntRange.unknown(), IntRange.unknown()));
+}
+
+test "overflow: an end a range leaves open is the type's limit" {
+    // A length is known only to be non-negative: `len - 1` fits, `len + 1`
+    // does not.
+    const len = IntRange{ .lo = 0, .lo_known = true };
+    const one = IntRange.exact(1);
+    try testing.expect(overflow.arithCannotOverflow(.Sub, .Int, len, one));
+    try testing.expect(!overflow.arithCannotOverflow(.Add, .Int, len, one));
+    // Nothing is known of `x`, yet `x * 1` and `x + 0` cannot leave `i64`;
+    // `x - 1` can.
+    try testing.expect(overflow.arithCannotOverflow(.Mul, .Int, IntRange.unknown(), one));
+    try testing.expect(overflow.arithCannotOverflow(.Add, .Int, IntRange.unknown(), IntRange.exact(0)));
+    try testing.expect(!overflow.arithCannotOverflow(.Sub, .Int, IntRange.unknown(), one));
+
+    // A byte with an unknown range is still in `[0, 255]`: minus one can
+    // underflow, but not when it is known to be at least one, and a byte at
+    // most 127 plus 128 stays inside.
+    try testing.expect(!overflow.arithCannotOverflow(.Sub, .Byte, IntRange.unknown(), one));
+    try testing.expect(overflow.arithCannotOverflow(.Sub, .Byte, IntRange{ .lo = 1, .lo_known = true }, one));
+    try testing.expect(overflow.arithCannotOverflow(.Add, .Byte, IntRange{ .hi = 127, .hi_known = true }, IntRange.exact(128)));
 }
 
 test "overflow: the extreme exact values are not proved safe" {

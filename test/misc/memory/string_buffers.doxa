@@ -1,0 +1,107 @@
+# String variables are buffers (plan/strings.md, Phase 1): each append form
+# grows the variable in place, and every value taken from it before an append
+# keeps showing what it held.
+
+struct Tag {
+    public name :: string,
+}
+
+var log is ""
+
+function addTo(^into :: string, piece :: string) {
+    @push(into, piece)
+}
+
+function grown(text :: string) returns string {
+    @push(text, "+callee")
+    return text
+}
+
+function logged() returns string {
+    @push(log, "f")
+    return "x"
+}
+
+function built(n :: int) returns string {
+    var out is ""
+    for i while i < n do i += 1 {
+        out += "{i}"
+    }
+    return out
+}
+
+# Each append form.
+var s is "a"
+@push(s, "b")
+s += "c"
+s is s + "d" + "e"
+s is "{s}f{1 + 1}"
+@print("{s}\n")
+
+# Not an append: the variable is not the leading read.
+s is "<" + s
+@print("{s}\n")
+
+# Self-append: the part's bytes lie below the length the append writes past.
+var t is "xy"
+@push(t, t)
+t is t + @slice(t, 0, 3)
+@print("{t}\n")
+
+# A value taken before appends keeps what it held.
+var u is "base"
+const before is u
+@push(u, "-more")
+const middle is u
+u += "-most"
+@print("{before} {middle} {u}\n")
+
+# A by-value parameter appended in a callee leaves the caller's string alone;
+# a `^` parameter appended in a callee changes it.
+var mine is "mine"
+const theirs is grown(mine)
+addTo(^mine, "+lent")
+@print("{mine} {theirs}\n")
+
+# A global appended in a loop. In `@push(log, logged())` the global is read
+# before `logged()` runs, so what `logged` pushed is dropped, as before.
+for i while i < 3 do i += 1 {
+    @push(log, "{i}")
+}
+@push(log, logged())
+@print("{log}\n")
+
+# A reset or a clear inside a loop starts the buffer over.
+var line is ""
+var lines is 0
+for i while i < 3 do i += 1 {
+    line is ""
+    @push(line, "row{i}")
+    lines += @length(line)
+    @clear(line)
+    @push(line, "!")
+}
+@print("{lines} {line}\n")
+
+# Pop, then push: the popped byte is not overwritten.
+var p is "abc"
+const last is @pop(p)
+@push(p, "Z")
+@print("{last} {p}\n")
+
+# Insert and remove on a buffer.
+var q is "ace"
+@insert(q, 1, "b")
+const removed is @remove(q, 3)
+@print("{q} {removed}\n")
+
+# A string built and returned by a function, then appended to.
+var made is built(4)
+@push(made, "!")
+@print("{made}\n")
+
+# A value stored into a struct field keeps what it held.
+var w is "w"
+const tag is $Tag { name is w }
+@push(w, "2")
+@print("{tag.name} {w}\n")

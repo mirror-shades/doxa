@@ -47,9 +47,11 @@ pub const Debug = struct {
     /// The `!DIType` of each named type, made on first use.
     enums: std.AutoHashMapUnmanaged(ir.EnumId, u32) = .empty,
     structs: std.AutoHashMapUnmanaged(ir.StructId, u32) = .empty,
-    /// The two value shapes every program shares.
+    /// The two value shapes every program shares, and a string variable's
+    /// storage.
     string_type: ?u32 = null,
     box_type: ?u32 = null,
+    buffer_type: ?u32 = null,
     /// The `DoxaTag` enumeration the box's `tag` field holds, made once.
     tag_type: ?u32 = null,
 
@@ -178,13 +180,14 @@ pub const Debug = struct {
 
     /// The `!DILocalVariable` of one of `f`'s locals, made on first use.
     /// `arg` is its 1-based argument number when it is a parameter, else 0.
-    pub fn localVariable(self: *Debug, f: *const ir.Function, function: ir.FunctionId, local: ir.LocalId, ty: ir.Type, scope: u32, arg: u32) Error!u32 {
+    /// `type_node` is the variable's `!DIType`: of its value (`typeOf`), or,
+    /// for a slot, of its storage (`storageType`).
+    pub fn localVariable(self: *Debug, f: *const ir.Function, function: ir.FunctionId, local: ir.LocalId, type_node: u32, scope: u32, arg: u32) Error!u32 {
         const key = LocalKey{ .function = @intFromEnum(function), .local = @intFromEnum(local) };
         const entry = try self.locals.getOrPut(self.alloc, key);
         if (entry.found_existing) return entry.value_ptr.*;
         const info = f.locals[@intFromEnum(local)];
         const file_node = try self.file(info.span.module);
-        const type_node = try self.typeOf(ty);
         entry.value_ptr.* = if (arg == 0)
             try self.node("!DILocalVariable(name: \"{f}\", scope: !{d}, file: !{d}, line: {d}, type: !{d})", .{ escaped(info.name), scope, file_node, info.span.line, type_node })
         else
@@ -200,11 +203,18 @@ pub const Debug = struct {
     pub fn typeOf(self: *Debug, t: ir.Type) Error!u32 {
         return switch (t) {
             .doxa => |d| self.doxaType(d),
-            // A `^` parameter is an address of the value it names.
-            .ref => |d| self.pointer(try self.doxaType(d)),
+            // A `^` parameter is an address of the storage it names.
+            .ref => |d| self.pointer(try self.storageType(d)),
             .arena => self.pointer(null),
             .cond => self.node("!DIBasicType(name: \"cond\", size: 1, encoding: DW_ATE_boolean)", .{}),
         };
+    }
+
+    /// The `!DIType` of storage holding a `t`: a slot, a global, what a `^`
+    /// parameter points at. String storage is a buffer; anything else holds
+    /// its value.
+    pub fn storageType(self: *Debug, t: HIRType) Error!u32 {
+        return if (t == .String) self.bufferType() else self.doxaType(t);
     }
 
     fn doxaType(self: *Debug, t: HIRType) Error!u32 {
@@ -317,6 +327,23 @@ pub const Debug = struct {
         return type_node;
     }
 
+    /// A string variable's storage, `%DoxaStringBuffer`: its value, then the
+    /// capacity its spare room reaches to.
+    fn bufferType(self: *Debug) Error!u32 {
+        if (self.buffer_type) |n| return n;
+        const byte = try self.node("!DIBasicType(name: \"byte\", size: 8, encoding: DW_ATE_unsigned)", .{});
+        const int = try self.node("!DIBasicType(name: \"int\", size: 64, encoding: DW_ATE_signed)", .{});
+        const ptr = try self.pointer(byte);
+        const members = try self.list(&.{
+            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"ptr\", baseType: !{d}, offset: 0)", .{ptr}),
+            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"len\", baseType: !{d}, offset: 64)", .{int}),
+            try self.node("!DIDerivedType(tag: DW_TAG_member, name: \"cap\", baseType: !{d}, offset: 128)", .{int}),
+        });
+        const type_node = try self.node("distinct !DICompositeType(tag: DW_TAG_structure_type, name: \"string\", size: 192, elements: !{d})", .{members});
+        self.buffer_type = type_node;
+        return type_node;
+    }
+
     /// A union or group value is the `%DoxaValue` box the runtime passes:
     /// `{ tag: DoxaTag, reserved, payload_bits, payload_len }`, exactly as
     /// `runtime/abi.zig` lays it out.
@@ -387,7 +414,7 @@ pub const Debug = struct {
         const file_node = try self.file(g.span.module);
         const var_node = try self.node(
             "!DIGlobalVariable(name: \"{f}\", scope: !{d}, file: !{d}, line: {d}, type: !{d}, isLocal: false, isDefinition: true)",
-            .{ escaped(g.display_name), file_node, file_node, g.span.line, try self.doxaType(g.ty) },
+            .{ escaped(g.display_name), file_node, file_node, g.span.line, try self.storageType(g.ty) },
         );
         return self.node("!DIGlobalVariableExpression(var: !{d}, expr: !DIExpression())", .{var_node});
     }

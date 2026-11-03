@@ -1,0 +1,12 @@
+# `@pop` on a string takes off its last byte, as every string operation
+# addresses bytes (docs/strings.md): a multi-byte character comes off one byte
+# at a time. Popping an empty string gives two empty strings.
+
+var s is "a\u{65e5}"
+@print("{@length(s)}\n")
+for i while i < 4 do i += 1 {
+    const tail is @pop(s)
+    @print("{@unpack(tail)} {@length(s)}\n")
+}
+const none is @pop(s)
+@print("{@length(none)} {@length(s)}\n")

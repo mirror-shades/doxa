@@ -38,7 +38,7 @@ pub fn traceSite(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
 pub fn checkReads(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
     if (!self.e.instrument.memcheck) return;
     switch (inst.op) {
-        .debug_value, .store, .global_store, .call, .call_zig, .box, .repack, .unbox, .member_test, .member_index, .constant => return,
+        .debug_value, .store, .global_store, .str_set, .call, .call_zig, .box, .repack, .unbox, .member_test, .member_index, .constant => return,
         else => {},
     }
     const Visit = struct {

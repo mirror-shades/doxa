@@ -42,7 +42,7 @@ are the only bridge between the two. String positions (an index, `@slice`, `@fin
 `@remove`) are byte offsets — see [strings.md](strings.md).
 
 - `@length(value :: string | array)` -> `int` (the byte length for a `string`)
-- `@push(collection :: string | array, value :: any)` -> `nothing` — appends; a `string` takes a `string` (concatenates it), an array takes its element type
+- `@push(collection :: string | array, value :: any)` -> `nothing` — appends; a `string` takes a `string`, an array takes its element type. Onto a string variable or an array it is amortized O(1): the storage doubles when full ([strings.md](strings.md#values-and-variables))
 - `@pop(collection :: string | array)` -> `string` for a `string`, the element type for an array
 - `@insert(collection :: string | array, index :: int, value :: any)` -> `nothing`
 - `@remove(collection :: string | array, index :: int)` -> `string` for a `string`, the element type for an array
@@ -89,6 +89,7 @@ Every way a program fails at run time is a *fault*: it writes one line to stderr
 | The program's stack runs out (recursion too deep) | `Stack overflow` (no location: see below) | 1 |
 | Reaching `unreachable` | `Reached unreachable code at main.doxa:7:9` | 2 |
 | A read of reclaimed memory, under `--instrument=memcheck` only ([memory](memory.md#seeing-where-memory-goes)) | `Read of memory its arena reclaimed at main.doxa:7:9` | 2 |
+| A string append about to write bytes already written, under `--instrument=memcheck` only: a compiler bug ([strings](strings.md#values-and-variables)) | `String bytes written twice` (no location) | 2 |
 
 Wrapping arithmetic is never implicit: the operators `+%`, `-%` and `*%` are how a program asks for it ([Overflow and wrapping](math.md#overflow-and-wrapping)). Exit status 2 is reserved for `unreachable`, which marks code the program's author claims can never run, and for memcheck's fault, which only a compiler or runtime bug can raise. The location is the start of the expression that faulted. Out of memory and stack overflow are the faults without a location: out of memory is raised inside the runtime's allocator, which does not know which expression asked, and a stack overflow is the processor's trap on the stack's end, which can strike in any call. Their backtraces show the frames that led to them (not under `--strip`), the innermost first. A file under the entry file's directory is named relative to it (`main.doxa`, `lib/util.doxa`); a file under another root keeps the root's tag (`std//io/io.doxa`). A string's `@insert` and `@remove`, and `@slice`, clamp to the bounds instead of faulting.
 

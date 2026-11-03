@@ -22,6 +22,10 @@ test "memcheck pipeline" {
     try programs.check(testing.allocator, .memcheck);
 }
 
+test "memtrace pipeline" {
+    try programs.check(testing.allocator, .memtrace);
+}
+
 test {
     _ = @import("test_build_script.zig");
     _ = @import("test_emit.zig");

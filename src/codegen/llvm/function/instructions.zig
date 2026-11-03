@@ -70,21 +70,32 @@ pub fn lower(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
         },
 
         .str_concat => |s| {
-            const a = try self.stringParts(self.name(s.lhs));
-            const b = try self.stringParts(self.name(s.rhs));
-            try self.defString(inst, try self.stringCall("doxa_str_concat", "ptr {s}, ptr {s}, i64 {s}, ptr {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, b.ptr, b.len }));
+            const parts = try text.parts(self, s.parts);
+            try self.defString(inst, try self.stringCall("doxa_str_concat", "ptr {s}, ptr {s}, i64 {d}", .{ self.name(s.arena), parts, s.parts.len }));
         },
         .str_len => |u| try self.def(inst, "extractvalue %DoxaString {s}, 1", .{self.name(u.operand)}),
         .str_substring => |s| {
             const a = try self.stringParts(self.name(s.string));
-            try self.defString(inst, try self.stringCall("doxa_substring", "ptr {s}, ptr {s}, i64 {s}, i64 {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, self.name(s.start), self.name(s.length) }));
+            try self.defString(inst, try self.stringCall("doxa_substring", "ptr {s}, i64 {s}, i64 {s}, i64 {s}", .{ a.ptr, a.len, self.name(s.start), self.name(s.length) }));
         },
-        .str_last, .str_drop_last => |s| {
-            const a = try self.stringParts(self.name(s.string));
-            const rest = try self.alloca("%DoxaString");
-            const last = try self.alloca("%DoxaString");
-            _ = try self.tmp("call i8 @doxa_str_pop(ptr {s}, ptr {s}, i64 {s}, ptr {s}, ptr {s})", .{ self.name(s.arena), a.ptr, a.len, rest, last });
-            try self.def(inst, "load %DoxaString, ptr {s}", .{if (inst.op == .str_last) last else rest});
+        // A buffer's first two fields are the `%DoxaString` it holds.
+        .str_view => |v| try self.def(inst, "load %DoxaString, ptr {s}", .{self.name(v.buffer)}),
+        .str_set => |s| {
+            try self.line("store %DoxaString {s}, ptr {s}", .{ self.name(s.value), self.name(s.buffer) });
+            const len = try self.tmp("extractvalue %DoxaString {s}, 1", .{self.name(s.value)});
+            const cap = try self.tmp("getelementptr inbounds %DoxaStringBuffer, ptr {s}, i32 0, i32 2", .{self.name(s.buffer)});
+            try self.line("store i64 {s}, ptr {s}", .{ len, cap });
+        },
+        .str_append => |a| {
+            const from = try self.stringParts(self.name(a.from));
+            // One string, the common `@push(s, t)`, is copied straight in.
+            if (a.parts.len == 1 and self.doxaOf(a.parts[0]) == .String) {
+                const part = try self.stringParts(self.name(a.parts[0]));
+                try self.line("call void @doxa_str_append_string(ptr {s}, ptr {s}, ptr {s}, i64 {s}, ptr {s}, i64 {s})", .{ self.name(a.arena), self.name(a.buffer), from.ptr, from.len, part.ptr, part.len });
+            } else {
+                const parts = try text.parts(self, a.parts);
+                try self.line("call void @doxa_str_append(ptr {s}, ptr {s}, ptr {s}, i64 {s}, ptr {s}, i64 {d})", .{ self.name(a.arena), self.name(a.buffer), from.ptr, from.len, parts, a.parts.len });
+            }
         },
         .str_find => |s| {
             const a = try self.stringParts(self.name(s.string));
@@ -98,17 +109,15 @@ pub fn lower(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
         },
         .str_remove => |s| {
             const a = try self.stringParts(self.name(s.string));
-            const rest = try self.alloca("%DoxaString");
-            const removed = try self.alloca("%DoxaString");
-            _ = try self.tmp("call i8 @doxa_str_remove(ptr {s}, ptr {s}, i64 {s}, i64 {s}, ptr {s}, ptr {s})", .{ self.name(s.arena), a.ptr, a.len, self.name(s.index), rest, removed });
-            try self.def(inst, "load %DoxaString, ptr {s}", .{rest});
+            try self.defString(inst, try self.stringCall("doxa_str_remove", "ptr {s}, ptr {s}, i64 {s}, i64 {s}", .{ self.name(s.arena), a.ptr, a.len, self.name(s.index) }));
         },
         .str_char => |s| {
             const a = try self.stringParts(self.name(s.string));
             try arrays.boundsCheck(self, s.index, a.len, null, .element);
             const at = try self.tmp("getelementptr inbounds i8, ptr {s}, i64 {s}", .{ a.ptr, self.name(s.index) });
-            const byte = try self.tmp("load i8, ptr {s}", .{at});
-            try self.defString(inst, try self.stringCall("doxa_char_to_string", "ptr {s}, i8 {s}", .{ self.name(s.arena), byte }));
+            // A view of the one byte: nothing is allocated.
+            const view = try self.tmp("insertvalue %DoxaString undef, ptr {s}, 0", .{at});
+            try self.def(inst, "insertvalue %DoxaString {s}, i64 1, 1", .{view});
         },
         .str_to_int, .str_to_float, .str_to_byte => |u| {
             const a = try self.stringParts(self.name(u.operand));
@@ -128,6 +137,7 @@ pub fn lower(self: *FunctionEmitter, inst: *const ir.Inst) Error!void {
             }
         },
         .str_pack => |s| try self.defString(inst, try self.stringCall("doxa_pack_bytes", "ptr {s}, ptr {s}", .{ self.name(s.arena), self.name(s.bytes) })),
+        .str_pack_move => |s| try self.defString(inst, try self.stringCall("doxa_bytes_view", "ptr {s}", .{self.name(s.bytes)})),
         .str_unpack => |s| {
             const a = try self.stringParts(self.name(s.string));
             try self.def(inst, "call ptr @doxa_unpack_bytes(ptr {s}, ptr {s}, i64 {s})", .{ self.name(s.arena), a.ptr, a.len });

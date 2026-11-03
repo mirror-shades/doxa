@@ -454,28 +454,32 @@ pub fn planDiv(f: SignFacts) DivShape {
 
 const Bounds = struct { lo: i64, hi: i64 };
 
-/// The closed bounds a range guarantees, or `null` when an end is open. An
-/// exact constant is authoritative.
-fn boundsOf(r: IntRange) ?Bounds {
+/// The closed bounds of a value with the proved range `r`, in a type whose
+/// own range is `whole`. An exact constant is authoritative, and an end `r`
+/// leaves open is the type's limit: a value never leaves its type.
+fn boundsOf(r: IntRange, whole: Bounds) Bounds {
     if (r.konst) |k| return .{ .lo = k, .hi = k };
-    if (r.lo_known and r.hi_known) return .{ .lo = r.lo, .hi = r.hi };
-    return null;
+    return .{
+        .lo = if (r.lo_known) r.lo else whole.lo,
+        .hi = if (r.hi_known) r.hi else whole.hi,
+    };
 }
 
 /// True when `op` on `operand_type` (`int` or `byte`) provably cannot leave
-/// the type's range for any pair of values drawn from the two ranges. Every
+/// the type's range for any pair of values drawn from the two ranges. A range
+/// known at one end can decide it: `@length(s) - 1` cannot overflow. Every
 /// candidate extremum is computed in `i128`, which cannot overflow for `i64`
 /// inputs: endpoints decide `add` and `sub` because both are monotone in each
 /// operand, and a product's extrema lie on the corners of the operand
 /// rectangle.
 pub fn arithCannotOverflow(op: ArithOp, operand_type: HIRType, a: IntRange, b: IntRange) bool {
-    const ab = boundsOf(a) orelse return false;
-    const bb = boundsOf(b) orelse return false;
     const fits: Bounds = switch (operand_type) {
         .Int => .{ .lo = std.math.minInt(i64), .hi = std.math.maxInt(i64) },
         .Byte => .{ .lo = 0, .hi = std.math.maxInt(u8) },
         else => return false,
     };
+    const ab = boundsOf(a, fits);
+    const bb = boundsOf(b, fits);
     const lo: i128, const hi: i128 = switch (op) {
         .Add => .{ @as(i128, ab.lo) + bb.lo, @as(i128, ab.hi) + bb.hi },
         .Sub => .{ @as(i128, ab.lo) - bb.hi, @as(i128, ab.hi) - bb.lo },

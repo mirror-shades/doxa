@@ -6,6 +6,8 @@
 //!   binary per case. A `.reject` case is judged on its compile.
 //! - **memcheck**: the run pipeline under `--instrument=memcheck`, for the
 //!   cases that opt in.
+//! - **memtrace**: the run pipeline under `--instrument=memtrace`, then the
+//!   bytes the run asked for against the case's `max_bytes_asked`.
 //!
 //! Cases run concurrently across a crew of workers and never abort the suite:
 //! whatever happens to a case, a harness error included, becomes its outcome,
@@ -65,7 +67,7 @@ pub fn check(gpa: Allocator, pipeline: cases.Pipeline) !void {
         .results = results,
     };
     switch (pipeline) {
-        .run, .memcheck => try crew.each(io, programs.items, &suite, Suite.viaRun),
+        .run, .memcheck, .memtrace => try crew.each(io, programs.items, &suite, Suite.viaRun),
         .compile => {
             const builds = try suite.planBuilds();
             defer {
@@ -104,14 +106,56 @@ const Suite = struct {
         var args: std.ArrayList([]const u8) = .empty;
         try args.appendSlice(arena, &.{ "run", case.path, suite.doxa.include, worker.cache_flag });
         try args.appendSlice(arena, case.build_args);
-        if (suite.pipeline == .memcheck) try args.append(arena, "--instrument=memcheck");
+        switch (suite.pipeline) {
+            .memcheck => try args.append(arena, "--instrument=memcheck"),
+            .memtrace => try args.append(arena, "--instrument=memtrace"),
+            .run, .compile => {},
+        }
         if (case.extra_args.len != 0) {
             try args.append(arena, "--");
             try args.appendSlice(arena, case.extra_args);
         }
         const capture = try suite.doxa.run(suite.gpa, suite.io, .{ .args = args.items, .stdin = case.input });
         defer capture.deinit(suite.gpa);
-        return judge(arena, case, capture, capture.stderr);
+        const outcome = try judge(arena, case, capture, capture.stderr);
+        if (suite.pipeline != .memtrace or outcome != .pass) return outcome;
+        return suite.judgeBytesAsked(worker, case);
+    }
+
+    /// The bytes a memtrace run asked for, against the case's limit: every
+    /// allocating site's, as `doxa report --json` gives them (an `arena` site
+    /// counts what its arenas held, not what the program asked for).
+    fn judgeBytesAsked(suite: *const Suite, worker: *Worker, case: Case) !Outcome {
+        const arena = worker.arena.allocator();
+        const stem = std.fs.path.stem(case.path);
+        const capture = try suite.doxa.run(suite.gpa, suite.io, .{ .args = &.{ "report", stem, "--json", worker.cache_flag } });
+        defer capture.deinit(suite.gpa);
+        const reported = switch (capture.end) {
+            .exited => |status| status == 0,
+            .abnormal, .timed_out => false,
+        };
+        if (!reported) return .{ .fail = try std.fmt.allocPrint(arena, "`doxa report {s} --json` failed:\n{s}", .{ stem, capture.stderr }) };
+
+        const Report = struct {
+            profile: ?struct {
+                sites: []const struct {
+                    kind: []const u8,
+                    trace: ?struct { bytes: u64 } = null,
+                },
+            } = null,
+        };
+        const report = std.json.parseFromSliceLeaky(Report, arena, capture.stdout, .{ .ignore_unknown_fields = true }) catch |err|
+            return .{ .fail = try std.fmt.allocPrint(arena, "`doxa report {s} --json` is not a report: {t}", .{ stem, err }) };
+        const profile = report.profile orelse
+            return .{ .fail = try std.fmt.allocPrint(arena, "`doxa report {s} --json` has no memtrace profile", .{stem}) };
+        var asked: u64 = 0;
+        for (profile.sites) |site| {
+            if (std.mem.eql(u8, site.kind, "arena")) continue;
+            if (site.trace) |trace| asked += trace.bytes;
+        }
+        const limit = case.max_bytes_asked.?;
+        if (asked > limit) return .{ .fail = try std.fmt.allocPrint(arena, "asked for {d} bytes, above the limit of {d}", .{ asked, limit }) };
+        return .pass;
     }
 
     /// Records `outcome`, or the error that kept the case from producing one.

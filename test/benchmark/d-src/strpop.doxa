@@ -1,0 +1,28 @@
+module std from @std()
+
+# Pop a string to empty (plan/strings.md, Phase 0), counting the bytes that are
+# "a". The text cycles through "abc", built in a byte array before the timer.
+public entry function main() {
+    const size is 10_000
+    const rounds is 50
+    var bytes :: byte[] is []
+    for i while i < size do i += 1 {
+        @push(bytes, @byte(97 + i % 3))
+    }
+    const text is @pack(bytes)
+    var checksum is 0
+
+    const t0 is std.time.monotonic()
+
+    for r while r < rounds do r += 1 {
+        var s is text
+        while @length(s) > 0 {
+            const c is @pop(s)
+            if c == "a" then checksum += 1
+        }
+    }
+
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {checksum}")
+}

@@ -1,0 +1,22 @@
+module std from @std()
+
+# Interpolation-heavy line formatting (plan/strings.md, Phase 0): each line
+# formats an int, a float and a string. `i + 0.25` is exact in binary, so its
+# text is `<i>.25` on both sides. The C twin formats with snprintf.
+public entry function main() {
+    const lines is 1_000_000
+    const names is ["alpha", "beta", "gamma", "delta"]
+    var checksum is 0
+
+    const t0 is std.time.monotonic()
+
+    for i while i < lines do i += 1 {
+        const x is @float(i) + 0.25
+        const line is "{i}: {x} {names[i % 4]}|"
+        checksum += @length(line)
+    }
+
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {checksum}")
+}

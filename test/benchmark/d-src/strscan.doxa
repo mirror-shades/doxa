@@ -1,0 +1,60 @@
+module std from @std()
+
+# Byte scanning (plan/strings.md, Phase 0): indexing a local, a parameter and a
+# struct field, then `@find` over `@slice` windows. The text cycles through
+# "acebd", built in a byte array before the timer.
+
+struct Doc {
+    public body :: string,
+}
+
+function countParam(text :: string) returns int {
+    var n is 0
+    for i while i < @length(text) do i += 1 {
+        if text[i] == "a" then n += 1
+    }
+    return n
+}
+
+function countField(doc :: Doc) returns int {
+    var n is 0
+    for i while i < @length(doc.body) do i += 1 {
+        if doc.body[i] == "b" then n += 1
+    }
+    return n
+}
+
+# The first "da" in each window, relative to the window, or -1, summed.
+function findWindows(text :: string, window :: int) returns int {
+    var total is 0
+    for start is 0 while start < @length(text) do start += window {
+        total += @find(@slice(text, start, window), "da")
+    }
+    return total
+}
+
+public entry function main() {
+    const size is 100_000
+    const rounds is 20
+    var bytes :: byte[] is []
+    for i while i < size do i += 1 {
+        @push(bytes, @byte(97 + (i * 7) % 5))
+    }
+    const text is @pack(bytes)
+    const doc is $Doc { body is text }
+    var checksum is 0
+
+    const t0 is std.time.monotonic()
+
+    for r while r < rounds do r += 1 {
+        var local is 0
+        for i while i < @length(text) do i += 1 {
+            if text[i] == "e" then local += 1
+        }
+        checksum += local + countParam(text) + countField(doc) + findWindows(text, 64)
+    }
+
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {checksum}")
+}

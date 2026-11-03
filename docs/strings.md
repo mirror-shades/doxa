@@ -6,12 +6,10 @@ valid. Inside Zig, values are `[]const u8` slices; at the inline Zig module boun
 cross as pointer + byte length (a `(ptr, u64 len)` parameter pair, or `out_ptr`/`out_len`
 out-params for returns), as documented in [zig.md](zig.md).
 
-The LLVM backend still declares many string builtins (`@doxa_str_*`, etc.) as `ptr` into
-NUL-terminated allocations for C-style helpers—so compiled programs may still touch
-null-terminated buffers **inside** those runtime calls, even though the language model is
-pointer + length. Byte lengths at that compiled boundary are a fixed 64-bit `u64` on every
-target (matching the emitted IR's `i64` lengths); only pointers follow the target's pointer
-width.
+Every runtime string helper takes pointer + length and never reads past the length; no
+string is NUL-terminated. Byte lengths at that compiled boundary are a fixed 64-bit `u64`
+on every target (matching the emitted IR's `i64` lengths); only pointers follow the
+target's pointer width.
 
 ## Quote semantics
 
@@ -70,6 +68,36 @@ var t is "world"                         # inferred as string
 
 A `string` variable always holds a value — there is no null/nil sentinel. The empty string is
 represented by `""`.
+
+## Values and variables
+
+A string is a value: storing one never lets two names see each other's changes.
+Underneath, a string value is a pointer and a byte length, and its bytes are never
+rewritten once written, so a store, an argument or a struct field shares them rather
+than copying.
+
+A string variable — a `var`, a parameter, a module-level `var` — is a buffer: its value
+plus room to grow. Appending to it writes into that room, and when the room runs out
+the variable moves to a buffer twice the size. Building a string in a loop therefore
+costs time and memory in proportion to its length:
+
+```doxa
+var out is ""
+each word in words {
+    @push(out, word)        # also: out += word, out is out + word, out is "{out}{word}"
+}
+```
+
+Reading part of a string allocates nothing: `@slice`, `s[i]`, `each c in s`, `@pop`, and
+`@remove` of the first or last byte are views of the bytes already there. A template or
+a chain of `+` builds its result with one allocation, numbers written straight into it.
+`@pack` of a fresh byte array (a literal, a call's result) keeps the array's bytes; of an
+array a variable holds, it copies them, since the variable could still write them.
+
+A value taken from the variable before an append keeps what it held. A string in a
+struct field or an array element is a value, not a variable: appending to one builds a
+new string, so build text in a variable and store it once. `s[i] is x` is an error on
+purpose — rewriting a byte would make every string store a copy.
 
 ## Underlying u8 array
 
@@ -136,6 +164,5 @@ For **inline Zig modules** (`zig { … }` blocks compiled into the program), the
 wrappers pass strings as **pointer + byte length**, not C strings. See
 [zig.md](zig.md) for the full ABI.
 
-The **LLVM runtime** (`doxa_rt`) still exposes several helpers that take or return
-`?[*:0]const u8` so those entry points stay C-compatible; that is an implementation detail
-of those helpers, not the definition of the `string` type at the Zig module boundary.
+A string variable crosses as the value it holds: a Zig function never sees a buffer's
+spare room.

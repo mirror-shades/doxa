@@ -16,7 +16,14 @@ const tests is [
     "arr",
     "call",
     "struct",
-    "vec"
+    "vec",
+    # string tests (plan/strings.md, Phase 0)
+    "strbuild",
+    "strbuildx10",
+    "strfmt",
+    "strscan",
+    "strsplit",
+    "strpop"
 ]
 
 # One workload's measurements, one entry per run, in run order.

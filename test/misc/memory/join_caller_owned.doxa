@@ -1,0 +1,130 @@
+# A join of two values the caller owns: a `^` parameter's with a by-value
+# parameter's, and two `^` parameters', as an `if` and as a `match`, over an
+# array, a struct and a group. Neither arena is sure to outlive the other,
+# but both outlive the call, so the join has one region. Storing or
+# returning it still copies (docs/memory.md): writing through the result
+# leaves both sources alone.
+
+struct Box { public xs :: int[] }
+struct Dot { public n :: int }
+struct Line { public pts :: int[] }
+group Shape { Dot, Line }
+
+function shape(s :: Shape) returns string {
+    return match s {
+        Dot { n } then "dot {n}",
+        Line { pts } then "line {pts}",
+    }
+}
+
+function arrMixIf(^a :: int[], b :: int[], k :: int) {
+    const next is if k == 0 then b else a
+    a is next
+    a[0] is 9
+}
+
+function arrTwoIf(^a :: int[], ^b :: int[], k :: int) {
+    const next is if k == 0 then b else a
+    a is next
+    @push(a, 9)
+}
+
+function arrMixMatch(^a :: int[], b :: int[], k :: int) {
+    const next is match k {
+        0 then b,
+        else a,
+    }
+    a is next
+    a[0] is 9
+}
+
+function arrTwoMatch(^a :: int[], ^b :: int[], k :: int) {
+    const next is match k {
+        0 then b,
+        else a,
+    }
+    a is next
+    @push(a, 9)
+}
+
+function arrMixReturn(^a :: int[], b :: int[], k :: int) returns int[] {
+    return if k == 0 then b else a
+}
+
+function arrTwoReturn(^a :: int[], ^b :: int[], k :: int) returns int[] {
+    return if k == 0 then b else a
+}
+
+function boxTwoIf(^a :: Box, ^b :: Box, k :: int) {
+    const next is if k == 0 then b else a
+    a is next
+    a.xs[0] is 9
+}
+
+function boxMixMatch(^a :: Box, b :: Box, k :: int) returns Box {
+    return match k {
+        0 then b,
+        else a,
+    }
+}
+
+function shapeMixIf(^a :: Shape, b :: Shape, k :: int) {
+    const next is if k == 0 then b else a
+    a is next
+}
+
+function shapeTwoMatch(^a :: Shape, ^b :: Shape, k :: int) returns Shape {
+    return match k {
+        0 then b,
+        else a,
+    }
+}
+
+var mix_if :: int[] is [5]
+var mix_if_src :: int[] is [6]
+arrMixIf(^mix_if, mix_if_src, 1)
+@print("array mix if: {mix_if} ")
+arrMixIf(^mix_if, mix_if_src, 0)
+@print("{mix_if} {mix_if_src}\n")
+
+var two_if_a :: int[] is [5]
+var two_if_b :: int[] is [6]
+arrTwoIf(^two_if_a, ^two_if_b, 1)
+@print("array two if: {two_if_a} ")
+arrTwoIf(^two_if_a, ^two_if_b, 0)
+@print("{two_if_a} {two_if_b}\n")
+
+var mix_match :: int[] is [5]
+var mix_match_src :: int[] is [6]
+arrMixMatch(^mix_match, mix_match_src, 1)
+@print("array mix match: {mix_match} ")
+arrMixMatch(^mix_match, mix_match_src, 0)
+@print("{mix_match} {mix_match_src}\n")
+
+var two_match_a :: int[] is [5]
+var two_match_b :: int[] is [6]
+arrTwoMatch(^two_match_a, ^two_match_b, 1)
+@print("array two match: {two_match_a} ")
+arrTwoMatch(^two_match_a, ^two_match_b, 0)
+@print("{two_match_a} {two_match_b}\n")
+
+var ret_a :: int[] is [5]
+var ret_b :: int[] is [6]
+var ret_mix is arrMixReturn(^ret_a, ret_b, 0)
+ret_mix[0] is 9
+var ret_two is arrTwoReturn(^ret_a, ^ret_b, 1)
+ret_two[0] is 8
+@print("array return: {ret_mix} {ret_two} {ret_a} {ret_b}\n")
+
+var box_a :: Box is $Box { xs is [5] }
+var box_b :: Box is $Box { xs is [6] }
+boxTwoIf(^box_a, ^box_b, 0)
+var box_got is boxMixMatch(^box_a, box_b, 0)
+box_got.xs[0] is 7
+@print("struct: {box_a.xs} {box_b.xs} {box_got.xs}\n")
+
+var shape_a :: Shape is $Dot { n is 5 }
+var shape_b :: Shape is $Line { pts is [6] }
+shapeMixIf(^shape_a, shape_b, 0)
+var shape_got is shapeTwoMatch(^shape_a, ^shape_b, 1)
+@print("group: {shape(shape_a)} {shape(shape_b)} {shape(shape_got)}\n")

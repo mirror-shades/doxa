@@ -90,8 +90,8 @@ pub const FunctionEmitter = struct {
         }
         const storage = try self.e.alloc.alloc([]const u8, f.slots.len);
         for (f.slots, storage) |slot, *s| {
-            s.* = try self.alloca(layout.doxaType(slot.ty));
-            try self.entry.writer.print("  store {s} zeroinitializer, ptr {s}\n", .{ layout.doxaType(slot.ty), s.* });
+            s.* = try self.alloca(layout.storageType(slot.ty));
+            try self.entry.writer.print("  store {s} zeroinitializer, ptr {s}\n", .{ layout.storageType(slot.ty), s.* });
         }
         self.slot_storage = storage;
         self.inline_only = try copies.storedInline(self);
@@ -103,7 +103,7 @@ pub const FunctionEmitter = struct {
         if (self.e.debug) |*d| {
             for (f.locals, 0..) |local, i| {
                 const slot = local.slot orelse continue;
-                const var_node = try d.localVariable(f, self.id, @enumFromInt(i), .{ .doxa = f.slots[@intFromEnum(slot)].ty }, self.scope.?, local.arg);
+                const var_node = try d.localVariable(f, self.id, @enumFromInt(i), try d.storageType(f.slots[@intFromEnum(slot)].ty), self.scope.?, local.arg);
                 const loc = try d.location(self.scope.?, f, f.span, false);
                 try self.entry.writer.print("  call void @llvm.dbg.declare(metadata ptr {s}, metadata !{d}, metadata !DIExpression()), !dbg !{d}\n", .{ storage[@intFromEnum(slot)], var_node, loc });
             }
@@ -326,7 +326,7 @@ pub const FunctionEmitter = struct {
     /// `-g`.
     pub fn debugValue(self: *FunctionEmitter, local: ir.LocalId, value: ValueId) Error!void {
         const d = if (self.e.debug) |*d| d else return;
-        const var_node = try d.localVariable(self.f, self.id, local, self.f.typeOf(value), self.scope.?, self.f.locals[@intFromEnum(local)].arg);
+        const var_node = try d.localVariable(self.f, self.id, local, try d.typeOf(self.f.typeOf(value)), self.scope.?, self.f.locals[@intFromEnum(local)].arg);
         try self.w.print("  call void @llvm.dbg.value(metadata {s}, metadata !{d}, metadata !DIExpression()), !dbg !{d}\n", .{ try self.valueMetadata(value), var_node, try self.debugLocation() });
     }
 

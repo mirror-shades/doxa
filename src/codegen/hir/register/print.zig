@@ -40,7 +40,7 @@ pub fn writeFunction(w: *Writer, program: *const ir.Program, f: *const ir.Functi
     for (f.slots, 0..) |slot, i| {
         try w.print("  s{d}: ", .{i});
         try writeHIRType(w, program, slot.ty);
-        try w.print(" in %{d}\n", .{@intFromEnum(slot.arena)});
+        if (slot.arena) |a| try w.print(" in %{d}\n", .{@intFromEnum(a)}) else try w.writeAll("\n");
     }
     // A slot a program names is declared on it; an SSA name is a
     // `debug_value` where it is defined.
@@ -168,8 +168,9 @@ fn opName(op: ir.Op) []const u8 {
         .str_concat => "str.concat",
         .str_len => "str.len",
         .str_substring => "str.substring",
-        .str_last => "str.last",
-        .str_drop_last => "str.drop_last",
+        .str_view => "str.view",
+        .str_set => "str.set",
+        .str_append => "str.append",
         .str_find => "str.find",
         .str_insert => "str.insert",
         .str_remove => "str.remove",
@@ -178,6 +179,7 @@ fn opName(op: ir.Op) []const u8 {
         .str_to_float => "str.to_float",
         .str_to_byte => "str.to_byte",
         .str_pack => "str.pack",
+        .str_pack_move => "str.pack_move",
         .str_unpack => "str.unpack",
         .to_string => "to_string",
         .array_new => "array.new",

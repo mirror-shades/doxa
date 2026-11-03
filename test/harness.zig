@@ -150,6 +150,7 @@ pub const Failure = struct {
             .abnormal => |term| try w.print("ended abnormally: {any}\n", .{term}),
             .timed_out => try w.print("timed out after {d}s; process tree killed\n", .{timeout.toSeconds()}),
         }
+        try excerpt(w, "still running", capture.stuck);
         try excerpt(w, "stdout", capture.stdout);
         try excerpt(w, "stderr", capture.stderr);
         return .{ .fail = failure.text.written() };

@@ -13,7 +13,12 @@ pub const peek_result = answers.peek_result;
 /// poisoned and every read is checked against them, so a latent
 /// use-after-reclaim fails instead of passing on reused memory. It is opt-in,
 /// for the memory suite (`test/misc/memory/`).
-pub const Pipeline = enum { run, compile, memcheck };
+///
+/// `memtrace` is `doxa run --instrument=memtrace`: the case is judged as on
+/// `run`, then the bytes its run asked for must stay under `max_bytes_asked`.
+/// Bytes asked for are deterministic, so the limit is a test of how memory
+/// grows, not a timing. It is opt-in, for the cases that carry a limit.
+pub const Pipeline = enum { run, compile, memcheck, memtrace };
 
 /// How a case's result is judged.
 pub const Mode = enum {
@@ -63,6 +68,11 @@ pub const Case = struct {
     /// A compile warning the program must earn, judged in every mode that
     /// compiles: its code (`W2012`) and a piece of its text.
     expect_warning: ?Warning = null,
+    /// `memtrace`: the most bytes the run may ask for, summed over every
+    /// allocating site (`doxa report`'s "Allocations by site"). Set it between
+    /// the linear and the quadratic outcome with a wide margin each way, never
+    /// at the measured value, so an allocator change does not move it.
+    max_bytes_asked: ?u64 = null,
 
     pub fn runsOn(self: Case, pipeline: Pipeline) bool {
         for (self.pipelines) |candidate| {
@@ -78,6 +88,10 @@ pub const Case = struct {
         const prints = self.expected_print != null;
         const peeks = self.expected_peek != null;
         const runs = self.input != null or self.extra_args.len != 0;
+        if ((self.max_bytes_asked != null) != self.runsOn(.memtrace))
+            return "a memory limit and the memtrace pipeline go together";
+        if (self.max_bytes_asked != null and self.mode == .reject)
+            return "a reject case never runs, so it has no memory limit";
         return switch (self.mode) {
             .print => if (!prints or peeks) "a print case needs expected_print and nothing else" else null,
             .peek => if (!peeks or prints) "a peek case needs expected_peek and nothing else" else null,
@@ -153,6 +167,11 @@ const shared_cases = [_]Case{
         .name = "alias string mutation",
         .path = "./test/misc/alias_string_mutation.doxa",
         .expected_print = answers.expected_alias_string_mutation_results[0..],
+    },
+    .{
+        .name = "string pop takes one byte",
+        .path = "./test/misc/string_pop_bytes.doxa",
+        .expected_print = answers.expected_string_pop_bytes_results[0..],
     },
     .{
         .name = "alias re-pass to boxed union parameter",
@@ -526,6 +545,54 @@ const shared_cases = [_]Case{
         .path = "./test/misc/memory/join_fresh_with_held.doxa",
         .expected_print = answers.expected_memory_join_fresh_with_held_results[0..],
         .pipelines = memory_pipelines,
+    },
+    .{
+        .name = "memory: two caller-owned values join",
+        .path = "./test/misc/memory/join_caller_owned.doxa",
+        .expected_print = answers.expected_memory_join_caller_owned_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        // 10,000 lines ask for about 250 KB, one allocation a line; when each
+        // piece was its own string they asked for about 1.3 MB.
+        .name = "memory: an interpolation per iteration asks for linear bytes",
+        .path = "./test/misc/memory/string_interpolation_loop.doxa",
+        .expected_print = answers.expected_memory_string_interpolation_loop_results[0..],
+        .pipelines = &.{ .run, .compile, .memtrace },
+        .max_bytes_asked = 10_000_000,
+    },
+    .{
+        .name = "memory: string variables are buffers",
+        .path = "./test/misc/memory/string_buffers.doxa",
+        .expected_print = answers.expected_memory_string_buffers_results[0..],
+        .pipelines = memory_pipelines,
+    },
+    .{
+        // B034. 10,000 pushes ask for about 33 KB; before strings had buffers
+        // they asked for about 100 MB.
+        .name = "memory: pushing onto a string in a loop asks for linear bytes",
+        .path = "./test/misc/memory/string_push_loop.doxa",
+        .expected_print = answers.expected_memory_string_push_loop_results[0..],
+        .pipelines = &.{ .run, .compile, .memcheck, .memtrace },
+        .max_bytes_asked = 1_000_000,
+    },
+    .{
+        // Each pop is a view: 10,000 pops ask for the text's own bytes. When a
+        // pop copied the rest of the string, they asked for about 50 MB.
+        .name = "memory: popping a string to empty asks for linear bytes",
+        .path = "./test/misc/memory/string_pop_loop.doxa",
+        .expected_print = answers.expected_memory_string_pop_loop_results[0..],
+        .pipelines = &.{ .run, .compile, .memcheck, .memtrace },
+        .max_bytes_asked = 1_000_000,
+    },
+    .{
+        // 10,000 bytes ask for about 43 KB, the text's own; a scan that copied
+        // the rest of the string each step would ask for about 50 MB.
+        .name = "memory: an each scan of a string asks for linear bytes",
+        .path = "./test/misc/memory/string_each_scan.doxa",
+        .expected_print = answers.expected_memory_string_each_scan_results[0..],
+        .pipelines = &.{ .run, .compile, .memtrace },
+        .max_bytes_asked = 1_000_000,
     },
     .{
         .name = "union struct field",

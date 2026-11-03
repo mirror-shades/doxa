@@ -30,8 +30,9 @@ element) copies it: `var b is a`, `x is a`, `return a`, `arr[i] is a`,
 `o.f is a`, `@push(arr, a)`. A fresh value (a literal, a call's result) is
 moved, with no copy. Sharing is written with `^`: a `^` parameter
 (`f(^x)`) and an `each n in ^items` loop, whose body changes the elements
-through `n`. Strings are immutable, so whether they are shared is never
-observable.
+through `n`. A string's bytes are written once, so whether two names share
+them is never observable: a string store shares, and a string variable still
+grows in place ([strings.md](strings.md#values-and-variables)).
 
 ### Anonymous Block Cleanup
 
@@ -91,7 +92,7 @@ Because a value can only be reached while its allocating scope is on the stack, 
 - **Copy or rehome on store.** A store of a value a binding already holds is a copy (a `clone` into the destination's arena), as the language requires. A fresh value is re-homed instead: kept where it is when its arena outlives the destination, copied when it could be destroyed first. The arena pass settles every re-home whose arenas are static; the rest check at runtime (`scope_arena.isEqualOrDescendant`).
   - **Globals** live in the program-root arena. Storing a new value into a global places it there. In-place mutations (`@push`, `arr[i] is x`, `n.field is …`) write through the existing root-owned object — they do not snapshot it.
   - **By-value parameters** a callee changes are copied on entry, so the caller's value is untouched. A change is any write through the parameter: a field or element store, an in-place intrinsic, `each … in ^p`, a method that writes its receiver, or lending it to a `^` parameter the callee writes through. Rebinding the parameter (`p is other`) is not a change. A parameter the body only reads is not copied.
-  - **Strings** are immutable, so a copy is observationally identical to keeping the original: the compiler decides every string store statically, with no runtime check.
+  - **Strings** have bytes that are written once, so a copy is observationally identical to keeping the original: the compiler decides every string store statically, with no runtime check. A string variable is a buffer, `(ptr, len, cap)`: an append writes only into its own spare room and moves to a bigger buffer in the variable's arena when full, leaving the old bytes for every value that still shows them. A by-value string parameter needs no copy on entry: its buffer starts with no spare room, so the callee's first append moves it into the callee's arena.
 
 - **Clone on return.** A function frees its body scope on `return`; a heap
   return value is placed in the caller's arena first. A struct or array

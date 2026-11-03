@@ -62,7 +62,7 @@ pub fn landingOfRegion(f: *const ir.Function, facts: *const verify.Facts, loop: 
     return switch (region) {
         .static => .static,
         .root => .root,
-        .outer => .outer,
+        .outer, .given => .outer,
         .arena => |a| landingOf(f, facts, loop, a),
     };
 }
@@ -79,7 +79,18 @@ fn descends(facts: *const verify.Facts, arena: ValueId, body: ValueId) bool {
     return false;
 }
 
-/// The arena `op` allocates its result in, if it allocates.
+/// What the allocating instruction `inst` makes: its result, or, for an
+/// append, which grows a buffer and defines nothing, a string.
+pub fn allocType(f: *const ir.Function, inst: ir.Inst) ir.HIRType {
+    if (inst.result) |r| return f.typeOf(r).doxa;
+    return switch (inst.op) {
+        .str_append => .String,
+        else => unreachable, // every other allocation defines its value
+    };
+}
+
+/// The arena `op` allocates in, if it allocates: its result, or, for an
+/// append, the buffer's bytes.
 pub fn allocArena(op: ir.Op) ?ValueId {
     return switch (op) {
         // These name an arena to close or reset, not to allocate in.

@@ -1,0 +1,27 @@
+module std from @std()
+
+# `strbuild` ten times larger (plan/strings.md, Phase 1): its ratio to `strbuild`
+# shows how appending grows. Each round builds a string from empty, one piece at
+# a time. The C twin grows a doubling buffer.
+public entry function main() {
+    const rounds is 100
+    const appends is 50_000
+    const pieces is ["a", "bc", "def", "ghij"]
+    var checksum is 0
+
+    const t0 is std.time.monotonic()
+
+    for r while r < rounds do r += 1 {
+        var s is ""
+        for i while i < appends do i += 1 {
+            @push(s, pieces[(i + r) % 4])
+        }
+        const n is @length(s)
+        checksum += n
+        if s[n // 2] == "d" then checksum += 1
+    }
+
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {checksum}")
+}

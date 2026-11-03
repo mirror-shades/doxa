@@ -1,0 +1,11 @@
+# B034: `@push` onto a string in a loop. The variable is a buffer that doubles
+# when full (plan/strings.md, Phase 1), so the bytes asked for grow with the
+# length, never with its square.
+
+entry function main() {
+    var s is ""
+    for i while i < 10000 do i += 1 {
+        @push(s, "a")
+    }
+    @print("{@length(s)}\n")
+}

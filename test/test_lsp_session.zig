@@ -60,7 +60,7 @@ test "lsp session: the server resolves @std()" {
     const capture = try doxa.run(allocator, io, .{ .args = &.{"--lsp"}, .cwd = dir, .stdin = input.written() });
     defer capture.deinit(allocator);
     if (!capture.succeeded()) {
-        std.debug.print("doxa --lsp ended {any}:\n{s}\n", .{ capture.end, capture.stderr });
+        std.debug.print("doxa --lsp ended {any}:\n{s}\n{s}", .{ capture.end, capture.stderr, capture.stuck });
         return error.ServerFailed;
     }
 

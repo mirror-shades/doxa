@@ -72,8 +72,9 @@ hello?
 emptyArr?
 emptyStr?
 
-@pop(unicode_str)?
-unicode_str?
+# `@pop` takes off one byte: the last of the two that spell "é".
+@unpack(@pop(unicode_str))?
+@unpack(unicode_str)?
 
 @pop(nested)?
 nested?

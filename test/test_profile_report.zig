@@ -37,7 +37,7 @@ test "profile: bytes and per-record spans reach the report" {
     });
     defer capture.deinit(allocator);
     if (!capture.succeeded()) {
-        std.debug.print("doxa run failed ({any}):\n{s}\n", .{ capture.end, capture.stderr });
+        std.debug.print("doxa run failed ({any}):\n{s}\n{s}", .{ capture.end, capture.stderr, capture.stuck });
         return error.ProbeFailed;
     }
     try testing.expect(std.mem.indexOf(u8, capture.stderr, "not its logical allocations") != null);

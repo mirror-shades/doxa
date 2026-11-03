@@ -1,0 +1,14 @@
+# An interpolation built once per iteration and dropped. Each line is built in
+# the loop's arena, so the bytes asked for grow with the number of lines, never
+# with their square (plan/strings.md, the memory gate).
+
+entry function main() {
+    const a is "left"
+    const b is "right"
+    var total is 0
+    for i while i < 10000 do i += 1 {
+        const line is "{a}:{i}:{b}:{i}:{a}"
+        total += @length(line)
+    }
+    @print("{total}\n")
+}
