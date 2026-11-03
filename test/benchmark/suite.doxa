@@ -71,13 +71,13 @@ function isSpace(c :: string) returns tetra {
 # Compiles one benchmark source; returns the wall time in ns, or -1 on failure.
 function timeCompile(command :: string) returns int {
     const start is std.time.monotonic()
-    const code is std.process.exec(nativeCommand(command)) as int else {
-        std.io.println("Error executing command: {command}")
+    const term is std.process.exec(nativeCommand(command)) as std.process.Term else {
+        std.io.println("Error executing command: {command}: {term}")
         return -1
     }
     const end is std.time.monotonic()
-    if code != 0 then {
-        std.io.println("Command exited with status {code}: {command}")
+    if not term.succeeded() then {
+        std.io.println("Command ended {term.kind} {term.code}: {command}")
         return -1
     }
     return end - start
@@ -107,11 +107,17 @@ function cCompile(src :: string, out :: string) returns string {
 # Runs one binary once, adding its wall and self-reported compute time.
 function sample(command :: string, ^wall :: int[], ^compute :: int[], ^checksum :: string) returns tetra {
     const start is std.time.tick()
-    const output is std.process.execCapture(nativeCommand(command)) as string else {
-        std.io.println("Error executing command: {command}: {output}")
+    const run is std.process.execCapture(nativeCommand(command)) as std.process.Run else {
+        std.io.println("Error executing command: {command}: {run}")
         return false
     }
     const end is std.time.tick()
+    if not run.term.succeeded() then {
+        std.io.println("Command ended {run.term.kind} {run.term.code}: {command}
+{run.stderr}")
+        return false
+    }
+    const output is run.stdout
     var elapsed is 0
     if not parseOutput(output, ^elapsed, ^checksum) then {
         std.io.println("Malformed benchmark output from {command}: {output}")
@@ -299,13 +305,22 @@ function nativeCommand(command :: string) returns string {
     return converted
 }
 
+# What a git command printed, or `nothing` when it did not run cleanly.
+function gitOutput(command :: string) returns string | nothing {
+    const run is std.process.execCapture(command) as std.process.Run else {
+        return nothing
+    }
+    if not run.term.succeeded() then return nothing
+    return run.stdout
+}
+
 # The compiler build being measured: the checkout's commit, `-dirty` when
 # tracked files differ from it (the binary then holds uncommitted source).
 function compilerCommit() returns string {
-    const head is std.process.execCapture("git rev-parse --short=12 HEAD") as string else {
+    const head is gitOutput("git rev-parse --short=12 HEAD") as string else {
         return "unknown"
     }
-    const changes is std.process.execCapture("git status --porcelain --untracked-files=no") as string else {
+    const changes is gitOutput("git status --porcelain --untracked-files=no") as string else {
         return "unknown"
     }
     if @length(trim(changes)) > 0 then return "{trim(head)}-dirty"
@@ -382,11 +397,7 @@ public entry function suite() {
     var write is false
     var results :: Result[]
 
-    const args is std.process.args() as string[] else {
-        std.io.println("Error getting arguments")
-        std.process.exit(1)
-        return
-    }
+    const args is std.process.args()
     each arg at i in args {
         if arg == "--runs" then {
             if i + 1 < @length(args) then {

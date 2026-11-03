@@ -120,8 +120,10 @@ pub fn castExpr(self: *SemanticAnalyzer, expr: *ast.Expr, type_info: *ast.TypeIn
         try narrowSubject(self, else_scope, cast.value, remainder_type);
         if (cast_decl_name) |name| expr.data.Cast.decl_else = try bindCastDeclName(else_scope, name, remainder_type);
 
+        // A fallback value stands where the `as`'s value does, so it is typed
+        // in that context: `as T[] else []` is an empty `T[]`.
         self.discarded_grant = discarded;
-        else_type = try infer_type.inferTypeFromExpr(self, else_expr);
+        else_type = try infer_type.inferTypeIn(self, else_expr, then_type orelse target_type_info);
         if (expressionDiverges(else_expr)) {
             else_diverges = true;
             const nothing_type = try ast.TypeInfo.createDefault(self.allocator);

@@ -1,0 +1,30 @@
+# An `as` fallback value stands where the `as`'s value does, so it is typed
+# in that context: `as T[] else []` is an empty `T[]`, and an int literal
+# where a byte is expected is that byte.
+struct P { public x :: int }
+
+function maybe(k :: int) returns int[] | nothing {
+    if k == 0 then return nothing
+    return [1, 2, 3]
+}
+
+function points(k :: int) returns P[] | string {
+    if k == 0 then return "none"
+    return [$P { x is 7 }]
+}
+
+function small(k :: int) returns byte | nothing {
+    if k == 0 then return nothing
+    return 0x05
+}
+
+entry function main() {
+    const a is maybe(0) as int[] else []
+    const b is maybe(1) as int[] else []
+    var c is points(0) as P[] else []
+    const d is points(1) as P[] else []
+    const e is small(0) as byte else 9
+    @print("{@length(a)} {@length(b)} {@length(c)} {d[0].x} {e}\n")
+    @push(c, $P { x is 4 })
+    @print("{c[0].x}\n")
+}

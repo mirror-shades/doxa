@@ -1,0 +1,33 @@
+# `zerr.StdError` is an ordinary group of Zig's errors and Doxa's own
+# `error.Method`: a `ZigError` from a block widens into it, and a match arm
+# names each member.
+import zerr from @std()
+import error from @std()
+
+zig Fail {
+    pub fn f(x: i64) @"DoxaError_zerr.ZigError"!i64 {
+        if (x == 0) return error.AccessDenied;
+        return x;
+    }
+}
+
+function g(x :: int) returns int | zerr.StdError {
+    if x < 0 then return error.Method.Overflow
+    const r is Fail.f(x)
+    return r
+}
+
+function show(v :: int | zerr.StdError) {
+    v as int then @print("ok {v}\n") else {
+        match v {
+            zerr.ZigError then @print("zig {v}\n"),
+            error.Method then @print("method {v}\n"),
+        }
+    }
+}
+
+entry function main() {
+    show(g(3))
+    show(g(0))
+    show(g(-1))
+}

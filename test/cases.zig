@@ -905,6 +905,68 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "std.process returns the exit status and the captured output",
+        .path = "./test/misc/process_results.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "to stdout" },
+            .{ .value = "exec: .Exited 3" },
+            .{ .value = "capture: .Exited 3, stdout 10 bytes, stderr 0 bytes" },
+            .{ .value = "missing program: error .FileNotFound" },
+            .{ .value = "ok: true false" },
+            .{ .value = "argv(99): Method.OutOfBounds" },
+            .{ .value = "unset: nothing" },
+        },
+    },
+    .{
+        .name = "io reads lines and bytes through one reader; the end of input is nothing",
+        .path = "./test/misc/io_input.doxa",
+        .input = "first\r\nsecond\nxy",
+        .expected_print = &[_]print_result{
+            .{ .value = "line: first" },
+            .{ .value = "> prompted: second" },
+            .{ .value = "byte: 0x78" },
+            .{ .value = "last line: y" },
+            .{ .value = "after the end: nothing nothing" },
+        },
+    },
+    .{
+        .name = "std.file reports a failure by Zig's own name",
+        .path = "./test/misc/std_file_errors.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "missing: ZigError.FileNotFound" },
+            .{ .value = "empty path: ZigError.BadPathName" },
+            .{ .value = "exists: ZigError.PathAlreadyExists" },
+            .{ .value = "not a directory: ZigError.NotDir" },
+        },
+    },
+    .{
+        .name = "one @print writes all of its text, however long (B013)",
+        .path = "./test/misc/print_long.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "x" ** 4095 ++ "|a" },
+            .{ .value = "x" ** 4096 ++ "|b" },
+            .{ .value = "x" ** 4097 ++ "|c" },
+            .{ .value = "x" ** 70000 ++ "|d" },
+        },
+    },
+    .{
+        .name = "an as fallback is typed by the as: else [] is an empty array of the target",
+        .path = "./test/misc/as_else_context.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "0 3 0 7 0x09" },
+            .{ .value = "4" },
+        },
+    },
+    .{
+        .name = "StdError groups ZigError and Method",
+        .path = "./test/misc/zerr_std_error.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "ok 3" },
+            .{ .value = "zig .AccessDenied" },
+            .{ .value = "method .Overflow" },
+        },
+    },
+    .{
         .name = "intrinsics called postfix",
         .path = "./test/misc/intrinsic_postfix.doxa",
         .expected_print = &[_]print_result{
@@ -1031,6 +1093,27 @@ const shared_cases = [_]Case{
         .mode = .reject,
         .expect_error = "E8002",
         .expect_stderr = "field 'hidden' of struct 'Sealed' is private to another file, so the wrapper cannot set it",
+    },
+    .{
+        .name = "inline zig: a block imports a .zig file beside it, which imports another",
+        .path = "./test/misc/inline_zig_import.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "42 Fail.Negative" },
+        },
+    },
+    .{
+        .name = "inline zig: an error in an imported .zig file is reported in that file",
+        .path = "./test/misc/inline_zig_import_error.doxa",
+        .mode = .reject,
+        .expect_error = "E7015",
+        .expect_stderr = "broken.zig:3:16: use of undeclared identifier 'nope'",
+    },
+    .{
+        .name = "inline zig: importing a .zig file that is not there is reported at the block",
+        .path = "./test/misc/inline_zig_import_missing.doxa",
+        .mode = .reject,
+        .expect_error = "E7001",
+        .expect_stderr = "inline_zig_import_missing.doxa:3:1: Inline zig block imports 'zig_import/missing.zig', which is not a file beside 'inline_zig_import_missing.doxa'",
     },
     .{
         .name = "inline zig: a misspelled error name is reported at its .doxa line",
@@ -1250,7 +1333,7 @@ const shared_cases = [_]Case{
         .path = "./test/misc/http_loopback.doxa",
         .expected_print = &[_]print_result{
             .{ .value = "primitives ok" },
-            .{ .value = "check-status rejected" },
+            .{ .value = "not a 2xx status" },
             .{ .value = "404 not found 2 a=1 b=2 text/plain true" },
             .{ .value = "getText not found" },
             .{ .value = "timeout ok" },

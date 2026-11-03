@@ -1,26 +1,26 @@
 module std from @std()
-import error from @std()
+enum Failure { InvalidArgument, OutOfMemory }
 
-function g(k :: int) returns nothing | error.Common {
+function g(k :: int) returns nothing | Failure {
     if k == 0 then return
-    return error.Common.InvalidArgument
+    return Failure.InvalidArgument
 }
 
-function h(k :: int) returns string | error.Common {
-    if k == 1 then return error.Common.OutOfMemory
+function h(k :: int) returns string | Failure {
+    if k == 1 then return Failure.OutOfMemory
     return "payload"
 }
 
 entry function main() {
     const a is g(0)
-    a as error.Common then @print("a: error\n") else @print("a: nothing\n")
+    a as Failure then @print("a: error\n") else @print("a: nothing\n")
 
     const b is g(1)
-    b as error.Common then @print("b: error\n") else @print("b: nothing\n")
+    b as Failure then @print("b: error\n") else @print("b: nothing\n")
 
     const c is h(0)
-    c as error.Common then @print("c: error\n") else @print("c: {c}\n")
+    c as Failure then @print("c: error\n") else @print("c: {c}\n")
 
     const d is h(1)
-    d as error.Common then @print("d: error\n") else @print("d: payload\n")
+    d as Failure then @print("d: error\n") else @print("d: payload\n")
 }

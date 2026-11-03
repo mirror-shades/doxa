@@ -1,44 +1,4 @@
-public enum Common {
-    InvalidArgument,
-    OutOfMemory,
-    PermissionDenied,
-    NotSupported,
-    Unexpected,
-}
-
-public enum IO {
-    NotFound,
-    AlreadyExists,
-    NotDirectory,
-    IsDirectory,
-    InvalidPath,
-    OpenFailed,
-    ReadFailed,
-    WriteFailed,
-    CreateFailed,
-    DeleteFailed,
-    RenameFailed,
-    CopyFailed,
-    IterateFailed,
-    InvalidData,
-    ConnectionFailed,
-    Timeout,
-    HttpStatus,
-    Unexpected,
-}
-
-public enum Process {
-    CommandNotFound,
-    NotExecutable,
-    SpawnFailed,
-    WaitFailed,
-    KillFailed,
-    CaptureFailed,
-    OutputTooLarge,
-    NonZeroExit,
-    Unexpected,
-}
-
+# Doxa's own runtime errors, raised by the intrinsics.
 public enum Method {
     OutOfBounds,
     EmptyCollection,
@@ -46,11 +6,3 @@ public enum Method {
     Overflow,
     Unexpected,
 }
-
-public group StdError {
-    Common,
-    IO,
-    Process,
-    Method
-}
-

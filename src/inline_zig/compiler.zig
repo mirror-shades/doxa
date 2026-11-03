@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const ast = @import("../ast/ast.zig");
 const Reporting = @import("../utils/reporting.zig");
@@ -22,12 +23,79 @@ const GeneratedModule = struct {
     /// How the wrapper's first `source_len` bytes, the unit's sanitized
     /// source, map back to the unit's own text.
     source_map: SourceMap,
+    /// Every `.zig` file the unit's imports reach, read in place: an error in
+    /// one is reported where it stands.
+    imported: []const ImportedFile,
+    /// Where `build-obj` runs, which the paths in its errors are relative to.
+    /// Borrowed.
+    build_dir: []const u8,
 
     pub fn deinit(self: *GeneratedModule, allocator: std.mem.Allocator) void {
         allocator.free(self.zig_path);
         allocator.free(self.source_map.cuts);
+        for (self.imported) |file| {
+            allocator.free(file.path);
+            allocator.free(file.source);
+        }
+        allocator.free(self.imported);
     }
 };
+
+/// A `.zig` file a unit's imports reach.
+const ImportedFile = struct {
+    /// As its importer writes it.
+    spelling: []const u8,
+    /// Its real path.
+    path: []const u8,
+    source: []const u8,
+};
+
+/// Every file a unit's imports reach, the unit's own imports first, then what
+/// each of those imports by a relative path, once each. Zig resolves those
+/// itself inside each imported module; they are listed so their content keys
+/// the shim and an error in one maps to it.
+fn importClosure(io: std.Io, allocator: std.mem.Allocator, unit: module_graph.ZigUnit) ![]const ImportedFile {
+    var files = std.array_list.Managed(ImportedFile).init(allocator);
+    errdefer {
+        for (files.items) |file| {
+            allocator.free(file.path);
+            allocator.free(file.source);
+        }
+        files.deinit();
+    }
+    for (unit.imports) |import| {
+        const path = try allocator.dupe(u8, import.path);
+        errdefer allocator.free(path);
+        const source = try readSource(io, allocator, path);
+        errdefer allocator.free(source);
+        try files.append(.{ .spelling = import.spelling, .path = path, .source = source });
+    }
+    var next: usize = 0;
+    while (next < files.items.len) : (next += 1) {
+        const importer = files.items[next];
+        const spellings = try inline_zig.fileImports(allocator, importer.source);
+        defer allocator.free(spellings);
+        for (spellings) |spelling| {
+            const path = try std.fs.path.resolve(allocator, &.{ std.fs.path.dirname(importer.path) orelse ".", spelling });
+            errdefer allocator.free(path);
+            const seen = for (files.items) |file| {
+                if (std.mem.eql(u8, file.path, path)) break true;
+            } else false;
+            if (seen) {
+                allocator.free(path);
+                continue;
+            }
+            const source = try readSource(io, allocator, path);
+            errdefer allocator.free(source);
+            try files.append(.{ .spelling = spelling, .path = path, .source = source });
+        }
+    }
+    return files.toOwnedSlice();
+}
+
+fn readSource(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited);
+}
 
 /// The wrapper opens with the unit's source copied verbatim except for the
 /// keywords `appendZigSourceSanitized` strips. Each strip is a cut: `len`
@@ -290,7 +358,7 @@ fn errorSetPathFor(error_sets: []const module_graph.ZigErrorSet, ref: ast.TypeRe
 
 /// Append the identifier of the generated `name -> discriminant` switch for an
 /// error-set path: every character that cannot appear in an identifier becomes
-/// `_` (`error.IO` -> `__doxa_error_index_error_IO`).
+/// `_` (`zerr.ZigError` -> `__doxa_error_index_zerr_ZigError`).
 fn appendErrorIndexFn(buf: *std.array_list.Managed(u8), path: []const u8) !void {
     try buf.appendSlice("__doxa_error_index_");
     for (path) |c| try buf.append(if (std.ascii.isAlphanumeric(c)) c else '_');
@@ -391,6 +459,7 @@ fn generateWrapperZigFile(
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     cache_dir: []const u8,
+    build_dir: []const u8,
     graph: *const ModuleGraph,
     record: *const ModuleRecord,
 ) !GeneratedModule {
@@ -710,11 +779,27 @@ fn generateWrapperZigFile(
     // text written here, not by the block's source alone: the prologue also
     // carries what the program's Doxa declarations fix, such as an error set's
     // variant order, so editing one of those must build a new object.
+    // Every file the unit imports is built too, so each one's spelling and
+    // content join the hash, length-framed and in closure order.
+    const imported = try importClosure(io, allocator, unit);
+    errdefer {
+        for (imported) |file| {
+            allocator.free(file.path);
+            allocator.free(file.source);
+        }
+        allocator.free(imported);
+    }
     var h: [Sha256.digest_length]u8 = undefined;
     var hasher = Sha256.init(.{});
     hasher.update(cacheSeed());
     hasher.update("\n");
     hasher.update(file_buf.items);
+    for (imported) |file| {
+        for ([_][]const u8{ file.spelling, file.source }) |part| {
+            hasher.update(std.mem.asBytes(&@as(u64, part.len)));
+            hasher.update(part);
+        }
+    }
     hasher.final(&h);
     const hex_buf = std.fmt.bytesToHex(h, .lower);
     const zig_path = try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, hex_buf[0..16] });
@@ -725,6 +810,8 @@ fn generateWrapperZigFile(
     return .{
         .zig_path = zig_path,
         .source_map = .{ .cuts = try cuts.toOwnedSlice(), .source_len = source_len },
+        .imported = imported,
+        .build_dir = build_dir,
     };
 }
 
@@ -803,7 +890,7 @@ pub fn compileInlineZigObjects(
 
     for (units) |record| {
         profiler.begin("wrapper-gen");
-        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, graph, record);
+        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, cache_dir, graph, record);
         profiler.end();
         defer gen.deinit(memoryManager.getAllocator());
 
@@ -841,11 +928,11 @@ pub fn compileInlineZigObjects(
             // named here and reports the object's digest.
             var args_list = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
             defer args_list.deinit();
+            var arg_arena = std.heap.ArenaAllocator.init(memoryManager.getAllocator());
+            defer arg_arena.deinit();
             try args_list.appendSlice(&[_][]const u8{
                 zig_exe_path,
                 "build-obj",
-                gen.zig_path,
-                zig_opt_flag,
                 "--cache-dir",
                 zig_local_cache,
                 "--listen=-",
@@ -853,20 +940,28 @@ pub fn compileInlineZigObjects(
                 // reaches the unit's call into it. It costs only on failure.
                 "-freference-trace",
             });
-            if (target_triple.len > 0) {
-                try args_list.append("-target");
-                try args_list.append(target_triple);
-            }
-            if (cpu_arg.len > 0) {
-                try args_list.append(cpu_arg);
-            }
 
-            var dir_arena = std.heap.ArenaAllocator.init(memoryManager.getAllocator());
-            defer dir_arena.deinit();
+            // A module's options precede the `-M` that declares it. The
+            // wrapper is the root module, named for its stem so the object is
+            // too; each file the block imports is a module named as the block
+            // spells it, read in place. Zig resolves what those import in turn.
+            var module_flags = std.array_list.Managed([]const u8).init(arg_arena.allocator());
+            try module_flags.append(zig_opt_flag);
+            if (target_triple.len > 0) try module_flags.appendSlice(&.{ "-target", target_triple });
+            if (cpu_arg.len > 0) try module_flags.append(cpu_arg);
             // The build module's `--include` dirs apply to every module's
             // @cImport, matching how the artifact's `zig cc` step consumes them.
             for (include_dirs) |dir| {
-                try args_list.append(try std.fmt.allocPrint(dir_arena.allocator(), "-I{s}", .{dir}));
+                try module_flags.append(try std.fmt.allocPrint(arg_arena.allocator(), "-I{s}", .{dir}));
+            }
+
+            const imports = record.zig.?.imports;
+            try args_list.appendSlice(module_flags.items);
+            for (imports) |import| try args_list.appendSlice(&.{ "--dep", import.spelling });
+            try args_list.append(try std.fmt.allocPrint(arg_arena.allocator(), "-M{s}={s}", .{ zig_stem, gen.zig_path }));
+            for (imports) |import| {
+                try args_list.appendSlice(module_flags.items);
+                try args_list.append(try std.fmt.allocPrint(arg_arena.allocator(), "-M{s}={s}", .{ import.spelling, import.path }));
             }
             // Every object linked into a Doxa program must be compiled with the
             // same libc-ness as the runtime root object (`src/build/native.zig`, which
@@ -1006,7 +1101,7 @@ fn reportZigErrors(
         const where = try zigLocation(io, arena, reporter, bundle, message.src_loc, unit, gen);
         const kind = if (where) |w| w.kind else .generated;
         const location = switch (kind) {
-            .unit => where.?.location,
+            .unit, .imported => where.?.location,
             .zig_std => blk: {
                 related.appendAssumeCapacity(.{ .message = "raised here, in Zig's std", .location = where.?.location });
                 break :blk try callSite(io, arena, reporter, bundle, message.src_loc, unit, gen) orelse unit_location;
@@ -1057,13 +1152,13 @@ fn callSite(
         const frame_loc: EB.SourceLocationIndex = @enumFromInt(bundle.extra[at + 1]);
         at += trace_words;
         const frame = try zigLocation(io, arena, reporter, bundle, frame_loc, unit, gen) orelse continue;
-        if (frame.kind == .unit) return frame.location;
+        if (frame.kind == .unit or frame.kind == .imported) return frame.location;
     }
     return null;
 }
 
 const ZigLocation = struct {
-    kind: enum { unit, zig_std, generated },
+    kind: enum { unit, imported, zig_std, generated },
     location: Reporting.Location,
 };
 
@@ -1083,9 +1178,16 @@ fn zigLocation(
     const path = bundle.nullTerminatedString(loc.src_path);
 
     if (!std.mem.eql(u8, std.fs.path.basename(path), std.fs.path.basename(gen.zig_path))) {
-        const file = try arena.dupe(u8, path);
+        const resolved = try std.fs.path.resolve(arena, &.{ gen.build_dir, path });
+        const imported = for (gen.imported) |file| {
+            if (!samePath(file.path, resolved)) continue;
+            // So the diagnostic can show the line.
+            if (reporter.source_cache) |cache| cache.load(resolved, file.source) catch {};
+            break true;
+        } else false;
+        const file = if (imported) resolved else try arena.dupe(u8, path);
         const span_len = loc.span_end -| loc.span_main;
-        return .{ .kind = .zig_std, .location = .{
+        return .{ .kind = if (imported) .imported else .zig_std, .location = .{
             .file = file,
             .file_uri = reporter.ensureFileUri(io, file) catch null,
             .range = .{
@@ -1105,6 +1207,13 @@ fn zigLocation(
         .file_uri = unit.origin.file_uri,
         .range = rangeIn(unit, start, end),
     } };
+}
+
+/// Whether two resolved paths name the same file: Windows paths compare
+/// without case.
+fn samePath(a: []const u8, b: []const u8) bool {
+    if (builtin.os.tag == .windows) return std.ascii.eqlIgnoreCase(a, b);
+    return std.mem.eql(u8, a, b);
 }
 
 /// The file range of `source[start..end]`, placed through the unit's origin:

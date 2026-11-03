@@ -67,6 +67,9 @@ Examples:
 # Inline fallback value
 const n_or_zero is value as int else 0
 
+# The fallback is typed by the `as`: `[]` is an empty `string[]`
+const names is maybeNames() as string[] else []
+
 # Block with explicit return (guard pattern)
 const n is value as int else {
     @print("value is not an int\n")

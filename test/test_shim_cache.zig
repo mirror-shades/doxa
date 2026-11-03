@@ -61,3 +61,59 @@ test "shim cache: reordering an error set's enum builds a new shim" {
         try testing.expectEqualStrings("Second\n", capture.stdout);
     }
 }
+
+const importer =
+    \\zig Z {
+    \\    const engine = @import("engine.zig");
+    \\    pub fn value() i64 {
+    \\        return engine.value();
+    \\    }
+    \\}
+    \\@print("{Z.value()}\n")
+    \\
+;
+
+const engine = "pub const value = @import(\"helper.zig\").value;\n";
+
+fn helper(comptime value: []const u8) []const u8 {
+    return "pub fn value() i64 {\n    return " ++ value ++ ";\n}\n";
+}
+
+// A block's imports are built from their files in place, so each file it
+// reaches keys the shim: editing a file the imported one imports, with the
+// block unchanged, must not serve the old object.
+test "shim cache: editing a file an inline block's import reaches builds a new shim" {
+    const allocator = testing.allocator;
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = cwd_buffer[0..try tmp.dir.realPath(io, &cwd_buffer)];
+
+    const slot: harness.Slot = try .claim(allocator, io, "shim-cache");
+    defer slot.release(allocator, io);
+    const cache_flag = try std.fmt.allocPrint(allocator, "--cache-dir={s}", .{slot.path});
+    defer allocator.free(cache_flag);
+
+    const doxa: harness.Doxa = try .init(allocator, io);
+    defer doxa.deinit(allocator);
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "probe.doxa", .data = importer });
+    try tmp.dir.writeFile(io, .{ .sub_path = "engine.zig", .data = engine });
+    inline for (.{ "2", "3", "2" }) |value| {
+        try tmp.dir.writeFile(io, .{ .sub_path = "helper.zig", .data = helper(value) });
+        const capture = try doxa.run(allocator, io, .{
+            .args = &.{ "run", "probe.doxa", cache_flag },
+            .cwd = cwd,
+        });
+        defer capture.deinit(allocator);
+        if (!capture.succeeded()) {
+            std.debug.print("doxa run failed ({any}):\n{s}\n", .{ capture.end, capture.stderr });
+            return error.ProbeFailed;
+        }
+        const expected = try std.fmt.allocPrint(allocator, "{s}\n", .{value});
+        defer allocator.free(expected);
+        try testing.expectEqualStrings(expected, capture.stdout);
+    }
+}

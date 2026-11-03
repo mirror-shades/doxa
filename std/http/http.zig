@@ -34,58 +34,14 @@ const http = std.http;
 const gpa = std.heap.smp_allocator;
 
 // ---------------------------------------------------------------------------
-// Error cell (main thread only)
+// Failures
 // ---------------------------------------------------------------------------
-
-const code_invalid_argument: i64 = 1;
-const code_out_of_memory: i64 = 2;
-const code_not_supported: i64 = 4;
-const code_write_failed: i64 = 107;
-const code_create_failed: i64 = 108;
-const code_invalid_data: i64 = 113;
-const code_connection_failed: i64 = 114;
-const code_timeout: i64 = 115;
-const code_http_status: i64 = 116;
-
-const ErrorCell = struct {
-    var last: i64 = 0;
-};
-
-pub fn clearLastError() void {
-    ErrorCell.last = 0;
-}
-
-pub fn setLastError(code: i64) void {
-    ErrorCell.last = code;
-}
-
-pub fn takeLastErrorCode() i64 {
-    const code = ErrorCell.last;
-    ErrorCell.last = 0;
-    return code;
-}
-
-fn mapCommon(err_name: []const u8) i64 {
-    if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
-    if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
-    if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
-    if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
-    if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
-    if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
-    return -1;
-}
-
-fn mapNetworkError(err_name: []const u8) i64 {
-    const common = mapCommon(err_name);
-    if (common >= 0) return common;
-    if (std.mem.eql(u8, err_name, "Timeout")) return code_timeout;
-    if (std.mem.eql(u8, err_name, "InvalidAddress") or
-        std.mem.eql(u8, err_name, "InvalidPort") or
-        std.mem.eql(u8, err_name, "AddressFamilyUnsupported") or
-        std.mem.eql(u8, err_name, "HttpExpectationFailed")) return code_invalid_argument;
-    if (std.mem.eql(u8, err_name, "WriteFailed")) return code_write_failed;
-    return code_connection_failed;
-}
+//
+// A main-thread call that fails returns a Zig error: what Zig's std raised,
+// passed through, or the name Zig's std gives the same refusal. The block in
+// `http.doxa` passes each on as `zerr.ZigError` (`plan/std-errors.md`), whose
+// error set checks the names. An outcome is never an error: a non-2xx status
+// is a response, and a connection that ended is a `CloseReason`.
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -112,7 +68,7 @@ const Limits = struct {
 };
 
 /// Order is the wire contract with `Limit` in `http.doxa`.
-const LimitKey = enum(i64) {
+pub const LimitKey = enum(i64) {
     head_bytes,
     body_bytes,
     message_bytes,
@@ -1389,10 +1345,9 @@ fn stopConn(conn: *Conn, io: Io) void {
 
 /// Sets one cap or deadline for connections opened from now on. Deadlines are
 /// in milliseconds; zero disables one.
-pub fn setLimit(key: i64, value: i64) void {
-    clearLastError();
-    const which = std.enums.fromInt(LimitKey, key) orelse return setLastError(code_invalid_argument);
-    if (value < 0) return setLastError(code_invalid_argument);
+pub fn setLimit(which: LimitKey, value: i64) error{Overflow}!void {
+    // A size or deadline below zero does not fit one.
+    if (value < 0) return error.Overflow;
     ensureStarted();
     const io = engineIo();
     Engine.mutex.lockUncancelable(io);
@@ -1432,56 +1387,37 @@ pub fn closeReason(handle: i64) i64 {
 // Main-thread surface: listeners and the mailbox
 // ---------------------------------------------------------------------------
 
-pub fn listen(port: i64) i64 {
-    clearLastError();
-    if (port < 0 or port > 65535) {
-        setLastError(code_invalid_argument);
-        return 0;
-    }
+pub fn listen(port: i64) !i64 {
+    const port_number = std.math.cast(u16, port) orelse return error.InvalidPort;
     ensureStarted();
-    if (!Engine.concurrent) {
-        setLastError(code_not_supported);
-        return 0;
-    }
+    // Each connection runs on a task of its own.
+    if (!Engine.concurrent) return error.ConcurrencyUnavailable;
     const io = engineIo();
-    const address: net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
-    var server = address.listen(io, .{ .reuse_address = true }) catch |err| {
-        setLastError(mapNetworkError(@errorName(err)));
-        return 0;
-    };
-    const listener = gpa.create(Listener) catch {
-        server.deinit(io);
-        setLastError(code_out_of_memory);
-        return 0;
-    };
+    const address: net.IpAddress = .{ .ip4 = .loopback(port_number) };
+    var server = try address.listen(io, .{ .reuse_address = true });
+    errdefer server.deinit(io);
+    const listener = try gpa.create(Listener);
+    errdefer gpa.destroy(listener);
 
-    Engine.mutex.lockUncancelable(io);
-    listener.* = .{ .handle = Engine.next_handle, .server = server };
-    Engine.next_handle += 1;
-    const registered = if (Engine.entries.put(gpa, listener.handle, .{ .listener = listener })) |_| true else |_| false;
-    Engine.mutex.unlock(io);
-    if (!registered) {
-        server.deinit(io);
-        gpa.destroy(listener);
-        setLastError(code_out_of_memory);
-        return 0;
+    {
+        Engine.mutex.lockUncancelable(io);
+        defer Engine.mutex.unlock(io);
+        listener.* = .{ .handle = Engine.next_handle, .server = server };
+        try Engine.entries.put(gpa, listener.handle, .{ .listener = listener });
+        Engine.next_handle += 1;
     }
-
-    listener.future = io.concurrent(acceptLoop, .{listener}) catch {
+    errdefer {
         Engine.mutex.lockUncancelable(io);
         _ = Engine.entries.remove(listener.handle);
         Engine.mutex.unlock(io);
-        server.deinit(io);
-        gpa.destroy(listener);
-        setLastError(code_not_supported);
-        return 0;
-    };
+    }
+
+    listener.future = try io.concurrent(acceptLoop, .{listener});
     Engine.supervisor_wake.set(io);
     return listener.handle;
 }
 
-pub fn localAddr(handle: i64) i64 {
-    clearLastError();
+pub fn localAddr(handle: i64) error{InvalidHandle}!i64 {
     if (Engine.started) {
         const io = engineIo();
         Engine.mutex.lockUncancelable(io);
@@ -1491,28 +1427,22 @@ pub fn localAddr(handle: i64) i64 {
             .conn => {},
         };
     }
-    setLastError(code_invalid_argument);
-    return 0;
+    return error.InvalidHandle;
 }
 
+/// What one `poll` collected. Main thread only; the next `poll` reuses it, so
+/// the slices `poll` returns are copied out before then.
 const Events = struct {
     var handles: std.ArrayList(i64) = .empty;
     var kinds: std.ArrayList(i64) = .empty;
 };
 
-pub fn eventCount() i64 {
-    return @intCast(Events.handles.items.len);
-}
-
-pub fn eventHandle(index: i64) i64 {
-    if (index < 0 or index >= eventCount()) return 0;
-    return Events.handles.items[@intCast(index)];
-}
-
-pub fn eventKind(index: i64) i64 {
-    if (index < 0 or index >= eventCount()) return 0;
-    return Events.kinds.items[@intCast(index)];
-}
+/// The events one `poll` returned: `kinds[i]` is a `NoticeKind` ordinal for
+/// `handles[i]`.
+pub const Polled = struct {
+    handles: []const i64,
+    kinds: []const i64,
+};
 
 /// Connections whose `closed` notice an earlier `poll` returned are dead from
 /// here on.
@@ -1591,7 +1521,7 @@ fn remindLocked(owner: i64) usize {
 
 /// Waits up to `timeout_ms` for notices belonging to `owner` and moves them
 /// into the event cells. Negative waits indefinitely; zero does not wait.
-fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) i64 {
+fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) error{InvalidHandle}!usize {
     const io = engineIo();
     Events.handles.clearRetainingCapacity();
     Events.kinds.clearRetainingCapacity();
@@ -1603,8 +1533,7 @@ fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) i64 {
         Engine.mutex.lockUncancelable(io);
         if (!Engine.entries.contains(owner)) {
             Engine.mutex.unlock(io);
-            setLastError(code_invalid_argument);
-            return -1;
+            return error.InvalidHandle;
         }
         var taken = takeNoticesLocked(owner, only);
         if (only == null) taken += remindLocked(owner);
@@ -1624,35 +1553,28 @@ fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) i64 {
     for (Events.handles.items, Events.kinds.items) |handle, kind| {
         if (kind == @intFromEnum(NoticeKind.closed)) Engine.delivered.append(gpa, handle) catch {};
     }
-    return @intCast(Events.handles.items.len);
+    return Events.handles.items.len;
 }
 
-pub fn poll(owner: i64, timeout_ms: i64) i64 {
-    clearLastError();
-    if (!Engine.started) {
-        setLastError(code_invalid_argument);
-        return -1;
-    }
-    return collect(owner, timeout_ms, null);
+pub fn poll(owner: i64, timeout_ms: i64) error{InvalidHandle}!Polled {
+    if (!Engine.started) return error.InvalidHandle;
+    _ = try collect(owner, timeout_ms, null);
+    return .{ .handles = Events.handles.items, .kinds = Events.kinds.items };
 }
 
 /// Blocks until `listener` has accepted a connection and returns its handle.
-pub fn accept(listener: i64) i64 {
-    clearLastError();
-    if (!Engine.started) {
-        setLastError(code_invalid_argument);
-        return 0;
-    }
-    if (collect(listener, -1, .accepted) != 1) return 0;
+pub fn accept(listener: i64) error{InvalidHandle}!i64 {
+    if (!Engine.started) return error.InvalidHandle;
+    // With no deadline, `collect` returns once it has taken the connection.
+    _ = try collect(listener, -1, .accepted);
     const handle = Events.handles.items[0];
     Events.handles.clearRetainingCapacity();
     Events.kinds.clearRetainingCapacity();
     return handle;
 }
 
-pub fn close(handle: i64) void {
-    clearLastError();
-    if (!Engine.started) return setLastError(code_invalid_argument);
+pub fn close(handle: i64) error{InvalidHandle}!void {
+    if (!Engine.started) return error.InvalidHandle;
     const io = engineIo();
 
     var owned: std.ArrayList(*Conn) = .empty;
@@ -1683,7 +1605,7 @@ pub fn close(handle: i64) void {
             }
         }
     }
-    if (!found) return setLastError(code_invalid_argument);
+    if (!found) return error.InvalidHandle;
     for (owned.items) |conn| stopConn(conn, io);
     Engine.supervisor_wake.set(io);
 }
@@ -1692,14 +1614,10 @@ pub fn close(handle: i64) void {
 // Main-thread surface: HTTP requests and responses
 // ---------------------------------------------------------------------------
 
-/// 1 = a request is waiting (`takeRequest`), 0 = none yet, -1 = the
-/// connection has ended or the handle is unknown.
-pub fn readRequest(handle: i64) i64 {
-    clearLastError();
-    const conn = connOf(handle) orelse {
-        setLastError(code_invalid_argument);
-        return -1;
-    };
+/// 1 = a request is waiting (`requestMethod` and the rest), 0 = none yet,
+/// -1 = the connection has ended.
+pub fn readRequest(handle: i64) error{InvalidHandle}!i64 {
+    const conn = connOf(handle) orelse return error.InvalidHandle;
     const io = engineIo();
     conn.mutex.lockUncancelable(io);
     defer conn.mutex.unlock(io);
@@ -1776,16 +1694,16 @@ fn isFramingHeader(name: []const u8) bool {
 /// rejecting anything that could break framing. Lines are separated by CRLF;
 /// a trailing separator is optional. `reserved` names the headers the library
 /// writes itself.
-fn normalizeHeaders(blob: []const u8, comptime reserved: fn ([]const u8) bool) error{ InvalidArgument, OutOfMemory }![]u8 {
+fn normalizeHeaders(blob: []const u8, comptime reserved: fn ([]const u8) bool) error{ HttpHeadersInvalid, OutOfMemory }![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
     var lines = std.mem.splitSequence(u8, blob, "\r\n");
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidArgument;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.HttpHeadersInvalid;
         const name = line[0..colon];
         const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-        if (!validHeaderName(name) or !validHeaderValue(value) or reserved(name)) return error.InvalidArgument;
+        if (!validHeaderName(name) or !validHeaderValue(value) or reserved(name)) return error.HttpHeadersInvalid;
         try out.appendSlice(gpa, name);
         try out.appendSlice(gpa, ": ");
         try out.appendSlice(gpa, value);
@@ -1795,12 +1713,14 @@ fn normalizeHeaders(blob: []const u8, comptime reserved: fn ([]const u8) bool) e
 }
 
 /// Publishes the program's answer to the pending request and frees the
-/// request: the program is done with it. Takes ownership of `reply`.
-fn answer(handle: i64, reply: Reply) void {
+/// request: the program is done with it. Takes ownership of `reply`, also
+/// when it fails: `NotOpenForWriting` when no request is waiting for an
+/// answer, or an upgrade answers one that did not ask for it.
+fn answer(handle: i64, reply: Reply) error{ InvalidHandle, NotOpenForWriting }!void {
     var owned = reply;
     const conn = connOf(handle) orelse {
         owned.free();
-        return setLastError(code_invalid_argument);
+        return error.InvalidHandle;
     };
     const io = engineIo();
     var answered: Exchange = .{};
@@ -1812,7 +1732,7 @@ fn answer(handle: i64, reply: Reply) void {
             (owned.kind == .upgrade and !exchange.wants_websocket);
         if (refused) {
             owned.free();
-            return setLastError(code_invalid_argument);
+            return error.NotOpenForWriting;
         }
         conn.reply = owned;
         if (owned.kind == .upgrade) conn.websocket = true;
@@ -1823,18 +1743,17 @@ fn answer(handle: i64, reply: Reply) void {
     answered.free(io);
 }
 
-pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) void {
-    clearLastError();
-    // 1xx responses are interim; the library sends the only ones it supports.
-    if (status < 200 or status > 999) return setLastError(code_invalid_argument);
-    const header_lines = normalizeHeaders(headers, isFramingHeader) catch |err| {
-        return setLastError(if (err == error.OutOfMemory) code_out_of_memory else code_invalid_argument);
-    };
-    const body_copy = gpa.dupe(u8, body) catch {
+pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) !void {
+    // A status is three digits; 1xx responses are interim, and the library
+    // sends the only ones it supports.
+    if (status < 100 or status > 999) return error.HttpHeadersInvalid;
+    if (status < 200) return error.OperationUnsupported;
+    const header_lines = try normalizeHeaders(headers, isFramingHeader);
+    const body_copy = gpa.dupe(u8, body) catch |err| {
         gpa.free(header_lines);
-        return setLastError(code_out_of_memory);
+        return err;
     };
-    answer(handle, .{
+    try answer(handle, .{
         .kind = .response,
         .status = @intCast(status),
         .headers = header_lines,
@@ -1844,19 +1763,20 @@ pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) 
 
 /// Accepts the pending request's upgrade to a WebSocket. The handshake is
 /// written by the connection's task; sends may be queued at once.
-pub fn upgradeWebSocket(handle: i64) i64 {
-    clearLastError();
-    answer(handle, .{ .kind = .upgrade });
-    return if (ErrorCell.last == 0) 0 else 1;
+pub fn upgradeWebSocket(handle: i64) error{ InvalidHandle, NotOpenForWriting }!void {
+    return answer(handle, .{ .kind = .upgrade });
 }
 
 // ---------------------------------------------------------------------------
 // Main-thread surface: WebSocket messages
 // ---------------------------------------------------------------------------
 
-pub fn wsSend(handle: i64, op: i64, data: []const u8) void {
-    clearLastError();
-    const conn = connOf(handle) orelse return setLastError(code_invalid_argument);
+/// Queues one frame. `op` is an RFC 6455 opcode. A control frame carries at
+/// most 125 bytes. A connection that has ended is `Closed`; a peer reading
+/// too slowly to keep up is closed as `slow_consumer` and the send is
+/// `WriteFailed`.
+pub fn wsSend(handle: i64, op: i64, data: []const u8) !void {
+    const conn = connOf(handle) orelse return error.InvalidHandle;
     const io = engineIo();
     const opcode: Opcode = switch (op) {
         1 => .text,
@@ -1864,37 +1784,34 @@ pub fn wsSend(handle: i64, op: i64, data: []const u8) void {
         8 => .close,
         9 => .ping,
         10 => .pong,
-        else => return setLastError(code_invalid_argument),
+        else => return error.OpcodeNotSupported,
     };
     const is_control = opcode == .close or opcode == .ping or opcode == .pong;
-    if (is_control and data.len > 125) return setLastError(code_invalid_argument);
+    if (is_control and data.len > 125) return error.StreamTooLong;
     {
         conn.mutex.lockUncancelable(io);
         defer conn.mutex.unlock(io);
-        if (!conn.websocket) return setLastError(code_invalid_argument);
+        if (!conn.websocket) return error.NotOpenForWriting;
     }
     switch (enqueueFrame(conn, io, @intFromEnum(opcode), data, false)) {
         .queued => {},
-        .closed => setLastError(code_invalid_argument),
-        .no_memory => setLastError(code_out_of_memory),
+        .closed => return error.Closed,
+        .no_memory => return error.OutOfMemory,
         .full => {
             // The peer is not reading as fast as the program sends.
             conn.setReason(io, .slow_consumer);
             conn.closeOutbox(io);
             conn.requestKill(io);
-            setLastError(code_write_failed);
+            return error.WriteFailed;
         },
     }
 }
 
 /// 1 = a message is ready (`wsMessageOp`/`wsMessageData`), 0 = none yet,
-/// 2 = the peer closed, -1 = the connection failed (`takeLastErrorCode`).
-pub fn wsNext(handle: i64) i64 {
-    clearLastError();
-    const conn = connOf(handle) orelse {
-        setLastError(code_invalid_argument);
-        return -1;
-    };
+/// 2 = the peer closed. A message the peer broke (a protocol violation or a
+/// size limit) is `ProtocolError`.
+pub fn wsNext(handle: i64) error{ InvalidHandle, NotOpenForReading, ProtocolError }!i64 {
+    const conn = connOf(handle) orelse return error.InvalidHandle;
     const io = engineIo();
     var freed: usize = 0;
     defer releaseBudget(io, freed);
@@ -1903,10 +1820,7 @@ pub fn wsNext(handle: i64) i64 {
         conn.mutex.unlock(io);
         conn.changed.broadcast(io);
     }
-    if (!conn.websocket) {
-        setLastError(code_invalid_argument);
-        return -1;
-    }
+    if (!conn.websocket) return error.NotOpenForReading;
     if (conn.ws_ended) return 2;
     if (conn.inboxLen() == 0) {
         if (conn.reason == .open) return 0;
@@ -1923,8 +1837,7 @@ pub fn wsNext(handle: i64) i64 {
     conn.inbox_waiting.store(conn.inboxLen(), .release);
     if (conn.current.failed) {
         conn.ws_ended = true;
-        setLastError(code_invalid_data);
-        return -1;
+        return error.ProtocolError;
     }
     freed = conn.current.data.len;
     if (conn.current.op == @intFromEnum(Opcode.close)) conn.ws_ended = true;
@@ -1948,87 +1861,23 @@ pub fn wsPending(handle: i64) i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Route patterns
-// ---------------------------------------------------------------------------
-
-// The Router itself is Doxa data (verbs, patterns, ids); only the segment
-// matching lives here. Captures are owned copies drained by the Doxa matcher
-// before the next call: process-lifetime cells must never alias arena strings.
-const Captures = struct {
-    var names: std.ArrayList([]u8) = .empty;
-    var values: std.ArrayList([]u8) = .empty;
-
-    fn clear() void {
-        for (names.items) |name| gpa.free(name);
-        for (values.items) |value| gpa.free(value);
-        names.clearRetainingCapacity();
-        values.clearRetainingCapacity();
-    }
-};
-
-fn segmentEnd(text: []const u8, start: usize) usize {
-    return std.mem.indexOfScalarPos(u8, text, start, '/') orelse text.len;
-}
-
-/// A `:name` segment captures the corresponding path segment as `name`.
-/// Returns 1 on match, 0 on mismatch, and -1 on OOM.
-pub fn matchPattern(pattern: []const u8, path: []const u8) i64 {
-    Captures.clear();
-    var p: usize = 0;
-    var q: usize = 0;
-    while (true) {
-        const p_end = segmentEnd(pattern, p);
-        const q_end = segmentEnd(path, q);
-        const p_segment = pattern[p..p_end];
-        const q_segment = path[q..q_end];
-        if (p_segment.len >= 2 and p_segment[0] == ':') {
-            const name = gpa.dupe(u8, p_segment[1..]) catch return -1;
-            Captures.names.append(gpa, name) catch {
-                gpa.free(name);
-                return -1;
-            };
-            const value = gpa.dupe(u8, q_segment) catch return -1;
-            Captures.values.append(gpa, value) catch {
-                gpa.free(value);
-                return -1;
-            };
-        } else if (!std.mem.eql(u8, p_segment, q_segment)) {
-            return 0;
-        }
-        const p_done = p_end >= pattern.len;
-        const q_done = q_end >= path.len;
-        if (p_done or q_done) return if (p_done and q_done) 1 else 0;
-        p = p_end + 1;
-        q = q_end + 1;
-    }
-}
-
-pub fn paramCount() i64 {
-    return @intCast(@min(Captures.names.items.len, Captures.values.items.len));
-}
-
-pub fn paramNameAt(index: i64) []const u8 {
-    if (index < 0 or index >= paramCount()) return "";
-    return Captures.names.items[@intCast(index)];
-}
-
-pub fn paramValueAt(index: i64) []const u8 {
-    if (index < 0 or index >= paramCount()) return "";
-    return Captures.values.items[@intCast(index)];
-}
-
-// ---------------------------------------------------------------------------
 // HTTP client
 // ---------------------------------------------------------------------------
 
 const Client = struct {
     var shared: ?http.Client = null;
 
-    /// The response cells of the last request, drained by the Doxa wrapper
-    /// and then released. Main thread only.
-    var status_code: i64 = 0;
-    var raw_headers: []u8 = &.{};
+    /// The last response's head and body, backing the `Response` that request
+    /// returned until the next one starts. Main thread only.
+    var head: []u8 = &.{};
     var body: []u8 = &.{};
+
+    fn release() void {
+        gpa.free(head);
+        gpa.free(body);
+        head = &.{};
+        body = &.{};
+    }
 };
 
 fn httpClient() *http.Client {
@@ -2036,26 +1885,6 @@ fn httpClient() *http.Client {
         Client.shared = .{ .allocator = gpa, .io = engineIo() };
     }
     return &Client.shared.?;
-}
-
-pub fn takeStatusCode() i64 {
-    const status = Client.status_code;
-    Client.status_code = 0;
-    return status;
-}
-
-pub fn takeResponseHeaders() []const u8 {
-    return Client.raw_headers;
-}
-
-/// Frees the response cells once the Doxa wrapper has cloned what it needs.
-/// Idempotent.
-pub fn releaseResponse() void {
-    gpa.free(Client.raw_headers);
-    gpa.free(Client.body);
-    Client.raw_headers = &.{};
-    Client.body = &.{};
-    Client.status_code = 0;
 }
 
 fn isHopHeader(name: []const u8) bool {
@@ -2083,9 +1912,8 @@ fn sameOrigin(a: std.Uri, b: std.Uri) bool {
         (a.port orelse default_port) == (b.port orelse default_port);
 }
 
-/// One outgoing request, run to completion on a task while the main thread
-/// waits under the caller's deadline. Inputs are borrowed from the caller,
-/// which outlives the task; outputs are owned.
+/// One outgoing request. Inputs are borrowed from the caller, which outlives
+/// the task running it; outputs are owned.
 const Job = struct {
     method: []const u8,
     url: []const u8,
@@ -2095,39 +1923,39 @@ const Job = struct {
     /// When set, the response body is streamed here instead of buffered.
     destination: ?[]const u8 = null,
 
-    code: i64 = 0,
     status: i64 = 0,
-    raw_headers: []u8 = &.{},
+    head: []u8 = &.{},
     response_body: []u8 = &.{},
-    done: Io.Event = .unset,
 
-    fn fail(job: *Job, code: i64) void {
-        job.code = code;
-        gpa.free(job.raw_headers);
+    fn discard(job: *Job) void {
+        gpa.free(job.head);
         gpa.free(job.response_body);
-        job.raw_headers = &.{};
+        job.head = &.{};
         job.response_body = &.{};
-        job.status = 0;
     }
 };
 
-fn runJob(job: *Job) void {
+/// Every failure `executeJob` can return: Zig's own, from the URI, the client
+/// and the file a download writes.
+const JobError = @typeInfo(@typeInfo(@TypeOf(executeJob)).@"fn".return_type.?).error_union.error_set;
+
+/// A job run to completion on a task while the main thread waits under the
+/// caller's deadline.
+const JobTask = struct {
+    job: *Job,
+    result: JobError!void = {},
+    done: Io.Event = .unset,
+};
+
+fn runJob(task: *JobTask) void {
     const io = engineIo();
-    defer job.done.set(io);
-    executeJob(job, io) catch |err| job.fail(switch (err) {
-        error.InvalidArgument => code_invalid_argument,
-        error.OutOfMemory => code_out_of_memory,
-        error.ConnectionFailed => code_connection_failed,
-        error.WriteFailed => code_write_failed,
-        error.CreateFailed => code_create_failed,
-    });
+    defer task.done.set(io);
+    task.result = executeJob(task.job, io);
 }
 
-const JobError = error{ InvalidArgument, OutOfMemory, ConnectionFailed, WriteFailed, CreateFailed };
-
-fn executeJob(job: *Job, io: Io) JobError!void {
-    var method = std.meta.stringToEnum(http.Method, job.method) orelse return error.InvalidArgument;
-    if (job.body.len != 0 and !method.requestHasBody()) return error.InvalidArgument;
+fn executeJob(job: *Job, io: Io) !void {
+    var method = std.meta.stringToEnum(http.Method, job.method) orelse return error.UnknownHttpMethod;
+    if (job.body.len != 0 and !method.requestHasBody()) return error.OperationUnsupported;
 
     const header_lines = try normalizeHeaders(job.headers, isHopHeader);
     defer gpa.free(header_lines);
@@ -2140,41 +1968,41 @@ fn executeJob(job: *Job, io: Io) JobError!void {
         try headers.append(gpa, .{ .name = line[0..colon], .value = line[colon + 2 ..] });
     }
 
-    var uri = std.Uri.parse(job.url) catch return error.InvalidArgument;
+    var uri = try std.Uri.parse(job.url);
     var redirects_left = job.max_redirects;
     var redirect_buffers: [2][8 * 1024]u8 = undefined;
     var redirect_index: usize = 0;
 
     while (true) {
-        var request = httpClient().request(method, uri, .{
+        var request = try httpClient().request(method, uri, .{
             .redirect_behavior = .unhandled,
             .headers = .{ .accept_encoding = .omit },
             .extra_headers = headers.items,
-        }) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.ConnectionFailed;
+        });
         defer request.deinit();
 
         if (method.requestHasBody()) {
             const mutable_body = try gpa.dupe(u8, job.body);
             defer gpa.free(mutable_body);
-            request.sendBodyComplete(mutable_body) catch return error.ConnectionFailed;
+            try request.sendBodyComplete(mutable_body);
         } else {
-            request.sendBodiless() catch return error.ConnectionFailed;
+            try request.sendBodiless();
         }
 
-        var response = request.receiveHead(&.{}) catch return error.ConnectionFailed;
+        var response = try request.receiveHead(&.{});
 
         if (response.head.status.class() == .redirect and response.head.location != null) {
-            if (redirects_left == 0) return error.ConnectionFailed;
+            if (redirects_left == 0) return error.TooManyHttpRedirects;
             const location = response.head.location.?;
             redirect_index = 1 - redirect_index;
             const buffer = &redirect_buffers[redirect_index];
-            if (location.len > buffer.len) return error.ConnectionFailed;
+            if (location.len > buffer.len) return error.HttpRedirectLocationOversize;
             @memcpy(buffer[0..location.len], location);
             const previous = uri;
             var aux: []u8 = buffer[0..];
-            uri = uri.resolveInPlace(location.len, &aux) catch return error.ConnectionFailed;
-            var discard: [1024]u8 = undefined;
-            _ = response.reader(&discard).discardRemaining() catch return error.ConnectionFailed;
+            uri = try uri.resolveInPlace(location.len, &aux);
+            var discard_buffer: [1024]u8 = undefined;
+            _ = try response.reader(&discard_buffer).discardRemaining();
             if (!sameOrigin(previous, uri)) {
                 var kept: usize = 0;
                 for (headers.items) |header| {
@@ -2195,81 +2023,78 @@ fn executeJob(job: *Job, io: Io) JobError!void {
         }
 
         job.status = @intFromEnum(response.head.status);
-        job.raw_headers = try gpa.dupe(u8, response.head.bytes);
+        job.head = try gpa.dupe(u8, response.head.bytes);
         var transfer_buffer: [16 * 1024]u8 = undefined;
         const reader = response.reader(&transfer_buffer);
 
         if (job.destination) |path| {
-            var file = Io.Dir.cwd().createFile(io, path, .{}) catch return error.CreateFailed;
+            var file = try Io.Dir.cwd().createFile(io, path, .{});
             defer file.close(io);
             var file_buffer: [16 * 1024]u8 = undefined;
             var file_writer = file.writer(io, &file_buffer);
-            _ = reader.streamRemaining(&file_writer.interface) catch |err| switch (err) {
-                error.ReadFailed => return error.ConnectionFailed,
-                error.WriteFailed => return error.WriteFailed,
-            };
-            file_writer.interface.flush() catch return error.WriteFailed;
+            _ = try reader.streamRemaining(&file_writer.interface);
+            try file_writer.interface.flush();
             return;
         }
 
         var collected: std.ArrayList(u8) = .empty;
         defer collected.deinit(gpa);
-        reader.appendRemaining(gpa, &collected, .unlimited) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.ReadFailed, error.StreamTooLong => return error.ConnectionFailed,
-        };
+        try reader.appendRemaining(gpa, &collected, .unlimited);
         job.response_body = try collected.toOwnedSlice(gpa);
         return;
     }
 }
 
 /// Runs `job` under one deadline that covers name resolution, connecting,
-/// the TLS handshake, sending and receiving. Zero means no deadline.
-fn performJob(job: *Job, timeout_ms: i64) void {
-    clearLastError();
-    releaseResponse();
-    if (job.url.len == 0 or timeout_ms < 0) return setLastError(code_invalid_argument);
+/// the TLS handshake, sending and receiving. Zero means no deadline; a job
+/// still running at it is cancelled and is `Timeout`.
+fn performJob(job: *Job, timeout_ms: i64) !void {
+    if (timeout_ms < 0) return error.Overflow;
     ensureStarted();
     const io = engineIo();
+    var task: JobTask = .{ .job = job };
+    errdefer job.discard();
 
     if (!Engine.concurrent) {
-        runJob(job);
-    } else {
-        var future = io.concurrent(runJob, .{job}) catch return setLastError(code_connection_failed);
-        if (timeout_ms == 0) {
-            job.done.wait(io) catch {};
-            future.await(io);
-        } else if (job.done.waitTimeout(io, afterMs(timeout_ms))) |_| {
-            future.await(io);
-        } else |_| {
-            future.cancel(io);
-            // Cancellation surfaces inside the request as a transport error;
-            // report what actually happened.
-            if (job.code != 0) job.fail(code_timeout);
-        }
+        runJob(&task);
+        return task.result;
     }
-
-    if (job.code != 0) return setLastError(job.code);
-    Client.status_code = job.status;
-    Client.raw_headers = job.raw_headers;
-    Client.body = job.response_body;
+    var future = try io.concurrent(runJob, .{&task});
+    if (timeout_ms == 0) {
+        task.done.wait(io) catch {};
+        future.await(io);
+    } else if (task.done.waitTimeout(io, afterMs(timeout_ms))) |_| {
+        future.await(io);
+    } else |_| {
+        future.cancel(io);
+        // Cancellation surfaces inside the request as a transport error; a
+        // job that finished in time anyway keeps its result.
+        task.result catch return error.Timeout;
+    }
+    return task.result;
 }
 
-pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64) []const u8 {
-    if (max_redirects < 0 or max_redirects >= std.math.maxInt(u16)) {
-        clearLastError();
-        setLastError(code_invalid_argument);
-        return "";
-    }
+/// One response: its status, its head (the status line and headers) and its
+/// body, backed by the engine until the next request starts.
+pub const Response = struct {
+    status: i64,
+    head: []const u8,
+    body: []const u8,
+};
+
+pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64) !Response {
+    Client.release();
     var job: Job = .{
         .method = method,
         .url = url,
         .headers = headers,
         .body = body,
-        .max_redirects = @intCast(max_redirects),
+        .max_redirects = std.math.cast(u16, max_redirects) orelse return error.Overflow,
     };
-    performJob(&job, timeout_ms);
-    return Client.body;
+    try performJob(&job, timeout_ms);
+    Client.head = job.head;
+    Client.body = job.response_body;
+    return .{ .status = job.status, .head = Client.head, .body = Client.body };
 }
 
 fn filenameFromUrl(url: []const u8) []const u8 {
@@ -2280,11 +2105,10 @@ fn filenameFromUrl(url: []const u8) []const u8 {
     return if (name.len == 0) "downloaded.bin" else name;
 }
 
-pub fn downloadUrl(url: []const u8, destination: []const u8) void {
-    if (url.len == 0 or destination.len == 0) {
-        clearLastError();
-        return setLastError(code_invalid_argument);
-    }
+/// Streams `url`'s body into `destination` and returns the response status:
+/// a non-2xx status is the server's answer, not a failure, and its body is
+/// written like any other.
+pub fn downloadUrl(url: []const u8, destination: []const u8) !i64 {
     var job: Job = .{
         .method = "GET",
         .url = url,
@@ -2293,15 +2117,14 @@ pub fn downloadUrl(url: []const u8, destination: []const u8) void {
         .max_redirects = 3,
         .destination = destination,
     };
-    performJob(&job, 30_000);
-    const status = Client.status_code;
-    const failed = ErrorCell.last != 0;
-    releaseResponse();
-    if (!failed and (status < 200 or status >= 300)) setLastError(code_http_status);
+    try performJob(&job, 30_000);
+    defer job.discard();
+    return job.status;
 }
 
-pub fn download(url: []const u8) void {
-    downloadUrl(url, filenameFromUrl(url));
+/// `downloadUrl` into the file `url` names, in the working directory.
+pub fn download(url: []const u8) !i64 {
+    return downloadUrl(url, filenameFromUrl(url));
 }
 
 // ---------------------------------------------------------------------------

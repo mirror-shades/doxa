@@ -10,19 +10,37 @@ const win32 = @import("win32.zig");
 /// Write a slice to a raw WASI file descriptor. `std.Io.Threaded`'s syscall
 /// path is not usable under wasi preview1 (writes fail with ENOTCAPABLE), so —
 /// like the Windows branch — the runtime uses the platform's direct write call.
+/// A write may take fewer bytes than it was handed, so it repeats until all
+/// are out, and stops at the first failure.
 pub fn writeWasiFd(fd: i32, slice: []const u8) void {
-    if (slice.len == 0) return;
-    var iov = [1]std.os.wasi.ciovec_t{.{ .base = slice.ptr, .len = slice.len }};
-    var written: usize = 0;
-    _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
+    var rest = slice;
+    while (rest.len > 0) {
+        var iov = [1]std.os.wasi.ciovec_t{.{ .base = rest.ptr, .len = rest.len }};
+        var written: usize = 0;
+        if (std.os.wasi.fd_write(fd, &iov, 1, &written) != .SUCCESS or written == 0) return;
+        rest = rest[written..];
+    }
+}
+
+/// Write all of `slice` to a standard handle (`STD_OUTPUT_HANDLE`,
+/// `STD_ERROR_HANDLE`). `WriteFile` may write fewer bytes than it was handed
+/// and takes at most a `DWORD` of them, so it repeats until all are out, and
+/// stops at the first failure.
+pub fn writeStdHandle(which: win32.DWORD, slice: []const u8) void {
+    const handle = win32.GetStdHandle(which);
+    if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
+    var rest = slice;
+    while (rest.len > 0) {
+        const chunk: win32.DWORD = @intCast(@min(rest.len, std.math.maxInt(win32.DWORD)));
+        var written: win32.DWORD = 0;
+        if (!win32.WriteFile(handle, rest.ptr, chunk, &written, null).toBool() or written == 0) return;
+        rest = rest[written..];
+    }
 }
 
 pub fn writeStderr(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
-        const handle = win32.GetStdHandle(win32.STD_ERROR_HANDLE);
-        if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
-        var written: u32 = 0;
-        _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        writeStdHandle(win32.STD_ERROR_HANDLE, slice);
         return;
     }
     if (builtin.os.tag == .wasi) {

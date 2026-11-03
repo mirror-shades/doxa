@@ -1,9 +1,9 @@
-import error from @std()
+enum FsError { NotFound }
 
 # A misspelled error name is a Zig compile error in the block. It is reported
 # at the name's own line and column in this file, never in the cached wrapper.
 zig Fs {
-    pub fn mightFail(n: i64) @"DoxaError_error.IO"!i64 {
+    pub fn mightFail(n: i64) DoxaError_FsError!i64 {
         if (n == 0) return error.NotFuond;
         return n;
     }

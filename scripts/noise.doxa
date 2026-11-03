@@ -78,10 +78,7 @@ public entry function main() {
     var since is 0
     var path is "test/benchmark/stats.csv"
 
-    const args is std.process.args() as string[] else {
-        std.io.println("Error getting arguments")
-        return
-    }
+    const args is std.process.args()
     each arg at i in args {
         if arg == "--since" then {
             if i + 1 < @length(args) then {

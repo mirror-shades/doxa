@@ -328,12 +328,14 @@ test "emit: a power-of-two constant divisor lowers modulo to a single urem" {
     defer allocator.free(source);
     const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
+    // The program calls into `std`, whose own code is not under test.
+    const body = functionBody(ir_text, "main") orelse return error.FunctionNotEmitted;
 
-    try testing.expect(std.mem.indexOf(u8, ir_text, "urem i64") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "urem i64") != null);
     // No sign correction may survive, and the truncating remainder must be gone
     // entirely.
-    try testing.expectEqual(@as(usize, 0), correctionCount(ir_text));
-    try testing.expect(std.mem.indexOf(u8, ir_text, "srem") == null);
+    try testing.expectEqual(@as(usize, 0), correctionCount(body));
+    try testing.expect(std.mem.indexOf(u8, body, "srem") == null);
 }
 
 test "emit: a general constant divisor keeps the remainder but drops the xor" {
@@ -350,12 +352,14 @@ test "emit: a general constant divisor keeps the remainder but drops the xor" {
     defer allocator.free(source);
     const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
+    // The program calls into `std`, whose own code is not under test.
+    const body = functionBody(ir_text, "main") orelse return error.FunctionNotEmitted;
 
-    try testing.expect(std.mem.indexOf(u8, ir_text, "srem i64") != null);
-    try testing.expectEqual(@as(usize, 1), correctionCount(ir_text));
-    try testing.expect(std.mem.indexOf(u8, ir_text, "icmp slt i64") != null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "xor i64") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "urem") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "srem i64") != null);
+    try testing.expectEqual(@as(usize, 1), correctionCount(body));
+    try testing.expect(std.mem.indexOf(u8, body, "icmp slt i64") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "xor i64") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "urem") == null);
 }
 
 test "emit: a power-of-two constant divisor lowers floored division to a shift" {
@@ -367,12 +371,14 @@ test "emit: a power-of-two constant divisor lowers floored division to a shift" 
     defer allocator.free(source);
     const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
+    // The program calls into `std`, whose own code is not under test.
+    const body = functionBody(ir_text, "main") orelse return error.FunctionNotEmitted;
 
-    try testing.expect(std.mem.indexOf(u8, ir_text, "urem i64") != null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "ashr i64") != null);
-    try testing.expectEqual(@as(usize, 0), correctionCount(ir_text));
-    try testing.expect(std.mem.indexOf(u8, ir_text, "sdiv") == null);
-    try testing.expect(std.mem.indexOf(u8, ir_text, "srem") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "urem i64") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "ashr i64") != null);
+    try testing.expectEqual(@as(usize, 0), correctionCount(body));
+    try testing.expect(std.mem.indexOf(u8, body, "sdiv") == null);
+    try testing.expect(std.mem.indexOf(u8, body, "srem") == null);
 }
 
 test "emit: an unconstrained divisor keeps the sign correction" {

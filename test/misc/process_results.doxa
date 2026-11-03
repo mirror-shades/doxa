@@ -1,0 +1,36 @@
+# `std.process` returns how a child ended and what it wrote as one result; a
+# non-zero exit is part of it, not an error (B028). The program runs itself
+# as the child, so no shell or helper binary is involved.
+import process, zerr from @std()
+
+function child() {
+    @print("to stdout\n")
+    @exit(3)
+}
+
+function describe(label :: string, r :: process.Term | zerr.ZigError) {
+    r as process.Term then @print("{label}: {r.kind} {r.code}\n") else @print("{label}: error {r}\n")
+}
+
+entry function main() {
+    if process.argc() > 1 then child()
+    const self is process.argv(0) as string else {
+        @print("no argv(0)\n")
+        return
+    }
+
+    describe("exec", process.execArgs(self, ["child"]))
+
+    const run is process.execCaptureArgs(self, ["child"]) as process.Run else {
+        @print("capture: error {run}\n")
+        return
+    }
+    @print("capture: {run.term.kind} {run.term.code}, stdout {@length(run.stdout)} bytes, stderr {@length(run.stderr)} bytes\n")
+
+    describe("missing program", process.execArgs("./no-such-program-b028", []))
+    @print("ok: {process.execOk("exit 0")} {process.execOk("exit 3")}\n")
+
+    const far is process.argv(99)
+    @print("argv(99): {far}\n")
+    @print("unset: {process.getenv("DOXA_PROCESS_RESULTS_UNSET")}\n")
+}

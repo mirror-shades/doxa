@@ -521,7 +521,7 @@ function serve(listener :: int) returns int {
     var done is false
     var guard is 0
     while not done and guard < 100 do guard += 1 {
-        const events is std.http.poll(listener, 500)
+        const events is std.http.poll(listener, 500) as std.http.Event[] else @panic("poll failed")
         for i while i < @length(events) do i += 1 {
             const event is events[i]
             if event.kind == std.http.EventKind.Closed then {
@@ -529,7 +529,7 @@ function serve(listener :: int) returns int {
             } else {
                 # Complete the handshake first, once a full request is buffered.
                 if not std.http.isWebSocket(event.handle) then {
-                    const status is std.http.readRequest(event.handle)
+                    const status is std.http.readRequest(event.handle) as int else -1
                     if status == 1 then {
                         std.http.upgradeWebSocket(event.handle)
                     } else if status == -1 then {
@@ -541,7 +541,7 @@ function serve(listener :: int) returns int {
                     while reading and not done {
                         # 1 = message, 0 = need more bytes, 2 = peer closed,
                         # anything else is an error.
-                        const ws is std.http.wsNext(event.handle)
+                        const ws is std.http.wsNext(event.handle) as int else -1
                         if ws == 1 then {
                             const message is std.http.wsMessage(event.handle)
                             const stop is wsRespond(event.handle, message)
@@ -572,14 +572,14 @@ function servePair(listener :: int, total :: int) returns int {
     var served is 0
     var guard is 0
     while served < total and guard < 200 do guard += 1 {
-        const events is std.http.poll(listener, 500)
+        const events is std.http.poll(listener, 500) as std.http.Event[] else @panic("poll failed")
         for i while i < @length(events) do i += 1 {
             const event is events[i]
             if event.kind == std.http.EventKind.Closed then {
                 std.http.close(event.handle)
             } else {
                 if not std.http.isWebSocket(event.handle) then {
-                    const status is std.http.readRequest(event.handle)
+                    const status is std.http.readRequest(event.handle) as int else -1
                     if status == 1 then {
                         std.http.upgradeWebSocket(event.handle)
                     } else if status == -1 then {
@@ -589,7 +589,7 @@ function servePair(listener :: int, total :: int) returns int {
                 if std.http.isWebSocket(event.handle) then {
                     var reading is true
                     while reading {
-                        const ws is std.http.wsNext(event.handle)
+                        const ws is std.http.wsNext(event.handle) as int else -1
                         if ws == 1 then {
                             const message is std.http.wsMessage(event.handle)
                             const stop is wsRespond(event.handle, message)
@@ -619,7 +619,7 @@ function serveSugar(listener :: int) returns int {
     var done is false
     var guard is 0
     while not done and guard < 100 do guard += 1 {
-        const events is std.http.poll(listener, 500)
+        const events is std.http.poll(listener, 500) as std.http.Event[] else @panic("poll failed")
         for i while i < @length(events) do i += 1 {
             const event is events[i]
             if event.kind == std.http.EventKind.Closed then {
@@ -658,7 +658,7 @@ function serveSugar(listener :: int) returns int {
 function serveUntilClosed(listener :: int) returns std.http.CloseReason {
     var guard is 0
     while guard < 100 do guard += 1 {
-        const events is std.http.poll(listener, 500)
+        const events is std.http.poll(listener, 500) as std.http.Event[] else @panic("poll failed")
         for i while i < @length(events) do i += 1 {
             const event is events[i]
             if event.kind == std.http.EventKind.Closed then {
@@ -677,7 +677,7 @@ function serveBurst(listener :: int) returns int {
     var done is false
     var guard is 0
     while not done and guard < 100 do guard += 1 {
-        const events is std.http.poll(listener, 500)
+        const events is std.http.poll(listener, 500) as std.http.Event[] else @panic("poll failed")
         var readable is 0
         for i while i < @length(events) do i += 1 {
             const event is events[i]

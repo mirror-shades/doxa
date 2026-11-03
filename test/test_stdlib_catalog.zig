@@ -6,11 +6,11 @@ const SAMPLE =
     \\module error from "../error.doxa"
     \\
     \\# Fetches a URL and returns the response.
-    \\public function get(url :: string, timeout :: int) returns Response | error.StdError {
+    \\public function get(url :: string, timeout :: int) returns Response | zerr.ZigError {
     \\    return performGet(url, timeout)
     \\}
     \\
-    \\public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
+    \\public function request(verb :: string, url :: string, ^req :: Request) returns Response | zerr.ZigError {
     \\    return perform(verb, url, req)
     \\}
     \\
@@ -61,7 +61,7 @@ test "catalog parses functions, params, aliases, and returns" {
     try testing.expectEqualStrings("url", get.params[0].name);
     try testing.expectEqualStrings("string", get.params[0].type_text);
     try testing.expect(!get.params[0].alias);
-    try testing.expectEqualStrings("Response | error.StdError", get.return_type.?);
+    try testing.expectEqualStrings("Response | zerr.ZigError", get.return_type.?);
     try testing.expectEqualStrings("Fetches a URL and returns the response.", get.doc.?);
 
     const request = findDecl(decls, "request") orelse return error.MissingDecl;
@@ -105,11 +105,11 @@ test "signatureDetail renders a compact signature" {
     const decls = try catalog.parseSource(allocator, SAMPLE);
     const get = findDecl(decls, "get") orelse return error.MissingDecl;
     const detail = try catalog.signatureDetail(allocator, get);
-    try testing.expectEqualStrings("get(url: string, timeout: int) -> Response | error.StdError", detail);
+    try testing.expectEqualStrings("get(url: string, timeout: int) -> Response | zerr.ZigError", detail);
 
     const request = findDecl(decls, "request") orelse return error.MissingDecl;
     const request_detail = try catalog.signatureDetail(allocator, request);
-    try testing.expectEqualStrings("request(verb: string, url: string, ^req: Request) -> Response | error.StdError", request_detail);
+    try testing.expectEqualStrings("request(verb: string, url: string, ^req: Request) -> Response | zerr.ZigError", request_detail);
 }
 
 test "parameterLabel and callSnippet render editor metadata" {

@@ -362,6 +362,18 @@ pub const ZigUnit = struct {
     /// filled in by the analyzer's Types stage once each is checked to cross
     /// (`plan/inline-zig-structs.md`). A struct precedes any struct holding it.
     structs: []const ZigStruct = &.{},
+    /// The `.zig` files an inline block imports (`@import("engine.zig")`),
+    /// resolved beside the file declaring the block. Each is compiled as a Zig
+    /// module of that name, read in place: plain Zig the block calls into,
+    /// which names no Doxa type.
+    imports: []const ZigImport = &.{},
+};
+
+pub const ZigImport = struct {
+    /// The path as the block writes it, which is also its Zig module name.
+    spelling: []const u8,
+    /// The file's real path.
+    path: []const u8,
 };
 
 /// A struct crossing from Zig, resolved: what the wrapper needs to declare its

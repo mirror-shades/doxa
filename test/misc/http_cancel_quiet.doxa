@@ -13,9 +13,11 @@ const r is std.http.getWithTimeout("http://127.0.0.1:{p}/x", 200)
 var gave_up is true
 r as std.http.Response then gave_up is false else {}
 for i while i < 20 do i += 1 {
-    each e in std.http.poll(l, 50) {
+    const events is std.http.poll(l, 50) as std.http.Event[] else @panic("poll failed")
+    each e in events {
         if e.kind == std.http.EventKind.Readable then {
-            if std.http.readRequest(e.handle) == 1 then {
+            const status is std.http.readRequest(e.handle) as int else -1
+            if status == 1 then {
                 match std.http.respond(e.handle, 200, "", "hello") {
                     nothing then answered += 1,
                     else {},

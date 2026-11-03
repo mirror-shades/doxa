@@ -1,0 +1,12 @@
+# Standard input reads through one reader: a line drops its `\n` or `\r\n`, a
+# byte read after a line sees what the line buffered past it, and the end of
+# input is `nothing`, not an error.
+import io from @std()
+
+entry function main() {
+    @print("line: {io.input()}\n")
+    @print("prompted: {io.inputPrompt("> ")}\n")
+    @print("byte: {io.inputByte()}\n")
+    @print("last line: {io.input()}\n")
+    @print("after the end: {io.input()} {io.inputByte()}\n")
+}

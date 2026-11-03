@@ -99,7 +99,7 @@ function nodeKindIs(value :: std.json.Node | nothing, expected :: std.json.Kind)
     return false
 }
 
-function fieldNode(result :: std.json.Node | std.error.StdError, name :: string) returns std.json.Node | nothing {
+function fieldNode(result :: std.json.Node | std.zerr.ZigError, name :: string) returns std.json.Node | nothing {
     match result {
         std.json.Node then {
             return result.field(name)
@@ -111,7 +111,7 @@ function fieldNode(result :: std.json.Node | std.error.StdError, name :: string)
     return nothing
 }
 
-function fieldInt(result :: std.json.Node | std.error.StdError, name :: string) returns int | nothing {
+function fieldInt(result :: std.json.Node | std.zerr.ZigError, name :: string) returns int | nothing {
     const node is fieldNode(result, name)
     match node {
         std.json.Node then {
@@ -124,7 +124,7 @@ function fieldInt(result :: std.json.Node | std.error.StdError, name :: string) 
     return nothing
 }
 
-function fieldFloat(result :: std.json.Node | std.error.StdError, name :: string) returns float | nothing {
+function fieldFloat(result :: std.json.Node | std.zerr.ZigError, name :: string) returns float | nothing {
     const node is fieldNode(result, name)
     match node {
         std.json.Node then {
@@ -137,7 +137,7 @@ function fieldFloat(result :: std.json.Node | std.error.StdError, name :: string
     return nothing
 }
 
-function fieldText(result :: std.json.Node | std.error.StdError, name :: string) returns string | nothing {
+function fieldText(result :: std.json.Node | std.zerr.ZigError, name :: string) returns string | nothing {
     const node is fieldNode(result, name)
     match node {
         std.json.Node then {
@@ -150,7 +150,7 @@ function fieldText(result :: std.json.Node | std.error.StdError, name :: string)
     return nothing
 }
 
-function fieldBoolean(result :: std.json.Node | std.error.StdError, name :: string) returns tetra | nothing {
+function fieldBoolean(result :: std.json.Node | std.zerr.ZigError, name :: string) returns tetra | nothing {
     const node is fieldNode(result, name)
     match node {
         std.json.Node then {
@@ -202,10 +202,10 @@ function isInvalid(value :: std.json.Node | nothing) returns tetra {
     return false
 }
 
-function invalidData(result :: std.json.Node | std.error.StdError) returns tetra {
+function syntaxError(result :: std.json.Node | std.zerr.ZigError) returns tetra {
     match result {
-        std.error.StdError then {
-            if result == std.error.IO.InvalidData then return true
+        std.zerr.ZigError then {
+            if result == std.zerr.ZigError.SyntaxError then return true
             return false
         }
         else {
@@ -298,7 +298,7 @@ function missesOk() returns tetra {
 }
 
 function parseErrorOk() returns tetra {
-    return invalidData(std.json.Node.parse("not json"))
+    return syntaxError(std.json.Node.parse("not json"))
 }
 
 function staleNodesOk() returns tetra {

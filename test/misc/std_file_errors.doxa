@@ -1,0 +1,10 @@
+# `std.file` reports a failure by Zig's own name; nothing is mapped onto a
+# coarser enum. Every probe is read-only.
+import file from @std()
+
+entry function main() {
+    @print("missing: {file.read("test/misc/no-such-file.txt")}\n")
+    @print("empty path: {file.read("")}\n")
+    @print("exists: {file.makeDir("test/misc")}\n")
+    @print("not a directory: {file.list("test/misc/std_file_errors.doxa")}\n")
+}

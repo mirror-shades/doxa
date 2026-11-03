@@ -1,38 +1,7 @@
-module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
 
 zig JSON {
     const std = @import("std");
-
-    pub fn errorState(mode: i64, value: i64) i64 {
-        const State = struct {
-            var last_error_code: i64 = 0;
-        };
-        if (mode == 0) {
-            State.last_error_code = value;
-            return 0;
-        }
-        if (mode == 1) {
-            return State.last_error_code;
-        }
-        if (mode == 2) {
-            const code = State.last_error_code;
-            State.last_error_code = 0;
-            return code;
-        }
-        return 0;
-    }
-
-    pub fn clearLastError() void {
-        _ = errorState(0, 0);
-    }
-
-    pub fn setLastError(code: i64) void {
-        _ = errorState(0, code);
-    }
-
-    pub fn takeLastErrorCode() i64 {
-        return errorState(2, 0);
-    }
 
     fn frameRecord() type {
         return struct {
@@ -61,8 +30,7 @@ zig JSON {
             var buffer: std.ArrayList(u8) = .empty;
             var stack: std.ArrayList(frameRecord()) = .empty;
             var root_written = false;
-            var failed = false;
-            var failure_code: i64 = 0;
+            var failure: ?@"DoxaError_zerr.ZigError" = null;
             var finished = false;
         };
     }
@@ -75,230 +43,209 @@ zig JSON {
         };
     }
 
-    fn fail(code: i64) void {
-        const w = writerStateType();
-        if (w.failed) return;
-        w.failed = true;
-        w.failure_code = code;
-        setLastError(code);
-    }
+    // The writer refuses what Zig's JSON parser would reject, by the name the
+    // parser gives it: a write the grammar does not allow is `SyntaxError`, a
+    // document finished unfinished `UnexpectedEndOfInput`. Text that is not
+    // UTF-8 is `InvalidUtf8`.
 
-    fn resetWriter() void {
+    /// Only `finish` ends a document, on every path, so the first write after
+    /// it starts the next one. The reset waits for that first write, so the
+    /// text `finish` returned stays valid until the next document starts.
+    fn ensureFresh() void {
         const w = writerStateType();
+        if (!w.finished) return;
         w.buffer.clearRetainingCapacity();
         w.stack.clearRetainingCapacity();
         w.root_written = false;
-        w.failed = false;
-        w.failure_code = 0;
+        w.failure = null;
         w.finished = false;
     }
 
-    /// Only `finish` ends a document, on every path, so the first write after it
-    /// starts the next one. A refusal holds until then: a later write in the
-    /// same document is refused with it. The reset waits for that first write,
-    /// so the text `finish` returned stays valid until the next document starts.
-    fn ensureFresh() void {
-        if (writerStateType().finished) resetWriter();
+    /// The first refusal holds for the rest of its document: every later write
+    /// in it, and its `finish`, return that refusal.
+    fn write(result: @"DoxaError_zerr.ZigError"!void) @"DoxaError_zerr.ZigError"!void {
+        try guard();
+        result catch |err| {
+            writerStateType().failure = err;
+            return err;
+        };
     }
 
-    fn guard() bool {
-        const w = writerStateType();
-        if (w.failed) {
-            setLastError(w.failure_code);
-            return false;
-        }
-        clearLastError();
-        return true;
+    fn guard() @"DoxaError_zerr.ZigError"!void {
+        if (writerStateType().failure) |err| return err;
     }
 
-    fn appendByte(b: u8) void {
-        const w = writerStateType();
-        if (w.failed) return;
-        w.buffer.append(std.heap.page_allocator, b) catch fail(2);
+    fn appendSlice(s: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try writerStateType().buffer.appendSlice(std.heap.page_allocator, s);
     }
 
-    fn appendSlice(s: []const u8) void {
-        const w = writerStateType();
-        if (w.failed) return;
-        w.buffer.appendSlice(std.heap.page_allocator, s) catch fail(2);
-    }
-
-    fn appendNumber(comptime fmt: []const u8, args: anytype) void {
-        const w = writerStateType();
-        if (w.failed) return;
-        w.buffer.print(std.heap.page_allocator, fmt, args) catch fail(2);
+    fn appendNumber(comptime fmt: []const u8, args: anytype) @"DoxaError_zerr.ZigError"!void {
+        try writerStateType().buffer.print(std.heap.page_allocator, fmt, args);
     }
 
     // String escaping derived from Para (MIT), Copyright 2025 mirror-shades
-    fn appendQuoted(bytes: []const u8) bool {
-        const w = writerStateType();
-        if (w.failed) return false;
-        if (!std.unicode.utf8ValidateSlice(bytes)) {
-            fail(113);
-            return false;
-        }
-        appendByte('"');
+    fn appendQuoted(bytes: []const u8) @"DoxaError_zerr.ZigError"!void {
+        if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidUtf8;
+        try appendSlice("\"");
         for (bytes) |c| {
-            if (w.failed) return false;
             switch (c) {
-                '"' => appendSlice("\\\""),
-                '\\' => appendSlice("\\\\"),
-                0x08 => appendSlice("\\b"),
-                0x0C => appendSlice("\\f"),
-                '\n' => appendSlice("\\n"),
-                '\r' => appendSlice("\\r"),
-                '\t' => appendSlice("\\t"),
+                '"' => try appendSlice("\\\""),
+                '\\' => try appendSlice("\\\\"),
+                0x08 => try appendSlice("\\b"),
+                0x0C => try appendSlice("\\f"),
+                '\n' => try appendSlice("\\n"),
+                '\r' => try appendSlice("\\r"),
+                '\t' => try appendSlice("\\t"),
                 else => {
                     if (c < 0x20) {
-                        appendSlice("\\u00");
                         const hex = "0123456789abcdef";
-                        appendByte(hex[c >> 4]);
-                        appendByte(hex[c & 0x0F]);
+                        try appendSlice("\\u00");
+                        try appendSlice(&.{ hex[c >> 4], hex[c & 0x0F] });
                     } else {
-                        appendByte(c);
+                        try appendSlice(&.{c});
                     }
                 },
             }
         }
-        appendByte('"');
-        return !w.failed;
+        try appendSlice("\"");
     }
 
-    fn beforeValue() bool {
+    fn beforeValue() @"DoxaError_zerr.ZigError"!void {
         const w = writerStateType();
         if (w.stack.items.len > 0) {
             const top = &w.stack.items[w.stack.items.len - 1];
             if (top.in_object) {
-                if (!top.expect_value) {
-                    fail(1);
-                    return false;
-                }
+                if (!top.expect_value) return error.SyntaxError;
                 top.expect_value = false;
             } else if (top.items > 0) {
-                appendByte(',');
+                try appendSlice(",");
             }
             top.items += 1;
         } else {
-            if (w.root_written) {
-                fail(1);
-                return false;
-            }
+            if (w.root_written) return error.SyntaxError;
             w.root_written = true;
         }
-        return true;
     }
 
-    pub fn writerBeginObject() void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        appendByte('{');
-        const w = writerStateType();
-        w.stack.append(std.heap.page_allocator, .{ .in_object = true }) catch fail(2);
+    fn open(in_object: bool) @"DoxaError_zerr.ZigError"!void {
+        try beforeValue();
+        try appendSlice(if (in_object) "{" else "[");
+        try writerStateType().stack.append(std.heap.page_allocator, .{ .in_object = in_object });
     }
 
-    pub fn writerBeginArray() void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        appendByte('[');
+    fn key(name: []const u8) @"DoxaError_zerr.ZigError"!void {
         const w = writerStateType();
-        w.stack.append(std.heap.page_allocator, .{ .in_object = false }) catch fail(2);
-    }
-
-    pub fn writerKey(name: []const u8) void {
-        ensureFresh();
-        if (!guard()) return;
-        const w = writerStateType();
-        if (w.stack.items.len == 0) {
-            fail(1);
-            return;
-        }
+        if (w.stack.items.len == 0) return error.SyntaxError;
         const top = &w.stack.items[w.stack.items.len - 1];
-        if (!top.in_object or top.expect_value) {
-            fail(1);
-            return;
-        }
-        if (top.items > 0) appendSlice(",");
-        if (!appendQuoted(name)) return;
-        appendByte(':');
+        if (!top.in_object or top.expect_value) return error.SyntaxError;
+        if (top.items > 0) try appendSlice(",");
+        try appendQuoted(name);
+        try appendSlice(":");
         top.expect_value = true;
     }
 
-    pub fn writerText(text: []const u8) void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        _ = appendQuoted(text);
+    fn text(value: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try beforeValue();
+        try appendQuoted(value);
     }
 
-    pub fn writerInt(value: i64) void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        appendNumber("{d}", .{value});
+    fn int(value: i64) @"DoxaError_zerr.ZigError"!void {
+        try beforeValue();
+        try appendNumber("{d}", .{value});
     }
 
-    pub fn writerFloat(value: f64) void {
-        ensureFresh();
-        if (!guard()) return;
-        if (std.math.isNan(value) or std.math.isInf(value)) {
-            fail(113);
-            return;
-        }
-        if (!beforeValue()) return;
-        appendNumber("{d}", .{value});
+    // JSON has no NaN or infinity.
+    fn float(value: f64) @"DoxaError_zerr.ZigError"!void {
+        if (std.math.isNan(value) or std.math.isInf(value)) return error.SyntaxError;
+        try beforeValue();
+        try appendNumber("{d}", .{value});
     }
 
-    pub fn writerBoolean(value: bool) void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        appendSlice(if (value) "true" else "false");
+    fn literal(word: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try beforeValue();
+        try appendSlice(word);
     }
 
-    pub fn writerNull() void {
-        ensureFresh();
-        if (!guard()) return;
-        if (!beforeValue()) return;
-        appendSlice("null");
-    }
-
-    pub fn writerEnd() void {
-        ensureFresh();
-        if (!guard()) return;
+    fn close() @"DoxaError_zerr.ZigError"!void {
         const w = writerStateType();
-        if (w.stack.items.len == 0) {
-            fail(1);
-            return;
-        }
+        if (w.stack.items.len == 0) return error.SyntaxError;
         const top = w.stack.items[w.stack.items.len - 1];
-        if (top.in_object and top.expect_value) {
-            fail(1);
-            return;
-        }
+        if (top.in_object and top.expect_value) return error.SyntaxError;
         _ = w.stack.pop();
-        appendSlice(if (top.in_object) "}" else "]");
+        try appendSlice(if (top.in_object) "}" else "]");
     }
 
-    pub fn writerReject(code: i64) void {
+    fn complete() @"DoxaError_zerr.ZigError"!void {
+        const w = writerStateType();
+        if (w.stack.items.len != 0 or !w.root_written) return error.UnexpectedEndOfInput;
+    }
+
+    pub fn writerBeginObject() @"DoxaError_zerr.ZigError"!void {
         ensureFresh();
-        fail(code);
+        try guard();
+        return write(open(true));
     }
 
-    pub fn writerFinish() []const u8 {
+    pub fn writerBeginArray() @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(open(false));
+    }
+
+    pub fn writerKey(name: []const u8) @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(key(name));
+    }
+
+    pub fn writerText(value: []const u8) @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(text(value));
+    }
+
+    pub fn writerInt(value: i64) @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(int(value));
+    }
+
+    pub fn writerFloat(value: f64) @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(float(value));
+    }
+
+    pub fn writerBoolean(value: bool) @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(literal(if (value) "true" else "false"));
+    }
+
+    pub fn writerNull() @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(literal("null"));
+    }
+
+    // A value Doxa can hold but JSON cannot write (a tetra's `both` or
+    // `neither`).
+    pub fn writerRefuse() @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        return write(error.SyntaxError);
+    }
+
+    pub fn writerEnd() @"DoxaError_zerr.ZigError"!void {
+        ensureFresh();
+        try guard();
+        return write(close());
+    }
+
+    pub fn writerFinish() @"DoxaError_zerr.ZigError"![]const u8 {
         ensureFresh();
         const w = writerStateType();
         defer w.finished = true;
-        if (!guard()) return "";
-        if (w.stack.items.len != 0) {
-            fail(1);
-            return "";
-        }
-        if (!w.root_written) {
-            fail(1);
-            return "";
-        }
+        try write(complete());
         return w.buffer.items;
     }
 
@@ -307,48 +254,22 @@ zig JSON {
         return @bitCast((gen << 32) | @as(u64, index));
     }
 
-    fn resolveNode(handle: i64) ?usize {
+    /// The node a handle names, or null for 0 (no node) and for a handle into
+    /// an earlier document.
+    fn resolveNode(handle: i64) ?nodeRecord() {
         if (handle == 0) return null;
         const state = domStateType();
         const raw: u64 = @bitCast(handle);
         const gen: u32 = @truncate(raw >> 32);
         if (gen != state.generation) return null;
-        const low: u32 = @truncate(raw);
-        const idx: usize = low;
+        const idx: usize = @as(u32, @truncate(raw));
         if (idx >= state.nodes.items.len) return null;
-        return idx;
+        return state.nodes.items[idx];
     }
 
-    fn requireKind(handle: i64, kind: u8) ?usize {
-        clearLastError();
-        const idx = resolveNode(handle) orelse {
-            setLastError(1);
-            return null;
-        };
-        if (domStateType().nodes.items[idx].kind != kind) {
-            setLastError(1);
-            return null;
-        }
-        return idx;
-    }
-
-    fn requireContainer(handle: i64) ?usize {
-        clearLastError();
-        const idx = resolveNode(handle) orelse {
-            setLastError(1);
-            return null;
-        };
-        const kind = domStateType().nodes.items[idx].kind;
-        if (kind != 6 and kind != 7) {
-            setLastError(1);
-            return null;
-        }
-        return idx;
-    }
-
-    fn makeNode(value: std.json.Value, key: []const u8, has_key: bool) !nodeRecord() {
+    fn makeNode(value: std.json.Value, name: []const u8, has_key: bool) nodeRecord() {
         var node = nodeRecord(){
-            .key = key,
+            .key = name,
             .has_key = has_key,
             .child_start = -1,
             .child_count = 0,
@@ -380,7 +301,15 @@ zig JSON {
         return node;
     }
 
-    fn buildDocument(root: std.json.Value) !void {
+    // A handle packs a node's index into 32 bits.
+    fn addNode(node: nodeRecord()) @"DoxaError_zerr.ZigError"!usize {
+        const state = domStateType();
+        if (state.nodes.items.len > std.math.maxInt(u32)) return error.Overflow;
+        try state.nodes.append(std.heap.page_allocator, node);
+        return state.nodes.items.len - 1;
+    }
+
+    fn buildDocument(root: std.json.Value) @"DoxaError_zerr.ZigError"!void {
         const Work = struct {
             node_index: usize,
             value: std.json.Value,
@@ -392,9 +321,7 @@ zig JSON {
         var work: std.ArrayList(Work) = .empty;
         defer work.deinit(allocator);
 
-        if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
-        try state.nodes.append(allocator, try makeNode(root, "", false));
-        try work.append(allocator, .{ .node_index = 0, .value = root });
+        try work.append(allocator, .{ .node_index = try addNode(makeNode(root, "", false)), .value = root });
 
         while (work.pop()) |item| {
             const value = item.value;
@@ -405,18 +332,13 @@ zig JSON {
 
             if (value == .array) {
                 for (value.array.items) |child_value| {
-                    if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
-                    const idx = state.nodes.items.len;
-                    try state.nodes.append(allocator, try makeNode(child_value, "", false));
+                    const idx = try addNode(makeNode(child_value, "", false));
                     try work.append(allocator, .{ .node_index = idx, .value = child_value });
                     count += 1;
                 }
             } else {
-                for (value.object.keys(), 0..) |key, position| {
-                    const child_value = value.object.values()[position];
-                    if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
-                    const idx = state.nodes.items.len;
-                    try state.nodes.append(allocator, try makeNode(child_value, key, true));
+                for (value.object.keys(), value.object.values()) |name, child_value| {
+                    const idx = try addNode(makeNode(child_value, name, true));
                     try work.append(allocator, .{ .node_index = idx, .value = child_value });
                     count += 1;
                 }
@@ -428,16 +350,10 @@ zig JSON {
         }
     }
 
-    pub fn parseDocument(text: []const u8) i64 {
-        clearLastError();
-        const allocator = std.heap.page_allocator;
-
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{
+    pub fn parseDocument(source: []const u8) @"DoxaError_zerr.ZigError"!i64 {
+        const parsed = try std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, source, .{
             .allocate = .alloc_always,
-        }) catch |err| {
-            setLastError(if (err == error.OutOfMemory) 2 else 113);
-            return 0;
-        };
+        });
 
         const state = domStateType();
         state.generation +%= 1;
@@ -446,96 +362,73 @@ zig JSON {
         state.parsed = parsed;
         state.nodes.clearRetainingCapacity();
 
-        buildDocument(state.parsed.?.value) catch |err| {
-            setLastError(switch (err) {
-                error.OutOfMemory => 2,
-                else => 113,
-            });
-            return 0;
-        };
-
+        try buildDocument(state.parsed.?.value);
         return packHandle(0);
     }
 
+    /// 0 for a handle that names no node; the `Kind` discriminant otherwise.
     pub fn nodeKind(handle: i64) i64 {
-        clearLastError();
-        const idx = resolveNode(handle) orelse return 0;
-        return domStateType().nodes.items[idx].kind;
+        const node = resolveNode(handle) orelse return 0;
+        return node.kind;
     }
+
+    // The node readers below assume the caller checked `nodeKind`; a handle
+    // that names no node, or the wrong kind, reads as empty.
 
     pub fn nodeCount(handle: i64) i64 {
-        const idx = requireContainer(handle) orelse return 0;
-        return domStateType().nodes.items[idx].child_count;
+        const node = resolveNode(handle) orelse return 0;
+        return node.child_count;
     }
 
+    /// The handle of child `index`, or 0 when there is none.
     pub fn nodeChild(handle: i64, index: i64) i64 {
-        const idx = requireContainer(handle) orelse return 0;
-        const node = domStateType().nodes.items[idx];
-        if (index < 0 or index >= node.child_count) {
-            setLastError(1);
-            return 0;
-        }
+        const node = resolveNode(handle) orelse return 0;
+        if (node.kind != 6 and node.kind != 7) return 0;
+        if (index < 0 or index >= node.child_count) return 0;
         return packHandle(@intCast(node.child_start + index));
     }
 
+    /// The handle of the field called `name`, or 0 when there is none.
     pub fn nodeField(handle: i64, name: []const u8) i64 {
-        const idx = requireContainer(handle) orelse return 0;
-        const state = domStateType();
-        const node = state.nodes.items[idx];
-        if (node.kind != 7) {
-            setLastError(1);
-            return 0;
-        }
+        const node = resolveNode(handle) orelse return 0;
+        if (node.kind != 7) return 0;
+        const children = domStateType().nodes.items;
         var i: i64 = 0;
         while (i < node.child_count) : (i += 1) {
-            const child = state.nodes.items[@intCast(node.child_start + i)];
-            if (std.mem.eql(u8, child.key, name)) return packHandle(@intCast(node.child_start + i));
+            const at: usize = @intCast(node.child_start + i);
+            if (std.mem.eql(u8, children[at].key, name)) return packHandle(at);
         }
-        setLastError(1);
         return 0;
     }
 
+    pub fn nodeHasKey(handle: i64) bool {
+        const node = resolveNode(handle) orelse return false;
+        return node.has_key;
+    }
+
     pub fn nodeKey(handle: i64) []const u8 {
-        clearLastError();
-        const idx = resolveNode(handle) orelse {
-            setLastError(1);
-            return "";
-        };
-        const node = domStateType().nodes.items[idx];
-        if (!node.has_key) {
-            setLastError(1);
-            return "";
-        }
+        const node = resolveNode(handle) orelse return "";
         return node.key;
     }
 
     pub fn nodeText(handle: i64) []const u8 {
-        const idx = requireKind(handle, 5) orelse return "";
-        return domStateType().nodes.items[idx].text_value;
+        const node = resolveNode(handle) orelse return "";
+        return node.text_value;
     }
 
     pub fn nodeIntValue(handle: i64) i64 {
-        const idx = requireKind(handle, 3) orelse return 0;
-        return domStateType().nodes.items[idx].int_value;
+        const node = resolveNode(handle) orelse return 0;
+        return node.int_value;
     }
 
     pub fn nodeFloatValue(handle: i64) f64 {
-        const idx = requireKind(handle, 4) orelse return 0;
-        return domStateType().nodes.items[idx].float_value;
+        const node = resolveNode(handle) orelse return 0;
+        return node.float_value;
     }
 
     pub fn nodeBooleanValue(handle: i64) bool {
-        const idx = requireKind(handle, 2) orelse return false;
-        return domStateType().nodes.items[idx].bool_value;
-    }
-}
-
-function mapJSONError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        113 then error.IO.InvalidData,
-        else error.Common.Unexpected,
+        const node = resolveNode(handle) orelse return false;
+        return node.bool_value;
     }
 }
 
@@ -559,11 +452,13 @@ public struct Node {
         }
     }
 
-    public function parse(text :: string) returns Node | error.StdError {
-        const root is JSON.parseDocument(text)
-        const code is JSON.takeLastErrorCode()
-        if code == 0 then return Node.new(root)
-        return mapJSONError(code)
+    # Parse `text` as one JSON document. A node of an earlier document reads
+    # as `Kind.Invalid` once another is parsed.
+    public function parse(text :: string) returns Node | zerr.ZigError {
+        const root is JSON.parseDocument(text) as int else {
+            return root
+        }
+        return Node.new(root)
     }
 
     public method kind() returns Kind {
@@ -580,125 +475,96 @@ public struct Node {
         }
     }
 
+    method holds(kind :: Kind) returns tetra {
+        return this.kind() == kind
+    }
+
+    # How many elements or fields, or `nothing` for a node that is neither an
+    # array nor an object.
     public method count() returns int | nothing {
-        const value is JSON.nodeCount(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Array) and not this.holds(Kind.Object) then return nothing
+        return JSON.nodeCount(this.handle)
     }
 
     public method element(index :: int) returns Node | nothing {
         const child is JSON.nodeChild(this.handle, index)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 
     public method field(name :: string) returns Node | nothing {
         const child is JSON.nodeField(this.handle, name)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 
+    # The field name this node is stored under, or `nothing` for a node that
+    # is not an object's field.
     public method key() returns string | nothing {
-        const value is JSON.nodeKey(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not JSON.nodeHasKey(this.handle) then return nothing
+        return JSON.nodeKey(this.handle)
     }
 
     public method text() returns string | nothing {
-        const value is JSON.nodeText(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Text) then return nothing
+        return JSON.nodeText(this.handle)
     }
 
     public method intValue() returns int | nothing {
-        const value is JSON.nodeIntValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Integer) then return nothing
+        return JSON.nodeIntValue(this.handle)
     }
 
     public method floatValue() returns float | nothing {
-        const value is JSON.nodeFloatValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Number) then return nothing
+        return JSON.nodeFloatValue(this.handle)
     }
 
     public method booleanValue() returns tetra | nothing {
-        const value is JSON.nodeBooleanValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Boolean) then return nothing
+        return JSON.nodeBooleanValue(this.handle)
     }
 }
 
-public function beginObject() returns nothing | error.StdError {
-    JSON.writerBeginObject()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function beginObject() returns nothing | zerr.ZigError {
+    return JSON.writerBeginObject()
 }
 
-public function beginArray() returns nothing | error.StdError {
-    JSON.writerBeginArray()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function beginArray() returns nothing | zerr.ZigError {
+    return JSON.writerBeginArray()
 }
 
-public function end() returns nothing | error.StdError {
-    JSON.writerEnd()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function end() returns nothing | zerr.ZigError {
+    return JSON.writerEnd()
 }
 
-public function writeKey(name :: string) returns nothing | error.StdError {
-    JSON.writerKey(name)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeKey(name :: string) returns nothing | zerr.ZigError {
+    return JSON.writerKey(name)
 }
 
-public function writeText(text :: string) returns nothing | error.StdError {
-    JSON.writerText(text)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeText(text :: string) returns nothing | zerr.ZigError {
+    return JSON.writerText(text)
 }
 
-public function writeInt(value :: int) returns nothing | error.StdError {
-    JSON.writerInt(value)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeInt(value :: int) returns nothing | zerr.ZigError {
+    return JSON.writerInt(value)
 }
 
-public function writeFloat(value :: float) returns nothing | error.StdError {
-    JSON.writerFloat(value)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeFloat(value :: float) returns nothing | zerr.ZigError {
+    return JSON.writerFloat(value)
 }
 
-public function writeBoolean(value :: tetra) returns nothing | error.StdError {
-    if value == both or value == neither then {
-        JSON.writerReject(1)
-        return error.Common.InvalidArgument
-    }
-    JSON.writerBoolean(value == true)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeBoolean(value :: tetra) returns nothing | zerr.ZigError {
+    if value == both or value == neither then return JSON.writerRefuse()
+    return JSON.writerBoolean(value == true)
 }
 
-public function writeNull() returns nothing | error.StdError {
-    JSON.writerNull()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeNull() returns nothing | zerr.ZigError {
+    return JSON.writerNull()
 }
 
-public function finish() returns string | error.StdError {
-    const value is JSON.writerFinish()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return value
-    return mapJSONError(code)
+# End the document: its text, or the first refusal it met. The next write
+# starts a new document either way.
+public function finish() returns string | zerr.ZigError {
+    return JSON.writerFinish()
 }

@@ -77,15 +77,8 @@ function build(os :: string, arch :: string) {
         zig_build_cmd is ".\\doxa\\lib\\zig\\zig.exe build-exe .\\src\\main.zig -femit-bin=doxa\\bin\\doxa.exe"
     }
 
-    const run_result is std.process.exec(zig_build_cmd)
-    run_result as int then {
-        if run_result != 0 then {
-            @print("build command failed with non-zero exit code\n")
-            return
-        }
-    }
-    else {
-        @print("std.process.exec failed: {run_result}\n")
+    if not std.process.execOk(zig_build_cmd) then {
+        @print("build command failed\n")
         return
     }
 

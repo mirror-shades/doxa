@@ -1,4 +1,4 @@
-module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
 
 zig Host {
     const std = @import("std");
@@ -20,9 +20,9 @@ zig Host {
     /// `builtin.cpu`: that is the CPU the program was compiled for, which a
     /// baseline or cross build leaves generic and a binary moved between
     /// machines makes stale.
-    pub fn cpuName() @"DoxaError_error.Common"![]const u8 {
+    pub fn cpuName() @"DoxaError_zerr.ZigError"![]const u8 {
         const query: std.Target.Query = .{ .cpu_model = .native };
-        const resolved = std.zig.system.resolveTargetQuery(std.Io.Threaded.global_single_threaded.io(), query) catch return error.NotSupported;
+        const resolved = try std.zig.system.resolveTargetQuery(std.Io.Threaded.global_single_threaded.io(), query);
         return resolved.cpu.model.name;
     }
 
@@ -52,9 +52,9 @@ public function abi() returns string {
 }
 
 # The model of the CPU running the program (e.g. `"znver4"`), detected when
-# called rather than fixed when compiled; `error.Common.NotSupported` when the
-# host cannot be probed.
-public function cpu() returns string | error.StdError {
+# called rather than fixed when compiled; the `ZigError` Zig's target
+# detection reports when the host cannot be probed.
+public function cpu() returns string | zerr.ZigError {
     return Host.cpuName()
 }
 

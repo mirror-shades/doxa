@@ -1,4 +1,4 @@
-module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
 
 zig File {
     const std = @import("std");
@@ -7,216 +7,134 @@ zig File {
         return std.Io.Threaded.global_single_threaded.io();
     }
 
-    /// Map a std filesystem error to the `error.IO` variant the Doxa side
-    /// carries. A fallible function below returns `@"DoxaError_error.IO"`, whose
-    /// error set the wrapper synthesizes from `error.IO`'s variants, so every
-    /// `error.<Variant>` named here is a real IO variant. `err` is `anyerror`, so
-    /// any libc/std error name can be matched.
-    fn ioError(err: anyerror) @"DoxaError_error.IO" {
-        return switch (err) {
-            error.PathAlreadyExists => error.AlreadyExists,
-            error.NotDir => error.NotDirectory,
-            error.IsDir => error.IsDirectory,
-            error.FileNotFound => error.NotFound,
-            error.BadPathName, error.NameTooLong, error.InvalidFileName, error.InvalidUtf8 => error.InvalidPath,
-            error.AccessDenied, error.PermissionDenied, error.ReadOnlyFileSystem => error.Unexpected,
-            error.NoSpaceLeft, error.DiskQuota, error.SystemResources, error.OutOfMemory => error.WriteFailed,
-            error.InputOutput, error.Unexpected => error.Unexpected,
-            else => error.Unexpected,
+    // Memory for one call, reset when the next call begins. The wrapper copies
+    // every returned string and array into the caller's arena before
+    // returning, so nothing here outlives the call that made it.
+    fn scratch() std.mem.Allocator {
+        const State = struct {
+            var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        };
+        _ = State.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+        return State.arena.allocator();
+    }
+
+    // Zig asserts on an empty path in some calls; report it as the path Zig
+    // cannot use.
+    fn checkPath(path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        if (path.len == 0) return error.BadPathName;
+    }
+
+    pub fn makeDir(path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        try std.Io.Dir.cwd().createDir(io(), path, .default_dir);
+    }
+
+    pub fn makePath(path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        try std.Io.Dir.cwd().createDirPath(io(), path);
+    }
+
+    pub fn copyFile(source: []const u8, destination: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(source);
+        try checkPath(destination);
+        const cwd = std.Io.Dir.cwd();
+        try std.Io.Dir.copyFile(cwd, source, cwd, destination, io(), .{});
+    }
+
+    pub fn delete(path: []const u8, recursive: bool) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        const cwd = std.Io.Dir.cwd();
+        cwd.deleteFile(io(), path) catch |err| switch (err) {
+            error.IsDir => if (recursive) try cwd.deleteTree(io(), path) else try cwd.deleteDir(io(), path),
+            else => |e| return e,
         };
     }
 
-    pub fn makeDir(path: []const u8) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-        std.Io.Dir.cwd().createDir(io(), path, .default_dir) catch |err| return ioError(err);
-    }
-
-    pub fn makePath(path: []const u8) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-        std.Io.Dir.cwd().createDirPath(io(), path) catch |err| return ioError(err);
-    }
-
-    pub fn copyFile(source: []const u8, destination: []const u8) @"DoxaError_error.IO"!void {
-        if (source.len == 0 or destination.len == 0) return error.InvalidPath;
-        const _cwd = std.Io.Dir.cwd();
-        std.Io.Dir.copyFile(_cwd, source, _cwd, destination, io(), .{}) catch |err| return ioError(err);
-    }
-
-    pub fn delete(path: []const u8, recursive: bool) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-
-        const _cwd = std.Io.Dir.cwd();
-        _cwd.deleteFile(io(), path) catch |err| {
-            if (err == error.IsDir) {
-                if (recursive) {
-                    _cwd.deleteTree(io(), path) catch |e| return ioError(e);
-                } else {
-                    _cwd.deleteDir(io(), path) catch |e| return ioError(e);
-                }
-                return;
-            }
-            return ioError(err);
-        };
-    }
-
-    pub fn copyDir(source: []const u8, destination: []const u8) @"DoxaError_error.IO"!void {
-        if (source.len == 0 or destination.len == 0) return error.InvalidPath;
-
-        const allocator = std.heap.page_allocator;
+    pub fn copyDir(source: []const u8, destination: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(source);
+        try checkPath(destination);
+        const alloc = scratch();
         const Task = struct {
-            src: []u8,
-            dst: []u8,
+            src: []const u8,
+            dst: []const u8,
         };
+        var stack: std.ArrayList(Task) = .empty;
+        try stack.append(alloc, .{ .src = source, .dst = destination });
 
-        var stack = std.array_list.Managed(Task).init(allocator);
-        defer {
-            for (stack.items) |item| {
-                allocator.free(item.src);
-                allocator.free(item.dst);
-            }
-            stack.deinit();
-        }
-
-        const root_src = allocator.dupe(u8, source) catch |err| return ioError(err);
-        const root_dst = allocator.dupe(u8, destination) catch |err| {
-            allocator.free(root_src);
-            return ioError(err);
-        };
-        stack.append(.{ .src = root_src, .dst = root_dst }) catch |err| {
-            allocator.free(root_src);
-            allocator.free(root_dst);
-            return ioError(err);
-        };
-
-        while (stack.items.len != 0) {
-            const task = stack.pop().?;
-            defer allocator.free(task.src);
-            defer allocator.free(task.dst);
-
-            var src_dir = std.Io.Dir.cwd().openDir(io(), task.src, .{ .iterate = true }) catch |err| return ioError(err);
+        const cwd = std.Io.Dir.cwd();
+        while (stack.pop()) |task| {
+            var src_dir = try cwd.openDir(io(), task.src, .{ .iterate = true });
             defer src_dir.close(io());
 
-            std.Io.Dir.cwd().createDirPath(io(), task.dst) catch |err| return ioError(err);
-
-            var dst_dir = std.Io.Dir.cwd().openDir(io(), task.dst, .{ .iterate = true }) catch |err| return ioError(err);
+            try cwd.createDirPath(io(), task.dst);
+            var dst_dir = try cwd.openDir(io(), task.dst, .{});
             defer dst_dir.close(io());
 
             var iter = src_dir.iterate();
-            while (true) {
-                const next_entry = iter.next(io()) catch |err| return ioError(err);
-                const entry = next_entry orelse break;
+            while (try iter.next(io())) |entry| {
                 const name = entry.name;
-                if (name[0] == '.' and (name.len == 1 or (name.len == 2 and name[1] == '.'))) continue;
-
+                if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
                 switch (entry.kind) {
-                    .file => {
-                        const src_file_path = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| return ioError(err);
-                        defer allocator.free(src_file_path);
-
-                        std.Io.Dir.copyFile(std.Io.Dir.cwd(), src_file_path, dst_dir, name, io(), .{}) catch |err| return ioError(err);
-                    },
-                    .directory => {
-                        const sub_src = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| return ioError(err);
-                        const sub_dst = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.dst, std.fs.path.sep_str, name }) catch |err| {
-                            allocator.free(sub_src);
-                            return ioError(err);
-                        };
-                        stack.append(.{ .src = sub_src, .dst = sub_dst }) catch |err| {
-                            allocator.free(sub_src);
-                            allocator.free(sub_dst);
-                            return ioError(err);
-                        };
-                    },
+                    .file => try std.Io.Dir.copyFile(src_dir, name, dst_dir, name, io(), .{}),
+                    .directory => try stack.append(alloc, .{
+                        .src = try std.fs.path.join(alloc, &.{ task.src, name }),
+                        .dst = try std.fs.path.join(alloc, &.{ task.dst, name }),
+                    }),
                     else => {},
                 }
             }
         }
     }
 
-    pub fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) @"DoxaError_error.IO"!void {
-        if (zip_path.len == 0 or out_dir_path.len == 0) return error.InvalidPath;
+    pub fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(zip_path);
+        try checkPath(out_dir_path);
+        const cwd = std.Io.Dir.cwd();
 
-        const _cwd = std.Io.Dir.cwd();
-
-        _cwd.createDirPath(io(), out_dir_path) catch |err| return ioError(err);
-
-        var out_dir = _cwd.openDir(io(), out_dir_path, .{}) catch |err| return ioError(err);
+        try cwd.createDirPath(io(), out_dir_path);
+        var out_dir = try cwd.openDir(io(), out_dir_path, .{});
         defer out_dir.close(io());
 
-        var zip_file = _cwd.openFile(io(), zip_path, .{}) catch |err| return ioError(err);
+        var zip_file = try cwd.openFile(io(), zip_path, .{});
         defer zip_file.close(io());
 
         var buf: [std.compress.flate.max_window_len]u8 = undefined;
         var r = zip_file.reader(io(), &buf);
-
-        std.zip.extract(out_dir, &r, .{}) catch |err| return ioError(err);
+        try std.zip.extract(out_dir, &r, .{});
     }
 
-    pub fn IsDir(path: []const u8) bool {
-        var dir = std.Io.Dir.cwd().openDir(io(), path, .{}) catch {
-            return false;
-        };
+    pub fn isDir(path: []const u8) bool {
+        var dir = std.Io.Dir.cwd().openDir(io(), path, .{}) catch return false;
         dir.close(io());
         return true;
     }
 
-    pub fn renameDir(old_folder: []const u8, new_folder: []const u8) @"DoxaError_error.IO"!void {
-        if (old_folder.len == 0 or new_folder.len == 0) return error.InvalidPath;
-        const _cwd = std.Io.Dir.cwd();
-        std.Io.Dir.rename(_cwd, old_folder, _cwd, new_folder, io()) catch |err| return ioError(err);
+    pub fn rename(old_path: []const u8, new_path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(old_path);
+        try checkPath(new_path);
+        const cwd = std.Io.Dir.cwd();
+        try std.Io.Dir.rename(cwd, old_path, cwd, new_path, io());
     }
 
-    pub fn rename(old_path: []const u8, new_path: []const u8) @"DoxaError_error.IO"!void {
-        if (old_path.len == 0 or new_path.len == 0) return error.InvalidPath;
-        const _cwd = std.Io.Dir.cwd();
-        std.Io.Dir.rename(_cwd, old_path, _cwd, new_path, io()) catch |err| return ioError(err);
-    }
-
-    pub fn read(path: []const u8) @"DoxaError_error.IO"![]const u8 {
-        if (path.len == 0) return error.InvalidPath;
-
-        const _cwd = std.Io.Dir.cwd();
-        const file = _cwd.openFile(io(), path, .{}) catch |err| return ioError(err);
+    pub fn read(path: []const u8) @"DoxaError_zerr.ZigError"![]const u8 {
+        try checkPath(path);
+        const file = try std.Io.Dir.cwd().openFile(io(), path, .{});
         defer file.close(io());
-
         var read_buf: [4096]u8 = undefined;
         var file_reader = file.reader(io(), &read_buf);
-        const content = file_reader.interface.allocRemaining(std.heap.page_allocator, .unlimited) catch |err| return ioError(err);
-
-        // The wrapper clones `content` into the call-site arena before this
-        // returns; a single retained slot keeps the backing store bounded
-        // without a free hook for foreign heap shapes.
-        const State = struct {
-            var cache: ?[]u8 = null;
-        };
-        if (State.cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-        State.cache = content;
-        return content;
+        return file_reader.interface.allocRemaining(scratch(), .unlimited);
     }
 
-    pub fn write(path: []const u8, content: []const u8) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-        const _cwd = std.Io.Dir.cwd();
-        _cwd.writeFile(io(), .{
-            .sub_path = path,
-            .data = content,
-        }) catch |err| return ioError(err);
+    pub fn write(path: []const u8, content: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        try std.Io.Dir.cwd().writeFile(io(), .{ .sub_path = path, .data = content });
     }
 
-    pub fn append(path: []const u8, content: []const u8) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-
-        const _cwd = std.Io.Dir.cwd();
-        var file = _cwd.createFile(io(), path, .{
-            .read = true,
-            .truncate = false,
-        }) catch |err| return ioError(err);
+    pub fn append(path: []const u8, content: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        var file = try std.Io.Dir.cwd().createFile(io(), path, .{ .read = true, .truncate = false });
         defer file.close(io());
-
-        const size = file.length(io()) catch |err| return ioError(err);
-        file.writePositionalAll(io(), content, size) catch |err| return ioError(err);
+        try file.writePositionalAll(io(), content, try file.length(io()));
     }
 
     pub fn isPresent(path: []const u8) bool {
@@ -230,90 +148,73 @@ zig File {
         return true;
     }
 
-    pub fn list(path: []const u8) @"DoxaError_error.IO"![]const []const u8 {
-        if (path.len == 0) return error.InvalidPath;
+    pub fn list(path: []const u8) @"DoxaError_zerr.ZigError"![]const []const u8 {
+        try checkPath(path);
+        const alloc = scratch();
+        var names: std.ArrayList([]const u8) = .empty;
 
-        // The returned slice is borrowed by the inline-Zig wrapper, which copies
-        // every name into the call-site arena before returning, so the backing
-        // store only has to outlive this call. A retained process-lifetime arena
-        // re-used across calls keeps that bounded without a free hook (the ABI
-        // has none for foreign heap shapes).
-        const State = struct {
-            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        };
-        _ = State.arena.reset(.retain_capacity);
-
-        var out = std.array_list.Managed([]const u8).init(State.arena.allocator());
-
-        var dir = std.Io.Dir.cwd().openDir(io(), path, .{ .iterate = true }) catch |err| return ioError(err);
+        var dir = try std.Io.Dir.cwd().openDir(io(), path, .{ .iterate = true });
         defer dir.close(io());
-
         var it = dir.iterate();
-        while (true) {
-            const next_entry = it.next(io()) catch |err| return ioError(err);
-            const entry = next_entry orelse break;
+        while (try it.next(io())) |entry| {
             if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
-            const name = State.arena.allocator().dupe(u8, entry.name) catch return error.Unexpected;
-            out.append(name) catch return error.Unexpected;
+            try names.append(alloc, try alloc.dupe(u8, entry.name));
         }
-
-        return out.toOwnedSlice() catch return error.Unexpected;
+        return names.items;
     }
 
-    pub fn touch(path: []const u8) @"DoxaError_error.IO"!void {
-        if (path.len == 0) return error.InvalidPath;
-        const file = std.Io.Dir.cwd().createFile(io(), path, .{
-            .truncate = false,
-        }) catch |err| return ioError(err);
+    pub fn touch(path: []const u8) @"DoxaError_zerr.ZigError"!void {
+        try checkPath(path);
+        const file = try std.Io.Dir.cwd().createFile(io(), path, .{ .truncate = false });
         file.close(io());
     }
 }
 
-public function makeDir(path :: string) returns nothing | error.StdError {
+public function makeDir(path :: string) returns nothing | zerr.ZigError {
     return File.makeDir(path)
 }
 
-public function makePath(path :: string) returns nothing | error.StdError {
+public function makePath(path :: string) returns nothing | zerr.ZigError {
     return File.makePath(path)
 }
 
-public function copyFile(source :: string, destination :: string) returns nothing | error.StdError {
+public function copyFile(source :: string, destination :: string) returns nothing | zerr.ZigError {
     return File.copyFile(source, destination)
 }
 
-public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError {
+public function delete(path :: string, recursive :: tetra) returns nothing | zerr.ZigError {
     return File.delete(path, recursive)
 }
 
-public function copyDir(source :: string, destination :: string) returns nothing | error.StdError {
+public function copyDir(source :: string, destination :: string) returns nothing | zerr.ZigError {
     return File.copyDir(source, destination)
 }
 
-public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError {
+public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | zerr.ZigError {
     return File.unzipFile(zip_path, unzip_path)
 }
 
 public function isDir(path :: string) returns tetra {
-    return File.IsDir(path)
+    return File.isDir(path)
 }
 
-public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError {
-    return File.renameDir(old_folder, new_folder)
+public function renameDir(old_folder :: string, new_folder :: string) returns nothing | zerr.ZigError {
+    return File.rename(old_folder, new_folder)
 }
 
-public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError {
+public function rename(old_path :: string, new_path :: string) returns nothing | zerr.ZigError {
     return File.rename(old_path, new_path)
 }
 
-public function read(path :: string) returns string | error.StdError {
+public function read(path :: string) returns string | zerr.ZigError {
     return File.read(path)
 }
 
-public function write(path :: string, content :: string) returns nothing | error.StdError {
+public function write(path :: string, content :: string) returns nothing | zerr.ZigError {
     return File.write(path, content)
 }
 
-public function append(path :: string, content :: string) returns nothing | error.StdError {
+public function append(path :: string, content :: string) returns nothing | zerr.ZigError {
     return File.append(path, content)
 }
 
@@ -325,10 +226,10 @@ public function isFile(path :: string) returns tetra {
     return File.isFile(path)
 }
 
-public function list(path :: string) returns string[] | error.StdError {
+public function list(path :: string) returns string[] | zerr.ZigError {
     return File.list(path)
 }
 
-public function touch(path :: string) returns nothing | error.StdError {
+public function touch(path :: string) returns nothing | zerr.ZigError {
     return File.touch(path)
 }

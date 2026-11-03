@@ -358,6 +358,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&wiring.step);
     test_step.dependOn(&TypeAuthority.create(b).step);
     test_step.dependOn(&ArenaBytes.create(b).step);
+    test_step.dependOn(&StdResults.create(b).step);
     if (check_zerr_step) |step| test_step.dependOn(step);
     test_step.dependOn(check_docs_step);
     if (can_run_target) {
@@ -763,6 +764,45 @@ const ArenaBytes = struct {
                     if (!std.mem.eql(u8, text, verb)) continue;
                     try step.addError("{s}: calls `.{s}`; only `scope_arena.zig` gives memory back, and only on a reset or exit (`plan/strings.md`, rule 4)", .{ path, text });
                 }
+            }
+        }
+        if (step.result_error_msgs.items.len != 0) return error.MakeFailed;
+    }
+};
+
+/// `plan/std-errors.md`: no std function returns a result through state a
+/// later call reads. A second result is a struct field and an error is the
+/// returned union, so no `std/` file may name a "last error" or status slot.
+const StdResults = struct {
+    step: std.Build.Step,
+
+    const banned = [_][]const u8{ "LastError", "takeStatusCode" };
+
+    fn create(b: *std.Build) *StdResults {
+        const check = b.allocator.create(StdResults) catch @panic("OOM");
+        check.* = .{ .step = .init(.{ .id = .custom, .name = "check std", .owner = b, .makeFn = make }) };
+        return check;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        const b = step.owner;
+        const io = b.graph.io;
+        var arena_state: std.heap.ArenaAllocator = .init(options.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        var dir = try b.build_root.handle.openDir(io, "std", .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(arena);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            const path = try std.fmt.allocPrint(arena, "std/{s}", .{entry.path});
+            std.mem.replaceScalar(u8, path, '\\', '/');
+            const source = try b.build_root.handle.readFileAlloc(io, path, arena, .unlimited);
+            for (banned) |name| {
+                if (std.mem.indexOf(u8, source, name) == null) continue;
+                try step.addError("{s}: names `{s}`; return a second result as a struct field and an error as the returned union (`plan/std-errors.md`)", .{ path, name });
             }
         }
         if (step.result_error_msgs.items.len != 0) return error.MakeFailed;

@@ -1,0 +1,17 @@
+# One `@print` writes all of its text, however long: a write may take fewer
+# bytes than it is handed, so the runtime repeats it until all are out (B013:
+# on POSIX a print longer than the 4096-byte buffer was dropped whole).
+entry function main() {
+    var text is ""
+    for i while i < 70000 do i += 1 {
+        text += "x"
+    }
+    @print(@slice(text, 0, 4095))
+    @print("|a\n")
+    @print(@slice(text, 0, 4096))
+    @print("|b\n")
+    @print(@slice(text, 0, 4097))
+    @print("|c\n")
+    @print(text)
+    @print("|d\n")
+}

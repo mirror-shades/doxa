@@ -1,4 +1,38 @@
 module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
+
+# How a child process ended, as Zig's `std.process.Child.Term` reports it.
+public enum TermKind {
+    Exited,
+    Signal,
+    Stopped,
+    Unknown,
+}
+
+# How a child process ended. `code` is the exit status for `Exited`, the signal
+# number for `Signal` and `Stopped`, and the raw status for `Unknown`.
+public struct Term {
+    public kind :: TermKind,
+    public code :: int,
+
+    # Whether the child exited with status 0.
+    public method succeeded() returns tetra {
+        return this.kind == TermKind.Exited and this.code == 0
+    }
+}
+
+# A captured run: how the child ended and everything it wrote. A non-zero exit
+# is part of the result, not an error.
+public struct Run {
+    public term :: Term,
+    public stdout :: string,
+    public stderr :: string,
+}
+
+struct EnvValue {
+    public found :: tetra,
+    public value :: string,
+}
 
 zig Process {
     const std = @import("std");
@@ -9,21 +43,6 @@ zig Process {
     extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
     extern fn doxa_environ() callconv(.c) ?*const std.process.Environ.Map;
 
-    // Builds a child environment from the parent's (via `doxa_environ`) with the
-    // given `KEY`/`VALUE` overrides applied. Returns null on allocation failure.
-    fn childEnviron(alloc: std.mem.Allocator, env_keys: []const []const u8, env_values: []const []const u8) ?std.process.Environ.Map {
-        const base = doxa_environ();
-        var env = if (base) |b| (b.clone(alloc) catch return null) else std.process.Environ.Map.init(alloc);
-        var i: usize = 0;
-        while (i < env_keys.len and i < env_values.len) : (i += 1) {
-            env.put(env_keys[i], env_values[i]) catch {
-                env.deinit();
-                return null;
-            };
-        }
-        return env;
-    }
-
     // `std.process.spawn` allocates the child's environment block and command
     // line through the `Io`'s allocator. `std.Io.Threaded.global_single_threaded`
     // is deliberately built with a failing allocator, so spawning through it
@@ -31,652 +50,230 @@ zig Process {
     // single-threaded `Io` backed by the page allocator.
     fn processIo() std.Io {
         const State = struct {
-            var threaded: std.Io.Threaded = init: {
-                var t = std.Io.Threaded.init_single_threaded;
-                t.allocator = std.heap.page_allocator;
-                break :init t;
-            };
+            var threaded: std.Io.Threaded = undefined;
+            var initialized: bool = false;
         };
+        if (!State.initialized) {
+            State.threaded = std.Io.Threaded.init_single_threaded;
+            State.threaded.allocator = std.heap.page_allocator;
+            // `init_single_threaded` starts with an empty environment on POSIX,
+            // so a child spawned through it would inherit nothing: no PATH, no
+            // HOME. Point the Io at this process's real environment.
+            State.threaded.environ = .{ .process_environ = .{ .block = processEnvironBlock() } };
+            State.threaded.environ_initialized = false;
+            State.initialized = true;
+        }
         return State.threaded.io();
     }
 
-    pub fn errorState(mode: i64, value: i64) i64 {
+    fn processEnvironBlock() std.process.Environ.Block {
+        if (builtin.os.tag == .windows) return .global;
+        const c_environ = std.c.environ;
+        var count: usize = 0;
+        while (c_environ[count] != null) : (count += 1) {}
+        return .{ .slice = c_environ[0..count :null] };
+    }
+
+    // Memory for one call, reset when the next call begins. The wrapper copies
+    // every returned string into the caller's arena before returning, so
+    // nothing here outlives the call that made it.
+    fn scratch() std.mem.Allocator {
         const State = struct {
-            var last_error_code: i64 = 0;
+            var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
         };
-        if (mode == 0) {
-            State.last_error_code = value;
-            return 0;
+        _ = State.arena.reset(.{ .retain_with_limit = 64 * 1024 });
+        return State.arena.allocator();
+    }
+
+    // On Windows, `cmd /C <input>` is serialized by Zig with
+    // CommandLineToArgvW escaping, which cmd.exe re-parses with different
+    // rules: quotes arrive as literal `\"` and quoted paths break. Passing the
+    // command through an environment variable (`shellEnviron`) and invoking it
+    // with `call` hands cmd the raw text and preserves normal `%VAR%` expansion.
+    // cmd treats an empty variable as unset, so an empty command runs cmd's
+    // no-op instead, and exits 0 as `sh -c ""` does.
+    fn shellArgv(alloc: std.mem.Allocator, input: []const u8) ![]const []const u8 {
+        if (builtin.os.tag == .windows) {
+            if (input.len == 0) return &.{ "cmd", "/d", "/s", "/c", "rem" };
+            return &.{ "cmd", "/d", "/s", "/c", "call", "%DOXA_EXEC_CMD%" };
         }
-        if (mode == 1) {
-            return State.last_error_code;
-        }
-        if (mode == 2) {
-            const code = State.last_error_code;
-            State.last_error_code = 0;
-            return code;
-        }
-        return 0;
+        return alloc.dupe([]const u8, &.{ "sh", "-c", input });
     }
 
-    pub fn clearLastError() void {
-        _ = errorState(0, 0);
+    fn shellEnviron(alloc: std.mem.Allocator, input: []const u8) !?*const std.process.Environ.Map {
+        if (builtin.os.tag == .windows) return try environOf(alloc, &.{"DOXA_EXEC_CMD"}, &.{input});
+        return null;
     }
 
-    pub fn setLastError(code: i64) void {
-        _ = errorState(0, code);
+    fn argvOf(alloc: std.mem.Allocator, program: []const u8, args: []const []const u8) ![]const []const u8 {
+        const argv = try alloc.alloc([]const u8, args.len + 1);
+        argv[0] = program;
+        @memcpy(argv[1..], args);
+        return argv;
     }
 
-    pub fn takeLastErrorCode() i64 {
-        return errorState(2, 0);
+    // The parent's environment with the given `KEY`/`VALUE` overrides
+    // applied, or null (inherit it unchanged) when there are none.
+    fn environOf(alloc: std.mem.Allocator, env_keys: []const []const u8, env_values: []const []const u8) !?*const std.process.Environ.Map {
+        if (env_keys.len == 0) return null;
+        const env = try alloc.create(std.process.Environ.Map);
+        env.* = if (doxa_environ()) |parent| try parent.clone(alloc) else .init(alloc);
+        for (env_keys, env_values) |key, value| try env.put(key, value);
+        return env;
     }
 
-    pub fn mapCommon(err_name: []const u8) i64 {
-        if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
-        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
-        if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
-        if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
-        if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
-        if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
-        return -1;
+    fn termOf(term: std.process.Child.Term) DoxaStruct_Term {
+        return switch (term) {
+            .exited => |status| .{ .kind = 0, .code = status },
+            .signal => |sig| .{ .kind = 1, .code = signalNumber(sig) },
+            .stopped => |sig| .{ .kind = 2, .code = signalNumber(sig) },
+            .unknown => |status| .{ .kind = 3, .code = status },
+        };
     }
 
-    pub fn mapProcessSpawn(err_name: []const u8) i64 {
-        const common = mapCommon(err_name);
-        if (common >= 0) return common;
-        if (std.mem.eql(u8, err_name, "FileNotFound")) return 200;
-        if (std.mem.eql(u8, err_name, "InvalidExe")) return 201;
-        return 202;
+    // `std.posix.SIG` is an enum on POSIX and `void` on Windows, where no
+    // child ends by a signal.
+    fn signalNumber(sig: std.posix.SIG) i64 {
+        if (@TypeOf(sig) == void) return 0;
+        return @intFromEnum(sig);
     }
 
-    pub fn mapProcessWait(err_name: []const u8) i64 {
-        const common = mapCommon(err_name);
-        if (common >= 0) return common;
-        return 203;
-    }
-
-    pub fn exec_cmd(input: []const u8) i64 {
-        clearLastError();
-        if (input.len == 0) {
-            setLastError(1);
-            return 0;
-        }
-
+    fn wait(argv: []const []const u8, environ: ?*const std.process.Environ.Map) !DoxaStruct_Term {
         const io = processIo();
-        const alloc = std.heap.page_allocator;
-        const windows = builtin.os.tag == .windows;
-
-        // On Windows, `cmd /C <input>` is serialized by Zig with
-        // CommandLineToArgvW escaping, which cmd.exe re-parses with different
-        // rules: quotes arrive as literal `\"` and quoted paths break. Passing
-        // the command through an environment variable and invoking it with
-        // `call` hands cmd the raw text and preserves normal `%VAR%` expansion.
-        var argv_buf: [6][]const u8 = undefined;
-        var argv_len: usize = undefined;
-        if (windows) {
-            argv_buf[0] = "cmd";
-            argv_buf[1] = "/d";
-            argv_buf[2] = "/s";
-            argv_buf[3] = "/c";
-            argv_buf[4] = "call";
-            argv_buf[5] = "%DOXA_EXEC_CMD%";
-            argv_len = 6;
-        } else {
-            argv_buf[0] = "sh";
-            argv_buf[1] = "-c";
-            argv_buf[2] = input;
-            argv_len = 3;
-        }
-        const argv = argv_buf[0..argv_len];
-
-        var env = if (windows) (childEnviron(alloc, &[_][]const u8{"DOXA_EXEC_CMD"}, &[_][]const u8{input}) orelse {
-            setLastError(2);
-            return 0;
-        }) else std.process.Environ.Map.init(alloc);
-        defer env.deinit();
-
-        var cmd = std.process.spawn(io, .{
+        var child = try std.process.spawn(io, .{
             .argv = argv,
+            .environ_map = environ,
             .stdout = .inherit,
             .stderr = .inherit,
-            .environ_map = if (windows) &env else null,
-        }) catch |err| {
-            setLastError(mapProcessSpawn(@errorName(err)));
-            return 0;
-        };
-        defer cmd.kill(io);
-
-        const term = cmd.wait(io) catch |err| {
-            setLastError(mapProcessWait(@errorName(err)));
-            return 0;
-        };
-
-        return switch (term) {
-            .exited => |code| blk: {
-                if (code != 0) {
-                    setLastError(207);
-                    break :blk @as(i64, code);
-                }
-                break :blk @as(i64, code);
-            },
-            else => {
-                setLastError(208);
-                return 0;
-            },
-        };
+        });
+        defer child.kill(io);
+        return termOf(try child.wait(io));
     }
 
-    pub fn exec_capture_stdout(input: []const u8) []const u8 {
-        clearLastError();
-        if (input.len == 0) {
-            setLastError(1);
-            return "";
-        }
-
-        const io = processIo();
-        const alloc = std.heap.page_allocator;
-        const windows = builtin.os.tag == .windows;
-
-        // See `exec_cmd` for why Windows routes the command through an
-        // environment variable and `call`.
-        var argv_buf: [6][]const u8 = undefined;
-        var argv_len: usize = undefined;
-        if (windows) {
-            argv_buf[0] = "cmd";
-            argv_buf[1] = "/d";
-            argv_buf[2] = "/s";
-            argv_buf[3] = "/c";
-            argv_buf[4] = "call";
-            argv_buf[5] = "%DOXA_EXEC_CMD%";
-            argv_len = 6;
-        } else {
-            argv_buf[0] = "sh";
-            argv_buf[1] = "-c";
-            argv_buf[2] = input;
-            argv_len = 3;
-        }
-        const argv = argv_buf[0..argv_len];
-
-        var env = if (windows) (childEnviron(alloc, &[_][]const u8{"DOXA_EXEC_CMD"}, &[_][]const u8{input}) orelse {
-            setLastError(2);
-            return "";
-        }) else std.process.Environ.Map.init(alloc);
-        defer env.deinit();
-
-        var cmd = std.process.spawn(io, .{
-            .argv = argv,
-            .stdout = .pipe,
-            .stderr = .pipe,
-            .environ_map = if (windows) &env else null,
-        }) catch |err| {
-            setLastError(mapProcessSpawn(@errorName(err)));
-            return "";
-        };
-        defer cmd.kill(io);
-
-        var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
-        var multi_reader: std.Io.File.MultiReader = undefined;
-        multi_reader.init(alloc, io, multi_reader_buffer.toStreams(), &.{ cmd.stdout.?, cmd.stderr.? });
-        defer multi_reader.deinit();
-
-        while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
-            error.EndOfStream => {},
-            else => {
-                setLastError(205);
-                return "";
-            },
-        }
-        multi_reader.checkAnyError() catch {
-            setLastError(205);
-            return "";
-        };
-
-        const stdout_owned = multi_reader.toOwnedSlice(0) catch {
-            setLastError(205);
-            return "";
-        };
-        defer alloc.free(stdout_owned);
-
-        const term = cmd.wait(io) catch |err| {
-            setLastError(mapProcessWait(@errorName(err)));
-            return "";
-        };
-
-        switch (term) {
-            .exited => |code| {
-                if (code != 0) {
-                    setLastError(207);
-                    return "";
-                }
-            },
-            else => {
-                setLastError(208);
-                return "";
-            },
-        }
-
-        const duped = alloc.dupe(u8, stdout_owned) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(205);
-            return "";
-        };
-
-        return duped;
+    fn run(alloc: std.mem.Allocator, argv: []const []const u8, environ: ?*const std.process.Environ.Map) !DoxaStruct_Run {
+        const result = try std.process.run(alloc, processIo(), .{ .argv = argv, .environ_map = environ });
+        return .{ .term = termOf(result.term), .stdout = result.stdout, .stderr = result.stderr };
     }
 
-    pub fn exec_capture_stdout_env(program: []const u8, args: []const []const u8, env_keys: []const []const u8, env_values: []const []const u8) []const u8 {
-        clearLastError();
-        if (program.len == 0) {
-            setLastError(1);
-            return "";
-        }
-
-        const io = processIo();
-        const alloc = std.heap.page_allocator;
-
-        const argv = alloc.alloc([]const u8, args.len + 1) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            setLastError(if (mc >= 0) mc else 2);
-            return "";
-        };
-        defer alloc.free(argv);
-        argv[0] = program;
-        var i: usize = 0;
-        while (i < args.len) : (i += 1) {
-            argv[i + 1] = args[i];
-        }
-
-        var env = childEnviron(alloc, env_keys, env_values) orelse {
-            setLastError(2);
-            return "";
-        };
-        defer env.deinit();
-
-        var cmd = std.process.spawn(io, .{
-            .argv = argv,
-            .stdout = .pipe,
-            .stderr = .pipe,
-            .environ_map = &env,
-        }) catch |err| {
-            setLastError(mapProcessSpawn(@errorName(err)));
-            return "";
-        };
-        defer cmd.kill(io);
-
-        var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
-        var multi_reader: std.Io.File.MultiReader = undefined;
-        multi_reader.init(alloc, io, multi_reader_buffer.toStreams(), &.{ cmd.stdout.?, cmd.stderr.? });
-        defer multi_reader.deinit();
-
-        while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
-            error.EndOfStream => {},
-            else => {
-                setLastError(205);
-                return "";
-            },
-        }
-        multi_reader.checkAnyError() catch {
-            setLastError(205);
-            return "";
-        };
-
-        const stdout_owned = multi_reader.toOwnedSlice(0) catch {
-            setLastError(205);
-            return "";
-        };
-        defer alloc.free(stdout_owned);
-
-        const term = cmd.wait(io) catch |err| {
-            setLastError(mapProcessWait(@errorName(err)));
-            return "";
-        };
-
-        switch (term) {
-            .exited => |code| {
-                if (code != 0) {
-                    setLastError(207);
-                    return "";
-                }
-            },
-            else => {
-                setLastError(208);
-                return "";
-            },
-        }
-
-        const duped = alloc.dupe(u8, stdout_owned) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(205);
-            return "";
-        };
-
-        return duped;
+    pub fn exec(input: []const u8) @"DoxaError_zerr.ZigError"!DoxaStruct_Term {
+        const alloc = scratch();
+        return wait(try shellArgv(alloc, input), try shellEnviron(alloc, input));
     }
 
-    pub fn exec_args(program: []const u8, args: []const []const u8) i64 {
-        clearLastError();
-        if (program.len == 0) {
-            setLastError(1);
-            return 0;
-        }
-
-        const io = processIo();
-        const alloc = std.heap.page_allocator;
-
-        const argv = alloc.alloc([]const u8, args.len + 1) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return 0;
-            }
-            setLastError(2);
-            return 0;
-        };
-        defer alloc.free(argv);
-        argv[0] = program;
-        var i: usize = 0;
-        while (i < args.len) : (i += 1) {
-            argv[i + 1] = args[i];
-        }
-
-        var cmd = std.process.spawn(io, .{
-            .argv = argv,
-            .stdout = .inherit,
-            .stderr = .inherit,
-        }) catch |err| {
-            setLastError(mapProcessSpawn(@errorName(err)));
-            return 0;
-        };
-        defer cmd.kill(io);
-
-        const term = cmd.wait(io) catch |err| {
-            setLastError(mapProcessWait(@errorName(err)));
-            return 0;
-        };
-
-        return switch (term) {
-            .exited => |code| blk: {
-                if (code != 0) {
-                    setLastError(207);
-                }
-                break :blk @as(i64, code);
-            },
-            else => {
-                setLastError(208);
-                return 0;
-            },
-        };
+    pub fn execArgs(program: []const u8, args: []const []const u8, env_keys: []const []const u8, env_values: []const []const u8) @"DoxaError_zerr.ZigError"!DoxaStruct_Term {
+        const alloc = scratch();
+        return wait(try argvOf(alloc, program, args), try environOf(alloc, env_keys, env_values));
     }
 
-    pub fn exec_args_env(program: []const u8, args: []const []const u8, env_keys: []const []const u8, env_values: []const []const u8) i64 {
-        clearLastError();
-        if (program.len == 0) {
-            setLastError(1);
-            return 0;
-        }
-
-        const io = processIo();
-        const alloc = std.heap.page_allocator;
-
-        const argv = alloc.alloc([]const u8, args.len + 1) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            setLastError(if (mc >= 0) mc else 2);
-            return 0;
-        };
-        defer alloc.free(argv);
-        argv[0] = program;
-        var i: usize = 0;
-        while (i < args.len) : (i += 1) {
-            argv[i + 1] = args[i];
-        }
-
-        var env = childEnviron(alloc, env_keys, env_values) orelse {
-            setLastError(2);
-            return 0;
-        };
-        defer env.deinit();
-
-        var cmd = std.process.spawn(io, .{
-            .argv = argv,
-            .stdout = .inherit,
-            .stderr = .inherit,
-            .environ_map = &env,
-        }) catch |err| {
-            setLastError(mapProcessSpawn(@errorName(err)));
-            return 0;
-        };
-        defer cmd.kill(io);
-
-        const term = cmd.wait(io) catch |err| {
-            setLastError(mapProcessWait(@errorName(err)));
-            return 0;
-        };
-
-        return switch (term) {
-            .exited => |code| blk: {
-                if (code != 0) {
-                    setLastError(207);
-                }
-                break :blk @as(i64, code);
-            },
-            else => {
-                setLastError(208);
-                return 0;
-            },
-        };
+    pub fn capture(input: []const u8) @"DoxaError_zerr.ZigError"!DoxaStruct_Run {
+        const alloc = scratch();
+        return run(alloc, try shellArgv(alloc, input), try shellEnviron(alloc, input));
     }
 
-    pub fn osName() []const u8 {
-        return @tagName(builtin.os.tag);
+    pub fn captureArgs(program: []const u8, args: []const []const u8, env_keys: []const []const u8, env_values: []const []const u8) @"DoxaError_zerr.ZigError"!DoxaStruct_Run {
+        const alloc = scratch();
+        return run(alloc, try argvOf(alloc, program, args), try environOf(alloc, env_keys, env_values));
     }
 
     pub fn argCount() i64 {
-        clearLastError();
         return doxa_argc();
     }
 
-    pub fn argAt(index_text: []const u8) []const u8 {
-        clearLastError();
-
-        const index = std.fmt.parseInt(i64, index_text, 10) catch {
-            setLastError(1);
-            return "";
-        };
-        if (index < 0) {
-            setLastError(1);
-            return "";
-        }
-
-        if (index >= doxa_argc()) {
-            setLastError(1);
-            return "";
-        }
-
-        const arg_ptr = doxa_argv(@intCast(index)) orelse {
-            setLastError(1);
-            return "";
-        };
-
-        const duped = std.heap.page_allocator.dupe(u8, std.mem.span(arg_ptr)) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(208);
-            return "";
-        };
-
-        return duped;
+    // The caller checks `index` against `argCount`.
+    pub fn argAt(index: i64) []const u8 {
+        return std.mem.span(doxa_argv(@intCast(index)).?);
     }
 
-    pub fn exitCode(code_text: []const u8) void {
-        const code = std.fmt.parseInt(i64, code_text, 10) catch 1;
-        std.process.exit(@intCast(code));
+    // The low byte, as a POSIX parent sees the status.
+    pub fn exit(code: i64) void {
+        std.process.exit(@truncate(@as(u64, @bitCast(code))));
     }
 
-    pub fn cwd() []const u8 {
-        clearLastError();
-        const io = processIo();
-        const content = std.process.currentPathAlloc(io, std.heap.page_allocator) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(208);
-            return "";
-        };
-        return content;
+    pub fn cwd() @"DoxaError_zerr.ZigError"![]const u8 {
+        return std.process.currentPathAlloc(processIo(), scratch());
     }
 
-    pub fn getEnv(name: []const u8) []const u8 {
-        clearLastError();
-        if (name.len == 0) {
-            setLastError(1);
-            return "";
-        }
-
-        var value_len: u64 = 0;
-        const value_ptr = doxa_getenv(name.ptr, name.len, &value_len) orelse {
-            setLastError(208);
-            return "";
-        };
-
-        const content = std.heap.page_allocator.dupe(u8, value_ptr[0..@intCast(value_len)]) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(208);
-            return "";
-        };
-        return content;
+    pub fn getEnv(name: []const u8) DoxaStruct_EnvValue {
+        var len: u64 = 0;
+        const value = doxa_getenv(name.ptr, name.len, &len) orelse return .{ .found = false, .value = "" };
+        return .{ .found = true, .value = value[0..@intCast(len)] };
     }
 }
 
-function mapProcessError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        3 then error.Common.PermissionDenied,
-        4 then error.Common.NotSupported,
-        5 then error.Common.Unexpected,
-        200 then error.Process.CommandNotFound,
-        201 then error.Process.NotExecutable,
-        202 then error.Process.SpawnFailed,
-        203 then error.Process.WaitFailed,
-        204 then error.Process.KillFailed,
-        205 then error.Process.CaptureFailed,
-        206 then error.Process.OutputTooLarge,
-        207 then error.Process.NonZeroExit,
-        208 then error.Process.Unexpected,
-        else error.Common.Unexpected,
-    }
+# Run `command` through the system shell (`sh -c`, or `cmd /c` on Windows).
+# The child shares this process's stdout and stderr.
+public function exec(command :: string) returns Term | zerr.ZigError {
+    return Process.exec(command)
 }
 
-public function exec(input :: string) returns int | error.StdError {
-    const code is Process.exec_cmd(input)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
+# Run `program` with `arguments`, no shell. The child shares this process's
+# stdout and stderr.
+public function execArgs(program :: string, arguments :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, [], [])
 }
 
-public function execCapture(input :: string) returns string | error.StdError {
-    const output is Process.exec_capture_stdout(input)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return output
-    return mapProcessError(err)
+# `execArgs` with `env_keys[i]` set to `env_values[i]` in the child's
+# environment, over this process's own.
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, env_keys, env_values)
 }
 
-public function execCaptureArgs(program :: string, arguments :: string[]) returns string | error.StdError {
-    return execCaptureEnv(program, arguments, [], [])
-}
-
-public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
-    const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return output
-    return mapProcessError(err)
-}
-
-public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError {
-    const code is Process.exec_args(program, arguments)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
-}
-
-public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
-    const code is Process.exec_args_env(program, arguments, env_keys, env_values)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
-}
-
-public function execOk(input :: string) returns tetra {
-    const result is exec(input)
-    result as int then {
-        return true
-    }
-    else {
+# Whether `command` ran and exited with status 0.
+public function execOk(command :: string) returns tetra {
+    const term is exec(command) as Term else {
         return false
     }
+    return term.succeeded()
 }
 
-public function args() returns string[] | error.StdError {
-    const _argc is argc() as int else {
-        return mapProcessError(Process.takeLastErrorCode())
-    }
+# Run `command` through the system shell and capture what it writes.
+public function execCapture(command :: string) returns Run | zerr.ZigError {
+    return Process.capture(command)
+}
+
+# Run `program` with `arguments`, no shell, and capture what it writes.
+public function execCaptureArgs(program :: string, arguments :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, [], [])
+}
+
+# `execCaptureArgs` with `env_keys[i]` set to `env_values[i]` in the child's
+# environment, over this process's own.
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, env_keys, env_values)
+}
+
+# The program's command-line arguments, the program's own path first.
+public function args() returns string[] {
     var result :: string[]
-    for i while i < _argc do i += 1 {
-        const arg is argv(i) as string else {
-            return mapProcessError(Process.takeLastErrorCode())
-        }
-        @push(result, arg)
+    const count is argc()
+    for i while i < count do i += 1 {
+        @push(result, Process.argAt(i))
     }
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return result
-    return mapProcessError(err)
+    return result
 }
 
-public function argc() returns int | error.StdError {
-    const count is Process.argCount();
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return count
-    return mapProcessError(err)
+public function argc() returns int {
+    return Process.argCount()
 }
 
-public function argv(index :: int) returns string | error.StdError {
-    const value is Process.argAt(@string(index));
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+public function argv(index :: int) returns string | error.Method {
+    if index < 0 or index >= argc() then return error.Method.OutOfBounds
+    return Process.argAt(index)
 }
 
+# End the program with `code`; a POSIX parent sees its low byte.
 public function exit(code :: int) {
-    Process.exitCode(@string(code));
+    Process.exit(code)
 }
 
-public function cwd() returns string | error.StdError {
-    const value is Process.cwd();
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+public function cwd() returns string | zerr.ZigError {
+    return Process.cwd()
 }
 
-public function getenv(name :: string) returns string | error.StdError {
-    const value is Process.getEnv(name);
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+# The variable `name` in the environment the program started with, or
+# `nothing` when it is not set.
+public function getenv(name :: string) returns string | nothing {
+    const env is Process.getEnv(name)
+    if env.found then return env.value
+    return nothing
 }

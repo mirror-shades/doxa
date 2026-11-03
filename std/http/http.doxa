@@ -1,50 +1,142 @@
-module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
 
 /* The engine lives in `http.zig`: connections are served by Zig tasks and
    reach this module as finished requests and messages, taken with `poll`.
-   Everything below is the single-threaded Doxa surface over it. */
-module HTTP from "http.zig"
+   The block below is its Doxa surface: plain Zig in the engine, Doxa types
+   here. Everything after it is the single-threaded Doxa API over it. A failure
+   is a `zerr.ZigError`, named as Zig names it; an outcome, such as a non-2xx
+   status or a connection that ended, is a value. */
 
-public function mapIOError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        3 then error.Common.PermissionDenied,
-        4 then error.Common.NotSupported,
-        100 then error.IO.NotFound,
-        101 then error.IO.AlreadyExists,
-        102 then error.IO.NotDirectory,
-        103 then error.IO.IsDirectory,
-        104 then error.IO.InvalidPath,
-        105 then error.IO.OpenFailed,
-        106 then error.IO.ReadFailed,
-        107 then error.IO.WriteFailed,
-        108 then error.IO.CreateFailed,
-        109 then error.IO.DeleteFailed,
-        110 then error.IO.RenameFailed,
-        111 then error.IO.CopyFailed,
-        112 then error.IO.IterateFailed,
-        113 then error.IO.InvalidData,
-        114 then error.IO.ConnectionFailed,
-        115 then error.IO.Timeout,
-        116 then error.IO.HttpStatus,
-        117 then error.IO.Unexpected,
-        else error.Common.Unexpected,
+/* What one `poll` collected: `kinds[i]` is the event code for `handles[i]`. */
+struct Polled {
+    public handles :: int[],
+    public kinds :: int[],
+}
+
+zig HTTP {
+    const engine = @import("http.zig");
+
+    pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64) @"DoxaError_zerr.ZigError"!DoxaStruct_Response {
+        const response = try engine.performRequest(method, url, headers, body, timeout_ms, max_redirects);
+        return .{ .status_code = response.status, .raw_headers = response.head, .body_text = response.body };
+    }
+
+    pub fn downloadUrl(url: []const u8, destination: []const u8) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.downloadUrl(url, destination);
+    }
+
+    pub fn download(url: []const u8) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.download(url);
+    }
+
+    pub fn headerCount(raw_headers: []const u8) i64 {
+        return engine.headerCount(raw_headers);
+    }
+
+    pub fn headerValueAt(raw_headers: []const u8, index: i64) []const u8 {
+        return engine.headerValueAt(raw_headers, index);
+    }
+
+    pub fn headerNameMatches(raw_headers: []const u8, index: i64, name: []const u8) bool {
+        return engine.headerNameMatches(raw_headers, index, name);
+    }
+
+    pub fn listen(port: i64) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.listen(port);
+    }
+
+    pub fn localAddr(handle: i64) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.localAddr(handle);
+    }
+
+    pub fn accept(listener: i64) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.accept(listener);
+    }
+
+    pub fn poll(listener: i64, timeout_ms: i64) @"DoxaError_zerr.ZigError"!DoxaStruct_Polled {
+        const polled = try engine.poll(listener, timeout_ms);
+        return .{ .handles = polled.handles, .kinds = polled.kinds };
+    }
+
+    pub fn closeReason(handle: i64) i64 {
+        return engine.closeReason(handle);
+    }
+
+    pub fn setLimit(which: DoxaEnum_Limit, value: i64) @"DoxaError_zerr.ZigError"!void {
+        return engine.setLimit(@enumFromInt(which), value);
+    }
+
+    pub fn readRequest(handle: i64) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.readRequest(handle);
+    }
+
+    pub fn requestMethod(handle: i64) []const u8 {
+        return engine.requestMethod(handle);
+    }
+
+    pub fn requestTarget(handle: i64) []const u8 {
+        return engine.requestTarget(handle);
+    }
+
+    pub fn requestHead(handle: i64) []const u8 {
+        return engine.requestHead(handle);
+    }
+
+    pub fn requestBody(handle: i64) []const u8 {
+        return engine.requestBody(handle);
+    }
+
+    pub fn isWebSocket(handle: i64) bool {
+        return engine.isWebSocket(handle);
+    }
+
+    pub fn keepAlive(handle: i64) bool {
+        return engine.keepAlive(handle);
+    }
+
+    pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return engine.respond(handle, status, headers, body);
+    }
+
+    pub fn upgradeWebSocket(handle: i64) @"DoxaError_zerr.ZigError"!void {
+        return engine.upgradeWebSocket(handle);
+    }
+
+    pub fn close(handle: i64) @"DoxaError_zerr.ZigError"!void {
+        return engine.close(handle);
+    }
+
+    pub fn wsSend(handle: i64, op: i64, data: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return engine.wsSend(handle, op, data);
+    }
+
+    pub fn wsNext(handle: i64) @"DoxaError_zerr.ZigError"!i64 {
+        return engine.wsNext(handle);
+    }
+
+    pub fn wsMessageOp(handle: i64) i64 {
+        return engine.wsMessageOp(handle);
+    }
+
+    pub fn wsMessageData(handle: i64) []const u8 {
+        return engine.wsMessageData(handle);
+    }
+
+    pub fn wsPending(handle: i64) i64 {
+        return engine.wsPending(handle);
     }
 }
 
-public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
-    HTTP.downloadUrl(url, destination)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+/* Stream `url`'s body into the file `destination` and return the response
+   status. A non-2xx status is the server's answer, not a failure: its body is
+   written like any other. */
+public function downloadUrl(url :: string, destination :: string) returns int | zerr.ZigError {
+    return HTTP.downloadUrl(url, destination)
 }
 
-public function download(url :: string) returns nothing | error.StdError {
-    HTTP.download(url)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+/* `downloadUrl` into the file `url` names, in the working directory. */
+public function download(url :: string) returns int | zerr.ZigError {
+    return HTTP.download(url)
 }
 
 public struct Response {
@@ -54,22 +146,12 @@ public struct Response {
 
     /* Perform one request. The error arm means no response arrived; a non-2xx
        status is still a `Response`. */
-    public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+    public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError {
         var header_blob is ""
         for i while i < @length(req.headers) do i += 1 {
             header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
         }
-        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-        const status is HTTP.takeStatusCode()
-        const headers is HTTP.takeResponseHeaders()
-        const err is HTTP.takeLastErrorCode()
-        HTTP.releaseResponse()
-        if err == 0 then return $Response {
-            status_code is status,
-            raw_headers is headers,
-            body_text is value,
-        }
-        return mapIOError(err)
+        return HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
     }
 
     public method statusCode() returns int {
@@ -100,25 +182,16 @@ public struct Response {
     }
 }
 
-public function listen(port :: int) returns int | error.StdError {
-    const handle is HTTP.listen(port)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return handle
-    return mapIOError(err)
+public function listen(port :: int) returns int | zerr.ZigError {
+    return HTTP.listen(port)
 }
 
-public function localAddr(handle :: int) returns int | error.StdError {
-    const port is HTTP.localAddr(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return port
-    return mapIOError(err)
+public function localAddr(handle :: int) returns int | zerr.ZigError {
+    return HTTP.localAddr(handle)
 }
 
-public function accept(handle :: int) returns int | error.StdError {
-    const connection is HTTP.accept(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return connection
-    return mapIOError(err)
+public function accept(handle :: int) returns int | zerr.ZigError {
+    return HTTP.accept(handle)
 }
 
 public struct ServerRequest {
@@ -169,8 +242,9 @@ public struct ServerRequest {
    (read it with `ServerRequest.take`), `0` when none has arrived yet (retry on the
    next `Readable` event), and a negative status once the connection has ended.
    A request only appears here complete and valid: a malformed or oversized one
-   is answered by the library and the connection reports `Closed`. */
-public function readRequest(connection :: int) returns int {
+   is answered by the library and the connection reports `Closed`. An unknown
+   handle is `ZigError.InvalidHandle`. */
+public function readRequest(connection :: int) returns int | zerr.ZigError {
     return HTTP.readRequest(connection)
 }
 
@@ -220,30 +294,26 @@ function wsOpFromCode(code :: int) returns WsOp {
 /* Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
    `readRequest`. The handshake is written in the background; `wsSend` may be
    called at once and its frames follow the handshake. */
-public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
-    HTTP.upgradeWebSocket(connection)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function upgradeWebSocket(connection :: int) returns nothing | zerr.ZigError {
+    return HTTP.upgradeWebSocket(connection)
 }
 
 /* Queue one WebSocket frame with `data` as its payload. Returns at once: a
    peer that is slow to read never blocks the caller. A peer that falls further
    behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
-   and the call returns `error.IO.WriteFailed`. */
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
-    HTTP.wsSend(connection, wsOpCode(op), data)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+   and the call returns `ZigError.WriteFailed`. A connection that has ended is
+   `ZigError.Closed`. */
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
+    return HTTP.wsSend(connection, wsOpCode(op), data)
 }
 
 /* Take the connection's next message. Returns `1` when one is ready (read it
    with `wsMessage`), `0` when none is waiting (retry on the next `Readable`
-   event), `2` once the peer has closed, and a negative status when the peer
-   broke the protocol or a size limit. Messages arrive whole: fragments are
-   reassembled and text is validated before they are surfaced. */
-public function wsNext(connection :: int) returns int {
+   event), and `2` once the peer has closed. A message the peer broke (the
+   protocol or a size limit) is `ZigError.ProtocolError`. Messages arrive
+   whole: fragments are reassembled and text is validated before they are
+   surfaced. */
+public function wsNext(connection :: int) returns int | zerr.ZigError {
     return HTTP.wsNext(connection)
 }
 
@@ -265,11 +335,6 @@ public function wsPending(connection :: int) returns int {
 /* Whether messages are waiting for `wsNext`. */
 public function wsBuffered(connection :: int) returns tetra {
     return HTTP.wsPending(connection) > 0
-}
-
-/* The last error code left by a `ws*` call, taken and cleared. */
-public function takeLastErrorCode() returns int {
-    return HTTP.takeLastErrorCode()
 }
 
 /* Why a `poll` event fired. `Accepted` is a fresh connection. `Readable` is a
@@ -299,15 +364,17 @@ public struct Event {
 /* Wait for events on the listener's connections. Blocks up to `timeout_ms`
    (0 does not wait, negative waits indefinitely) and returns every event that
    is ready. Connections are read in the background whether or not the program
-   is polling; `poll` only collects what is finished. */
-public function poll(listener :: int, timeout_ms :: int) returns Event[] {
-    HTTP.poll(listener, timeout_ms)
+   is polling; `poll` only collects what is finished. An unknown listener is
+   `ZigError.InvalidHandle`. */
+public function poll(listener :: int, timeout_ms :: int) returns Event[] | zerr.ZigError {
+    const polled is HTTP.poll(listener, timeout_ms) as Polled else {
+        return polled
+    }
     var events :: Event[]
-    const count is HTTP.eventCount()
-    for i while i < count do i += 1 {
+    each handle at i in polled.handles {
         @push(events, $Event {
-            handle is HTTP.eventHandle(i),
-            kind is eventKindFromCode(HTTP.eventKind(i)),
+            handle is handle,
+            kind is eventKindFromCode(polled.kinds[i]),
         })
     }
     return events
@@ -395,31 +462,11 @@ public enum Limit {
     LingerMs,
 }
 
-function limitCode(which :: Limit) returns int {
-    return match which {
-        Limit.HeadBytes then 0,
-        Limit.BodyBytes then 1,
-        Limit.MessageBytes then 2,
-        Limit.OutboundBytes then 3,
-        Limit.InboxMessages then 4,
-        Limit.PendingBytes then 5,
-        Limit.Connections then 6,
-        Limit.HandshakeMs then 7,
-        Limit.HeadMs then 8,
-        Limit.ReadMs then 9,
-        Limit.WriteMs then 10,
-        Limit.IdleMs then 11,
-        Limit.HandlerMs then 12,
-        Limit.LingerMs then 13,
-    }
-}
-
-/* Set one limit for connections opened from now on. */
-public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
-    HTTP.setLimit(limitCode(which), value)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+/* Set one limit for connections opened from now on. A negative value is
+   `ZigError.Overflow`: no size or deadline is below zero. `Limit`'s order is
+   the engine's `LimitKey`. */
+public function setLimit(which :: Limit, value :: int) returns nothing | zerr.ZigError {
+    return HTTP.setLimit(which, value)
 }
 
 public struct Route {
@@ -428,14 +475,22 @@ public struct Route {
     param_names :: string[],
     param_values :: string[],
 
-    /* The route `Router.find` just matched, with the segments it captured. */
-    public function captured(id :: int, pattern :: string) returns Route {
+    /* `pattern` matched against `path`, segment by segment: a `:name` segment
+       captures the path's segment as `name`, any other must be equal, and the
+       two must have as many segments. `nothing` when they do not match. */
+    public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing {
+        const wanted is segments(pattern)
+        const given is segments(path)
+        if @length(wanted) != @length(given) then return nothing
         var names :: string[]
         var values :: string[]
-        const count is HTTP.paramCount()
-        for i while i < count do i += 1 {
-            @push(names, HTTP.paramNameAt(i))
-            @push(values, HTTP.paramValueAt(i))
+        each part at i in wanted {
+            if @length(part) >= 2 and @slice(part, 0, 1) == ":" then {
+                @push(names, @slice(part, 1, @length(part) - 1))
+                @push(values, given[i])
+            } else if part != given[i] then {
+                return nothing
+            }
         }
         return $Route {
             id is id,
@@ -479,26 +534,25 @@ public struct Router {
        `nothing`. A `:name` pattern segment captures that path segment. */
     public method find(verb :: string, path :: string) returns Route | nothing {
         for i while i < @length(this.patterns) do i += 1 {
-            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
-                return Route.captured(this.ids[i], this.patterns[i])
+            if this.verbs[i] == verb then {
+                const route is Route.matching(this.ids[i], this.patterns[i], path)
+                route as Route then return route else {}
             }
         }
         return nothing
     }
 }
 
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
-    HTTP.respond(connection, status, headers, body)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+/* Answer the pending request. With no request waiting, or one already
+   answered, the call is `ZigError.NotOpenForWriting`; a status that is not
+   three digits, or a header line that could break framing, is
+   `ZigError.HttpHeadersInvalid`. */
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | zerr.ZigError {
+    return HTTP.respond(connection, status, headers, body)
 }
 
-public function close(handle :: int) returns nothing | error.StdError {
-    HTTP.close(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function close(handle :: int) returns nothing | zerr.ZigError {
+    return HTTP.close(handle)
 }
 
 public struct Request {
@@ -517,44 +571,38 @@ public struct Request {
     }
 }
 
-public function get(url :: string) returns Response | error.StdError {
+public function get(url :: string) returns Response | zerr.ZigError {
     var req is Request.new()
     return Response.send("GET", url, req)
 }
 
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | zerr.ZigError {
     var req is Request.new()
     req.timeout_ms is timeout_ms
     return Response.send("GET", url, req)
 }
 
-public function post(url :: string, ^req :: Request) returns Response | error.StdError {
+public function post(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("POST", url, req)
 }
 
-public function put(url :: string, ^req :: Request) returns Response | error.StdError {
+public function put(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("PUT", url, req)
 }
 
-public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
+public function delete(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("DELETE", url, req)
 }
 
-public function head(url :: string, ^req :: Request) returns Response | error.StdError {
+public function head(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("HEAD", url, req)
 }
 
 /* The body of a GET, whatever its status. */
-public function getText(url :: string) returns string | error.StdError {
+public function getText(url :: string) returns string | zerr.ZigError {
     const response is get(url)
     response as Response then return response.body()
     else return response
-}
-
-public function checkStatus(response :: Response) returns Response | error.StdError {
-    const status is response.statusCode()
-    if status < 200 or status >= 300 then return error.IO.HttpStatus
-    return response
 }
 
 /* --- Go-flavoured WebSocket sugar over the `ws*` primitives above ---
@@ -571,9 +619,12 @@ public function checkStatus(response :: Response) returns Response | error.StdEr
    is answered `426 Upgrade Required`, so its client is never left waiting. */
 public function wsAccept(connection :: int) returns tetra {
     if isWebSocket(connection) then return true
-    const status is readRequest(connection)
+    const status is readRequest(connection) as int else {
+        return false
+    }
     if status != 1 then return false
-    if HTTP.upgradeWebSocket(connection) == 0 then return true
+    const upgraded is upgradeWebSocket(connection)
+    upgraded as zerr.ZigError then {} else return true
     respond(connection, 426, "Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13", "")
     return false
 }
@@ -581,37 +632,51 @@ public function wsAccept(connection :: int) returns tetra {
 /* The next complete message, `nothing` when none is buffered yet or the peer
    closed, or an error on a protocol/transport failure. Fragmented messages are
    reassembled before they are surfaced. */
-public function wsRead(connection :: int) returns Message | nothing | error.StdError {
-    const status is wsNext(connection)
+public function wsRead(connection :: int) returns Message | nothing | zerr.ZigError {
+    const status is wsNext(connection) as int else {
+        return status
+    }
     if status == 1 then return wsMessage(connection)
-    const err is takeLastErrorCode()
-    if err != 0 then return mapIOError(err)
     return nothing
 }
 
 /* Send one frame with an explicit opcode. */
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, op, data)
 }
 
-public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Text, data)
 }
 
-public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Binary, data)
 }
 
-public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Ping, data)
 }
 
-public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Pong, data)
 }
 
 /* Send a Close frame (empty payload) and drop the connection. */
-public function wsClose(connection :: int) returns nothing | error.StdError {
+public function wsClose(connection :: int) returns nothing | zerr.ZigError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
+}
+
+/* `text`'s parts between `/`s: `/a/b` is `["", "a", "b"]`. */
+function segments(text :: string) returns string[] {
+    var parts :: string[]
+    var start is 0
+    for i while i < @length(text) do i += 1 {
+        if text[i] == "/" then {
+            @push(parts, @slice(text, start, i - start))
+            start is i + 1
+        }
+    }
+    @push(parts, @slice(text, start, @length(text) - start))
+    return parts
 }

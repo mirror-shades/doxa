@@ -113,7 +113,7 @@ pub fn writeMemberCompletions(
     }
 
     // A value whose declared type is a standard-library struct/enum. The
-    // inferred name can be a union (`Response | error.StdError`), so try the
+    // inferred name can be a union (`Response | zerr.ZigError`), so try the
     // whole string and then each alternative.
     if (env.stdlib) |cat| {
         if (model.findCatalogType(cat, type_name)) |owner| {

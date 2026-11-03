@@ -20,6 +20,40 @@ const n is Math.double(21)
 - The imported file must obey the restricted subset below; violations are reported as a compile error (`E7010`).
 - Edits to the imported `.zig` are picked up automatically on the next build — the generated module is content-hashed (together with the toolchain, target, and optimization level) and rebuilt whenever any of those changes, so no manual cache clearing is needed.
 
+## Importing Zig into a block
+
+An inline block may `@import` a `.zig` file beside the `.doxa` file that
+declares it, and call into it:
+
+```doxa
+enum Fail { Negative }
+
+zig Calc {
+    const engine = @import("calc/engine.zig");
+
+    pub fn twice(x: i64) DoxaError_Fail!i64 {
+        return engine.twice(x);
+    }
+}
+```
+
+- The path resolves relative to the declaring `.doxa` file; a file that is not
+  there is reported at the block (`E7001`).
+- The imported file is plain Zig: any top-level declarations, its own state,
+  and imports of further files beside it. It is not a Doxa module and names no
+  Doxa type; the block is its Doxa surface. So an engine can keep its own Zig
+  error sets, and the block's `DoxaError_<path>` set checks, by name, that
+  every error it passes on is a variant of the Doxa enum.
+- Each imported file is compiled as a Zig module of the name the block spells,
+  read in place. Its content, and that of every file it imports in turn, keys
+  the block's object, so an edit to any of them rebuilds it.
+- A Zig compile error in an imported file is reported at that file's line
+  (`E7015`).
+
+This is the form to use when a block needs more than functions, or when its
+Zig deserves a file of its own (`std.http` is one). A `.zig` file imported
+directly with `module ... from` stays limited to the rules below.
+
 ## Current source-level rules
 
 1. Top-level is restricted to:

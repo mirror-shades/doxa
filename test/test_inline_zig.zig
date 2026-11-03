@@ -300,7 +300,11 @@ test "inline zig: only the zig units a program reaches are compiled" {
     try testing.expect(!http.status.atLeast(.Parsed));
     try testing.expect(graph_store.findStable("pkg//std/http/http.zig") == null);
 
-    // Reaching into `std.http` loads it, which interns the engine it imports.
+    // Reaching into `std.http` loads it. Its `zig HTTP` block imports the
+    // engine, which is a build input of the block, never a module of its own.
     _ = try loader.ensureDeclarations(http);
-    try testing.expect(graph_store.findStable("pkg//std/http/http.zig") != null);
+    try testing.expect(graph_store.findStable("pkg//std/http/http.zig") == null);
+    const block = graph_store.findStable("pkg//std/http/http.doxa//zig/HTTP").?;
+    try testing.expectEqual(@as(usize, 1), block.zig.?.imports.len);
+    try testing.expectEqualStrings("http.zig", block.zig.?.imports[0].spelling);
 }

@@ -1,5 +1,6 @@
-module error from "../error.doxa"
 module io from "../io/io.doxa"
+module process from "../process/process.doxa"
+module zerr from "../zerr/zerr.doxa"
 
 zig Build {
     const std = @import("std");
@@ -7,204 +8,30 @@ zig Build {
 
     extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
 
-    pub fn errorState(mode: i64, value: i64) i64 {
-        const State = struct {
-            var last_error_code: i64 = 0;
-        };
-        if (mode == 0) {
-            State.last_error_code = value;
-            return 0;
-        }
-        if (mode == 1) {
-            return State.last_error_code;
-        }
-        if (mode == 2) {
-            const code = State.last_error_code;
-            State.last_error_code = 0;
-            return code;
-        }
-        return 0;
-    }
-
-    pub fn clearLastError() void {
-        _ = errorState(0, 0);
-    }
-
-    pub fn setLastError(code: i64) void {
-        _ = errorState(0, code);
-    }
-
-    pub fn takeLastErrorCode() i64 {
-        return errorState(2, 0);
-    }
-
-    // `std.process.spawn` allocates the child's environment block and command
-    // line through the `Io`'s allocator. `std.Io.Threaded.global_single_threaded`
-    // is deliberately built with a failing allocator, so spawning through it
-    // fails with `error.OutOfMemory`. The build layer therefore owns a
-    // single-threaded `Io` backed by the page allocator.
+    // `std.Io.Threaded.global_single_threaded` is built with a failing
+    // allocator; resolving the executable's path needs a real one.
     fn buildIo() std.Io {
         const State = struct {
-            var threaded: std.Io.Threaded = undefined;
-            var initialized: bool = false;
+            var threaded: std.Io.Threaded = init: {
+                var t = std.Io.Threaded.init_single_threaded;
+                t.allocator = std.heap.page_allocator;
+                break :init t;
+            };
         };
-        if (!State.initialized) {
-            State.threaded = std.Io.Threaded.init_single_threaded;
-            State.threaded.allocator = std.heap.page_allocator;
-            // `init_single_threaded` starts with an empty environment on POSIX,
-            // so a child spawned through it inherits nothing: no HOME, and a
-            // nested `zig` then cannot resolve its cache directory
-            // (`AppDataDirUnavailable`). Point the Io at this process's real
-            // environment.
-            State.threaded.environ = .{ .process_environ = .{ .block = processEnvironBlock() } };
-            State.threaded.environ_initialized = false;
-            State.initialized = true;
-        }
         return State.threaded.io();
     }
 
-    fn processEnvironBlock() std.process.Environ.Block {
-        if (builtin.os.tag == .windows) return .global;
-        const c_environ = std.c.environ;
-        var count: usize = 0;
-        while (c_environ[count] != null) : (count += 1) {}
-        return .{ .slice = c_environ[0..count :null] };
-    }
-
-    // Append `--<prefix>=<value>` for every newline-separated entry in `joined`.
-    // Empty entries are skipped. Returns false on allocation failure.
-    fn appendListFlags(a: std.mem.Allocator, args: *std.array_list.Managed([]const u8), prefix: []const u8, joined: []const u8) bool {
-        var it = std.mem.tokenizeScalar(u8, joined, '\n');
-        while (it.next()) |entry| {
-            if (entry.len == 0) continue;
-            const flag = std.fmt.allocPrint(a, "--{s}={s}", .{ prefix, entry }) catch return false;
-            args.append(flag) catch return false;
-        }
-        return true;
-    }
-
-    // Compile a single artifact by re-invoking `doxa compile` with the manifest's
-    // target, optimization mode, and native linking directives. The array-valued
-    // directives (links/libdirs/frameworks/includes) arrive as newline-joined
-    // strings because the inline-Zig ABI carries only scalar values.
-    pub fn compileArtifact(
-        src: []const u8,
-        out: []const u8,
-        arch: []const u8,
-        os: []const u8,
-        abi: []const u8,
-        opt_mode: []const u8,
-        links: []const u8,
-        libdirs: []const u8,
-        frameworks: []const u8,
-        includes: []const u8,
-    ) i64 {
-        clearLastError();
-
-        if (src.len == 0 or out.len == 0) {
-            setLastError(1);
-            return 0;
-        }
-
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-        const a = arena.allocator();
-        const io = buildIo();
-
-        const doxa_path = blk: {
-            var env_len: u64 = 0;
-            if (doxa_getenv("DOXA_BIN", "DOXA_BIN".len, &env_len)) |ptr| {
-                break :blk ptr[0..@intCast(env_len)];
-            }
-            break :blk std.process.executablePathAlloc(io, a) catch {
-                setLastError(105);
-                return 0;
-            };
+    /// The compiler a build script drives: `DOXA_BIN` when set, otherwise the
+    /// running executable (a build script runs under the compiler that built
+    /// it). The result is a view the wrapper copies before the next call.
+    pub fn compilerPath() @"DoxaError_zerr.ZigError"![]const u8 {
+        var len: u64 = 0;
+        if (doxa_getenv("DOXA_BIN", "DOXA_BIN".len, &len)) |ptr| return ptr[0..@intCast(len)];
+        const State = struct {
+            var buffer: [std.fs.max_path_bytes]u8 = undefined;
         };
-
-        var args = std.array_list.Managed([]const u8).init(a);
-        defer args.deinit();
-
-        args.appendSlice(&[_][]const u8{ doxa_path, "compile", src, "-o", out }) catch {
-            setLastError(117);
-            return 0;
-        };
-
-        if (opt_mode.len > 0) {
-            const opt_arg = std.fmt.allocPrint(a, "--opt-mode={s}", .{opt_mode}) catch {
-                setLastError(117);
-                return 0;
-            };
-            args.append(opt_arg) catch {
-                setLastError(117);
-                return 0;
-            };
-        }
-
-        if (arch.len > 0) {
-            const arch_arg = std.fmt.allocPrint(a, "--arch={s}", .{arch}) catch {
-                setLastError(117);
-                return 0;
-            };
-            args.append(arch_arg) catch {
-                setLastError(117);
-                return 0;
-            };
-        }
-
-        if (os.len > 0) {
-            const os_arg = std.fmt.allocPrint(a, "--os={s}", .{os}) catch {
-                setLastError(117);
-                return 0;
-            };
-            args.append(os_arg) catch {
-                setLastError(117);
-                return 0;
-            };
-        }
-
-        if (abi.len > 0) {
-            const abi_arg = std.fmt.allocPrint(a, "--abi={s}", .{abi}) catch {
-                setLastError(117);
-                return 0;
-            };
-            args.append(abi_arg) catch {
-                setLastError(117);
-                return 0;
-            };
-        }
-
-        if (!appendListFlags(a, &args, "libdir", libdirs) or
-            !appendListFlags(a, &args, "link", links) or
-            !appendListFlags(a, &args, "framework", frameworks) or
-            !appendListFlags(a, &args, "include", includes))
-        {
-            setLastError(117);
-            return 0;
-        }
-
-        var child = std.process.spawn(io, .{
-            .argv = args.items,
-            .stdout = .inherit,
-            .stderr = .inherit,
-        }) catch {
-            setLastError(105);
-            return 0;
-        };
-        defer child.kill(io);
-
-        const term = child.wait(io) catch {
-            setLastError(105);
-            return 0;
-        };
-
-        return switch (term) {
-            .exited => |code| @as(i64, code),
-            else => {
-                setLastError(117);
-                return 0;
-            },
-        };
+        const n = try std.process.executablePath(buildIo(), &State.buffer);
+        return State.buffer[0..n];
     }
 
     pub fn hostArch() []const u8 {
@@ -217,35 +44,6 @@ zig Build {
 
     pub fn hostAbi() []const u8 {
         return @tagName(builtin.abi);
-    }
-}
-
-function mapBuildError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        3 then error.Common.PermissionDenied,
-        4 then error.Common.NotSupported,
-        5 then error.Common.Unexpected,
-        100 then error.IO.NotFound,
-        101 then error.IO.AlreadyExists,
-        102 then error.IO.NotDirectory,
-        103 then error.IO.IsDirectory,
-        104 then error.IO.InvalidPath,
-        105 then error.IO.OpenFailed,
-        106 then error.IO.ReadFailed,
-        107 then error.IO.WriteFailed,
-        108 then error.IO.CreateFailed,
-        109 then error.IO.DeleteFailed,
-        110 then error.IO.RenameFailed,
-        111 then error.IO.CopyFailed,
-        112 then error.IO.IterateFailed,
-        113 then error.IO.InvalidData,
-        114 then error.IO.ConnectionFailed,
-        115 then error.IO.Timeout,
-        116 then error.IO.HttpStatus,
-        117 then error.IO.Unexpected,
-        else error.Common.Unexpected,
     }
 }
 
@@ -265,19 +63,6 @@ public function optModeName(o :: Optimization) returns string {
     if o == Optimization.Some then return "safe"
     if o == Optimization.Speed then return "fast"
     return "small"
-}
-
-# The inline-Zig ABI is scalar-only, so array-valued directives cross into the
-# compiler shim as newline-joined strings.
-public function joinLines(parts :: string[]) returns string {
-    var out is ""
-    var i is 0
-    while i < @length(parts) {
-        if i > 0 then out is out + "\n"
-        out is out + parts[i]
-        i is i + 1
-    }
-    return out
 }
 
 public struct Target {
@@ -409,8 +194,40 @@ public struct Context {
     }
 }
 
-# Drive the compiler over every artifact in the context. Returns the first
-# non-zero exit code or mapped error encountered, or 0 on success.
+# Compile one artifact by running the compiler with the context's target,
+# optimization mode and native linking directives.
+function compileArtifact(compiler :: string, c :: Context, art :: Executable) returns process.Term | zerr.ZigError {
+    var arguments :: string[] is ["compile", art.entry_point, "-o", art.output]
+    # Written as an assignment rather than an `if` expression: a runtime `if`
+    # expression that produces a string currently yields a corrupted value.
+    var opt is "debug"
+    if not c.debug then opt is optModeName(c.optimization)
+    @push(arguments, "--opt-mode={opt}")
+    # A native build names no target: the compiler's host build is the one
+    # that targets this machine's CPU.
+    if not c.target.native then {
+        if @length(c.target.arch) > 0 then @push(arguments, "--arch={c.target.arch}")
+        @push(arguments, "--os={c.target.os}")
+        if @length(c.target.abi) > 0 then @push(arguments, "--abi={c.target.abi}")
+    }
+    each dir in art.libdirs {
+        @push(arguments, "--libdir={dir}")
+    }
+    each lib in art.links {
+        @push(arguments, "--link={lib}")
+    }
+    each framework in art.frameworks {
+        @push(arguments, "--framework={framework}")
+    }
+    each dir in art.includes {
+        @push(arguments, "--include={dir}")
+    }
+    return process.execArgs(compiler, arguments)
+}
+
+# Drive the compiler over every artifact in the context, stopping at the first
+# compile that does not succeed. Returns how that compile ended, or how the
+# last one did; with no artifacts, an exit of 0.
 #
 # There is deliberately no up-to-date skip here. An earlier version compared the
 # output's mtime against the entry source alone and skipped the compile when the
@@ -420,72 +237,53 @@ public struct Context {
 # would mean duplicating the compiler's import resolution, so the check is the
 # driver's alone; `plan/incremental-builds.md` tracks the whole-unit manifest
 # that will make the driver able to answer this content-accurately.
-public function run(c :: Context) returns int | error.StdError {
+public function run(c :: Context) returns process.Term | zerr.ZigError {
     # A cross target must name its OS; an empty OS is never silently resolved to
     # the host.
-    if @length(c.target.os) == 0 then return error.Common.InvalidArgument
-    # Written as an assignment rather than an `if` expression: a runtime `if`
-    # expression that produces a string currently yields a corrupted value.
-    var opt is "debug"
-    if not c.debug then opt is optModeName(c.optimization)
-    # A native build names no target: the compiler's host build is the one
-    # that targets this machine's CPU.
-    var arch is c.target.arch
-    var os is c.target.os
-    var abi is c.target.abi
-    if c.target.native then {
-        arch is ""
-        os is ""
-        abi is ""
+    if not c.target.native and @length(c.target.os) == 0 then return zerr.ZigError.MissingOperatingSystem
+    const compiler is Build.compilerPath() as string else {
+        return compiler
     }
-    var i is 0
-    while i < @length(c.artifacts) {
-        const art is c.artifacts[i]
-
-        const links is joinLines(art.links)
-        const libdirs is joinLines(art.libdirs)
-        const frameworks is joinLines(art.frameworks)
-        const includes is joinLines(art.includes)
-        const code is Build.compileArtifact(art.entry_point, art.output, arch, os, abi, opt, links, libdirs, frameworks, includes)
-        const err is Build.takeLastErrorCode()
-        if err != 0 then return mapBuildError(err)
-        if code != 0 then return code
-
-        i is i + 1
+    var last is $process.Term { kind is process.TermKind.Exited, code is 0 }
+    each art in c.artifacts {
+        const term is compileArtifact(compiler, c, art) as process.Term else {
+            return term
+        }
+        if not term.succeeded() then return term
+        last is term
     }
-    return 0
+    return last
 }
 
 # Drive the compiler over every artifact and propagate the outcome through the
-# process exit code: a successful build exits 0, an `int` result exits with that
-# code, and an `error.StdError` prints a mapped message to stderr and exits 1.
-# `execute` is the terminal statement of a build script; it never returns.
+# process exit code: a successful build exits 0, a failed compile exits with
+# the compiler's status, and a compiler that could not run, or ended by a
+# signal, prints why to stderr and exits 1. `execute` is the terminal statement
+# of a build script; it never returns.
 public function execute(c :: Context) {
-    const outcome is run(c)
-    outcome as int then {
-        @print("build exit code: {@string(outcome)}\n")
-        if outcome != 0 then @exit(outcome)
-    } else {
-        # The compiler's own diagnostics already describe the failing artifact;
-        # here we only need to signal the failure on the standard channel.
-        io.eprintln("Build failed")
+    const outcome is run(c) as process.Term else {
+        io.eprintln("Build failed: {outcome}")
         @exit(1)
     }
+    if outcome.kind != process.TermKind.Exited then {
+        io.eprintln("Build failed: the compiler ended by {outcome.kind} {outcome.code}")
+        @exit(1)
+    }
+    # The compiler's own diagnostics already describe a failing artifact.
+    @print("build exit code: {outcome.code}\n")
+    if outcome.code != 0 then @exit(outcome.code)
 }
 
 # Low-level single-file compile, retained for direct use and the build test
 # harness. `debug` forces the debug optimization mode.
-public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError {
-    # Assignment form: a runtime `if` expression producing a string is corrupt.
-    var opt is "debug"
-    if not debug then opt is "fast"
-    const code is Build.compileArtifact(src, out, arch, os, abi, opt, "", "", "", "")
-    const err is Build.takeLastErrorCode()
-    if err == 0 then return code
-    return mapBuildError(err)
+public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns process.Term | zerr.ZigError {
+    var c is Context.new(Target.cross(arch, os, abi))
+    c.debug is debug
+    c.optimization is Optimization.Speed
+    c.addArtifact(Executable.new(src, src, out))
+    return run(c)
 }
 
-public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError {
+public function compileHost(src :: string, out :: string, debug :: tetra) returns process.Term | zerr.ZigError {
     return compile(src, out, Build.hostArch(), Build.hostOs(), Build.hostAbi(), debug)
 }
-

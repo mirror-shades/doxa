@@ -1,0 +1,13 @@
+# A Zig compile error inside a file an inline block imports is reported in
+# that file.
+zig Calc {
+    const engine = @import("zig_import/broken.zig");
+
+    pub fn twice(x: i64) i64 {
+        return engine.twice(x);
+    }
+}
+
+entry function main() {
+    @print("{Calc.twice(21)}\n")
+}

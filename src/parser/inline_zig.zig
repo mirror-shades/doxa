@@ -651,6 +651,29 @@ pub fn doxaEnumSpellings(allocator: std.mem.Allocator, source: []const u8) Error
     return spellingsWithPrefix(allocator, source, "DoxaEnum_");
 }
 
+/// The `.zig` files `source` imports (`@import("engine.zig")`), each spelling
+/// once, in order of first appearance, as written: relative to the importing
+/// file. `@import("std")` and other module names are not files. A path with
+/// an escape in it is kept as written, so it fails to resolve as a file.
+pub fn fileImports(allocator: std.mem.Allocator, source: []const u8) ErrorList![]const []const u8 {
+    var spellings = std.array_list.Managed([]const u8).init(allocator);
+    errdefer spellings.deinit();
+    var ts = Tokenizer.init(source);
+    while (try ts.next()) |tok| {
+        if (!tokenIs(tok, .ident, "@import")) continue;
+        const open = (try ts.next()) orelse break;
+        if (!tokenIs(open, .symbol, "(")) continue;
+        const path = (try ts.next()) orelse break;
+        if (path.kind != .string_lit or path.lexeme.len < 2 or path.lexeme[0] != '"') continue;
+        const spelling = path.lexeme[1 .. path.lexeme.len - 1];
+        if (!std.mem.endsWith(u8, spelling, ".zig")) continue;
+        for (spellings.items) |seen| {
+            if (std.mem.eql(u8, seen, spelling)) break;
+        } else try spellings.append(spelling);
+    }
+    return spellings.toOwnedSlice();
+}
+
 fn spellingsWithPrefix(allocator: std.mem.Allocator, source: []const u8, prefix: []const u8) ErrorList![]const []const u8 {
     var spellings = std.array_list.Managed([]const u8).init(allocator);
     errdefer spellings.deinit();

@@ -16,12 +16,8 @@ function run_command(cmd :: string, description :: string is "") returns tetra {
         std.io.println("{description}...")
     }
     std.io.println("Running: {cmd}")
-    const res is std.process.exec(cmd) as int else {
-        std.io.println("Error: {res}")
-        return false
-    }
-    if res == 0 then return true 
-    std.io.println("Exit code: {res}")
+    if std.process.execOk(cmd) then return true
+    std.io.println("Command failed: {cmd}")
     return false
 }
 

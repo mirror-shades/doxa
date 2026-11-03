@@ -13,18 +13,15 @@ exists), and a collapsible copy of the full source declaration.
 ### `print`
 
 ```doxa
-public function print(text :: string) returns nothing | error.StdError
+public function print(text :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function print(text :: string) returns nothing | error.StdError {
-    IO.print(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function print(text :: string) returns nothing | zerr.ZigError {
+    return IO.print(text)
 }
 ```
 
@@ -33,18 +30,15 @@ public function print(text :: string) returns nothing | error.StdError {
 ### `println`
 
 ```doxa
-public function println(text :: string) returns nothing | error.StdError
+public function println(text :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function println(text :: string) returns nothing | error.StdError {
-    IO.printlnStdout(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function println(text :: string) returns nothing | zerr.ZigError {
+    return IO.println(text)
 }
 ```
 
@@ -53,18 +47,15 @@ public function println(text :: string) returns nothing | error.StdError {
 ### `eprint`
 
 ```doxa
-public function eprint(text :: string) returns nothing | error.StdError
+public function eprint(text :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprint(text :: string) returns nothing | error.StdError {
-    IO.eprint(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function eprint(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprint(text)
 }
 ```
 
@@ -73,18 +64,15 @@ public function eprint(text :: string) returns nothing | error.StdError {
 ### `eprintln`
 
 ```doxa
-public function eprintln(text :: string) returns nothing | error.StdError
+public function eprintln(text :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprintln(text :: string) returns nothing | error.StdError {
-    IO.eprintlnStderr(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function eprintln(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprintln(text)
 }
 ```
 
@@ -93,18 +81,22 @@ public function eprintln(text :: string) returns nothing | error.StdError {
 ### `input`
 
 ```doxa
-public function input() returns string | error.StdError
+public function input() returns string | nothing | zerr.ZigError
 ```
+
+The next line of standard input, without its line ending, or `nothing` at
+the end of input.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function input() returns string | error.StdError {
-    const value is IO.input();
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return value
-    return mapIOError(err)
+public function input() returns string | nothing | zerr.ZigError {
+    const line is IO.input() as Line else {
+        return line
+    }
+    if line.ended then return nothing
+    return line.text
 }
 ```
 
@@ -113,18 +105,21 @@ public function input() returns string | error.StdError {
 ### `inputByte`
 
 ```doxa
-public function inputByte() returns byte | error.StdError
+public function inputByte() returns byte | nothing | zerr.ZigError
 ```
+
+The next byte of standard input, or `nothing` at the end of input.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function inputByte() returns byte | error.StdError {
-    const value is IO.inputByte()
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return @byte(value)
-    return mapIOError(err)
+public function inputByte() returns byte | nothing | zerr.ZigError {
+    const value is IO.inputByte() as int else {
+        return value
+    }
+    if value < 0 then return nothing
+    return @byte(value)
 }
 ```
 
@@ -133,18 +128,19 @@ public function inputByte() returns byte | error.StdError {
 ### `inputPrompt`
 
 ```doxa
-public function inputPrompt(prompt :: string) returns string | error.StdError
+public function inputPrompt(prompt :: string) returns string | nothing | zerr.ZigError
 ```
+
+`print(prompt)`, then `input()`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function inputPrompt(prompt :: string) returns string | error.StdError {
-    const value is IO.inputPrompt(prompt);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return value
-    return mapIOError(err)
+public function inputPrompt(prompt :: string) returns string | nothing | zerr.ZigError {
+    const printed is print(prompt)
+    printed as zerr.ZigError then return printed else {}
+    return input()
 }
 ```
 
@@ -152,78 +148,110 @@ public function inputPrompt(prompt :: string) returns string | error.StdError {
 
 ## `std.process`
 
+### `TermKind`
+
+```doxa
+public enum TermKind
+```
+
+How a child process ended, as Zig's `std.process.Child.Term` reports it.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public enum TermKind {
+    Exited,
+    Signal,
+    Stopped,
+    Unknown,
+}
+```
+
+</details>
+
+### `Term`
+
+```doxa
+public struct Term
+```
+
+How a child process ended. `code` is the exit status for `Exited`, the signal
+number for `Signal` and `Stopped`, and the raw status for `Unknown`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public struct Term {
+    public kind :: TermKind,
+    public code :: int,
+
+    # Whether the child exited with status 0.
+    public method succeeded() returns tetra {
+        return this.kind == TermKind.Exited and this.code == 0
+    }
+}
+```
+
+</details>
+
+#### `Term.succeeded`
+
+```doxa
+public method succeeded() returns tetra
+```
+
+Whether the child exited with status 0.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public method succeeded() returns tetra {
+        return this.kind == TermKind.Exited and this.code == 0
+    }
+```
+
+</details>
+
+### `Run`
+
+```doxa
+public struct Run
+```
+
+A captured run: how the child ended and everything it wrote. A non-zero exit
+is part of the result, not an error.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public struct Run {
+    public term :: Term,
+    public stdout :: string,
+    public stderr :: string,
+}
+```
+
+</details>
+
 ### `exec`
 
 ```doxa
-public function exec(input :: string) returns int | error.StdError
+public function exec(command :: string) returns Term | zerr.ZigError
 ```
+
+Run `command` through the system shell (`sh -c`, or `cmd /c` on Windows).
+The child shares this process's stdout and stderr.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function exec(input :: string) returns int | error.StdError {
-    const code is Process.exec_cmd(input)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
-}
-```
-
-</details>
-
-### `execCapture`
-
-```doxa
-public function execCapture(input :: string) returns string | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function execCapture(input :: string) returns string | error.StdError {
-    const output is Process.exec_capture_stdout(input)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return output
-    return mapProcessError(err)
-}
-```
-
-</details>
-
-### `execCaptureArgs`
-
-```doxa
-public function execCaptureArgs(program :: string, arguments :: string[]) returns string | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function execCaptureArgs(program :: string, arguments :: string[]) returns string | error.StdError {
-    return execCaptureEnv(program, arguments, [], [])
-}
-```
-
-</details>
-
-### `execCaptureEnv`
-
-```doxa
-public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
-    const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return output
-    return mapProcessError(err)
+public function exec(command :: string) returns Term | zerr.ZigError {
+    return Process.exec(command)
 }
 ```
 
@@ -232,18 +260,18 @@ public function execCaptureEnv(program :: string, arguments :: string[], env_key
 ### `execArgs`
 
 ```doxa
-public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError
+public function execArgs(program :: string, arguments :: string[]) returns Term | zerr.ZigError
 ```
+
+Run `program` with `arguments`, no shell. The child shares this process's
+stdout and stderr.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError {
-    const code is Process.exec_args(program, arguments)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
+public function execArgs(program :: string, arguments :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, [], [])
 }
 ```
 
@@ -252,18 +280,18 @@ public function execArgs(program :: string, arguments :: string[]) returns int |
 ### `execArgsEnv`
 
 ```doxa
-public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Term | zerr.ZigError
 ```
+
+`execArgs` with `env_keys[i]` set to `env_values[i]` in the child's
+environment, over this process's own.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
-    const code is Process.exec_args_env(program, arguments, env_keys, env_values)
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return code
-    return mapProcessError(err)
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, env_keys, env_values)
 }
 ```
 
@@ -272,21 +300,78 @@ public function execArgsEnv(program :: string, arguments :: string[], env_keys :
 ### `execOk`
 
 ```doxa
-public function execOk(input :: string) returns tetra
+public function execOk(command :: string) returns tetra
 ```
+
+Whether `command` ran and exited with status 0.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execOk(input :: string) returns tetra {
-    const result is exec(input)
-    result as int then {
-        return true
-    }
-    else {
+public function execOk(command :: string) returns tetra {
+    const term is exec(command) as Term else {
         return false
     }
+    return term.succeeded()
+}
+```
+
+</details>
+
+### `execCapture`
+
+```doxa
+public function execCapture(command :: string) returns Run | zerr.ZigError
+```
+
+Run `command` through the system shell and capture what it writes.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execCapture(command :: string) returns Run | zerr.ZigError {
+    return Process.capture(command)
+}
+```
+
+</details>
+
+### `execCaptureArgs`
+
+```doxa
+public function execCaptureArgs(program :: string, arguments :: string[]) returns Run | zerr.ZigError
+```
+
+Run `program` with `arguments`, no shell, and capture what it writes.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execCaptureArgs(program :: string, arguments :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, [], [])
+}
+```
+
+</details>
+
+### `execCaptureEnv`
+
+```doxa
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Run | zerr.ZigError
+```
+
+`execCaptureArgs` with `env_keys[i]` set to `env_values[i]` in the child's
+environment, over this process's own.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, env_keys, env_values)
 }
 ```
 
@@ -295,27 +380,22 @@ public function execOk(input :: string) returns tetra {
 ### `args`
 
 ```doxa
-public function args() returns string[] | error.StdError
+public function args() returns string[]
 ```
+
+The program's command-line arguments, the program's own path first.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function args() returns string[] | error.StdError {
-    const _argc is argc() as int else {
-        return mapProcessError(Process.takeLastErrorCode())
-    }
+public function args() returns string[] {
     var result :: string[]
-    for i while i < _argc do i += 1 {
-        const arg is argv(i) as string else {
-            return mapProcessError(Process.takeLastErrorCode())
-        }
-        @push(result, arg)
+    const count is argc()
+    for i while i < count do i += 1 {
+        @push(result, Process.argAt(i))
     }
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return result
-    return mapProcessError(err)
+    return result
 }
 ```
 
@@ -324,18 +404,15 @@ public function args() returns string[] | error.StdError {
 ### `argc`
 
 ```doxa
-public function argc() returns int | error.StdError
+public function argc() returns int
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function argc() returns int | error.StdError {
-    const count is Process.argCount();
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return count
-    return mapProcessError(err)
+public function argc() returns int {
+    return Process.argCount()
 }
 ```
 
@@ -344,18 +421,16 @@ public function argc() returns int | error.StdError {
 ### `argv`
 
 ```doxa
-public function argv(index :: int) returns string | error.StdError
+public function argv(index :: int) returns string | error.Method
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function argv(index :: int) returns string | error.StdError {
-    const value is Process.argAt(@string(index));
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+public function argv(index :: int) returns string | error.Method {
+    if index < 0 or index >= argc() then return error.Method.OutOfBounds
+    return Process.argAt(index)
 }
 ```
 
@@ -367,12 +442,14 @@ public function argv(index :: int) returns string | error.StdError {
 public function exit(code :: int)
 ```
 
+End the program with `code`; a POSIX parent sees its low byte.
+
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function exit(code :: int) {
-    Process.exitCode(@string(code));
+    Process.exit(code)
 }
 ```
 
@@ -381,18 +458,15 @@ public function exit(code :: int) {
 ### `cwd`
 
 ```doxa
-public function cwd() returns string | error.StdError
+public function cwd() returns string | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function cwd() returns string | error.StdError {
-    const value is Process.cwd();
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+public function cwd() returns string | zerr.ZigError {
+    return Process.cwd()
 }
 ```
 
@@ -401,18 +475,20 @@ public function cwd() returns string | error.StdError {
 ### `getenv`
 
 ```doxa
-public function getenv(name :: string) returns string | error.StdError
+public function getenv(name :: string) returns string | nothing
 ```
+
+The variable `name` in the environment the program started with, or
+`nothing` when it is not set.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function getenv(name :: string) returns string | error.StdError {
-    const value is Process.getEnv(name);
-    const err is Process.takeLastErrorCode()
-    if err == 0 then return value
-    return mapProcessError(err)
+public function getenv(name :: string) returns string | nothing {
+    const env is Process.getEnv(name)
+    if env.found then return env.value
+    return nothing
 }
 ```
 
@@ -423,14 +499,14 @@ public function getenv(name :: string) returns string | error.StdError {
 ### `makeDir`
 
 ```doxa
-public function makeDir(path :: string) returns nothing | error.StdError
+public function makeDir(path :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function makeDir(path :: string) returns nothing | error.StdError {
+public function makeDir(path :: string) returns nothing | zerr.ZigError {
     return File.makeDir(path)
 }
 ```
@@ -440,14 +516,14 @@ public function makeDir(path :: string) returns nothing | error.StdError {
 ### `makePath`
 
 ```doxa
-public function makePath(path :: string) returns nothing | error.StdError
+public function makePath(path :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function makePath(path :: string) returns nothing | error.StdError {
+public function makePath(path :: string) returns nothing | zerr.ZigError {
     return File.makePath(path)
 }
 ```
@@ -457,14 +533,14 @@ public function makePath(path :: string) returns nothing | error.StdError {
 ### `copyFile`
 
 ```doxa
-public function copyFile(source :: string, destination :: string) returns nothing | error.StdError
+public function copyFile(source :: string, destination :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function copyFile(source :: string, destination :: string) returns nothing | error.StdError {
+public function copyFile(source :: string, destination :: string) returns nothing | zerr.ZigError {
     return File.copyFile(source, destination)
 }
 ```
@@ -474,14 +550,14 @@ public function copyFile(source :: string, destination :: string) returns nothin
 ### `delete`
 
 ```doxa
-public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError
+public function delete(path :: string, recursive :: tetra) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError {
+public function delete(path :: string, recursive :: tetra) returns nothing | zerr.ZigError {
     return File.delete(path, recursive)
 }
 ```
@@ -491,14 +567,14 @@ public function delete(path :: string, recursive :: tetra) returns nothing | err
 ### `copyDir`
 
 ```doxa
-public function copyDir(source :: string, destination :: string) returns nothing | error.StdError
+public function copyDir(source :: string, destination :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function copyDir(source :: string, destination :: string) returns nothing | error.StdError {
+public function copyDir(source :: string, destination :: string) returns nothing | zerr.ZigError {
     return File.copyDir(source, destination)
 }
 ```
@@ -508,14 +584,14 @@ public function copyDir(source :: string, destination :: string) returns nothing
 ### `unzipFile`
 
 ```doxa
-public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError
+public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError {
+public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | zerr.ZigError {
     return File.unzipFile(zip_path, unzip_path)
 }
 ```
@@ -533,7 +609,7 @@ public function isDir(path :: string) returns tetra
 
 ```doxa
 public function isDir(path :: string) returns tetra {
-    return File.IsDir(path)
+    return File.isDir(path)
 }
 ```
 
@@ -542,15 +618,15 @@ public function isDir(path :: string) returns tetra {
 ### `renameDir`
 
 ```doxa
-public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError
+public function renameDir(old_folder :: string, new_folder :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError {
-    return File.renameDir(old_folder, new_folder)
+public function renameDir(old_folder :: string, new_folder :: string) returns nothing | zerr.ZigError {
+    return File.rename(old_folder, new_folder)
 }
 ```
 
@@ -559,14 +635,14 @@ public function renameDir(old_folder :: string, new_folder :: string) returns no
 ### `rename`
 
 ```doxa
-public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError
+public function rename(old_path :: string, new_path :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError {
+public function rename(old_path :: string, new_path :: string) returns nothing | zerr.ZigError {
     return File.rename(old_path, new_path)
 }
 ```
@@ -576,14 +652,14 @@ public function rename(old_path :: string, new_path :: string) returns nothing |
 ### `read`
 
 ```doxa
-public function read(path :: string) returns string | error.StdError
+public function read(path :: string) returns string | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function read(path :: string) returns string | error.StdError {
+public function read(path :: string) returns string | zerr.ZigError {
     return File.read(path)
 }
 ```
@@ -593,14 +669,14 @@ public function read(path :: string) returns string | error.StdError {
 ### `write`
 
 ```doxa
-public function write(path :: string, content :: string) returns nothing | error.StdError
+public function write(path :: string, content :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function write(path :: string, content :: string) returns nothing | error.StdError {
+public function write(path :: string, content :: string) returns nothing | zerr.ZigError {
     return File.write(path, content)
 }
 ```
@@ -610,14 +686,14 @@ public function write(path :: string, content :: string) returns nothing | error
 ### `append`
 
 ```doxa
-public function append(path :: string, content :: string) returns nothing | error.StdError
+public function append(path :: string, content :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function append(path :: string, content :: string) returns nothing | error.StdError {
+public function append(path :: string, content :: string) returns nothing | zerr.ZigError {
     return File.append(path, content)
 }
 ```
@@ -661,14 +737,14 @@ public function isFile(path :: string) returns tetra {
 ### `list`
 
 ```doxa
-public function list(path :: string) returns string[] | error.StdError
+public function list(path :: string) returns string[] | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function list(path :: string) returns string[] | error.StdError {
+public function list(path :: string) returns string[] | zerr.ZigError {
     return File.list(path)
 }
 ```
@@ -678,14 +754,14 @@ public function list(path :: string) returns string[] | error.StdError {
 ### `touch`
 
 ```doxa
-public function touch(path :: string) returns nothing | error.StdError
+public function touch(path :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function touch(path :: string) returns nothing | error.StdError {
+public function touch(path :: string) returns nothing | zerr.ZigError {
     return File.touch(path)
 }
 ```
@@ -694,62 +770,22 @@ public function touch(path :: string) returns nothing | error.StdError {
 
 ## `std.http`
 
-### `mapIOError`
-
-```doxa
-public function mapIOError(code :: int) returns error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function mapIOError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        3 then error.Common.PermissionDenied,
-        4 then error.Common.NotSupported,
-        100 then error.IO.NotFound,
-        101 then error.IO.AlreadyExists,
-        102 then error.IO.NotDirectory,
-        103 then error.IO.IsDirectory,
-        104 then error.IO.InvalidPath,
-        105 then error.IO.OpenFailed,
-        106 then error.IO.ReadFailed,
-        107 then error.IO.WriteFailed,
-        108 then error.IO.CreateFailed,
-        109 then error.IO.DeleteFailed,
-        110 then error.IO.RenameFailed,
-        111 then error.IO.CopyFailed,
-        112 then error.IO.IterateFailed,
-        113 then error.IO.InvalidData,
-        114 then error.IO.ConnectionFailed,
-        115 then error.IO.Timeout,
-        116 then error.IO.HttpStatus,
-        117 then error.IO.Unexpected,
-        else error.Common.Unexpected,
-    }
-}
-```
-
-</details>
-
 ### `downloadUrl`
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError
+public function downloadUrl(url :: string, destination :: string) returns int | zerr.ZigError
 ```
+
+Stream `url`'s body into the file `destination` and return the response
+status. A non-2xx status is the server's answer, not a failure: its body is
+written like any other.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
-    HTTP.downloadUrl(url, destination)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function downloadUrl(url :: string, destination :: string) returns int | zerr.ZigError {
+    return HTTP.downloadUrl(url, destination)
 }
 ```
 
@@ -758,18 +794,17 @@ public function downloadUrl(url :: string, destination :: string) returns nothin
 ### `download`
 
 ```doxa
-public function download(url :: string) returns nothing | error.StdError
+public function download(url :: string) returns int | zerr.ZigError
 ```
+
+`downloadUrl` into the file `url` names, in the working directory.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function download(url :: string) returns nothing | error.StdError {
-    HTTP.download(url)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function download(url :: string) returns int | zerr.ZigError {
+    return HTTP.download(url)
 }
 ```
 
@@ -792,22 +827,12 @@ public struct Response {
 
     /* Perform one request. The error arm means no response arrived; a non-2xx
        status is still a `Response`. */
-    public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+    public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError {
         var header_blob is ""
         for i while i < @length(req.headers) do i += 1 {
             header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
         }
-        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-        const status is HTTP.takeStatusCode()
-        const headers is HTTP.takeResponseHeaders()
-        const err is HTTP.takeLastErrorCode()
-        HTTP.releaseResponse()
-        if err == 0 then return $Response {
-            status_code is status,
-            raw_headers is headers,
-            body_text is value,
-        }
-        return mapIOError(err)
+        return HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
     }
 
     public method statusCode() returns int {
@@ -844,7 +869,7 @@ public struct Response {
 #### `Response.send`
 
 ```doxa
-public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError
+public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError
 ```
 
 Perform one request. The error arm means no response arrived; a non-2xx
@@ -854,22 +879,12 @@ status is still a `Response`.
 <summary>Source</summary>
 
 ```doxa
-public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError {
         var header_blob is ""
         for i while i < @length(req.headers) do i += 1 {
             header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
         }
-        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-        const status is HTTP.takeStatusCode()
-        const headers is HTTP.takeResponseHeaders()
-        const err is HTTP.takeLastErrorCode()
-        HTTP.releaseResponse()
-        if err == 0 then return $Response {
-            status_code is status,
-            raw_headers is headers,
-            body_text is value,
-        }
-        return mapIOError(err)
+        return HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
     }
 ```
 
@@ -957,18 +972,15 @@ public method hasHeader(name :: string) returns tetra {
 ### `listen`
 
 ```doxa
-public function listen(port :: int) returns int | error.StdError
+public function listen(port :: int) returns int | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function listen(port :: int) returns int | error.StdError {
-    const handle is HTTP.listen(port)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return handle
-    return mapIOError(err)
+public function listen(port :: int) returns int | zerr.ZigError {
+    return HTTP.listen(port)
 }
 ```
 
@@ -977,18 +989,15 @@ public function listen(port :: int) returns int | error.StdError {
 ### `localAddr`
 
 ```doxa
-public function localAddr(handle :: int) returns int | error.StdError
+public function localAddr(handle :: int) returns int | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function localAddr(handle :: int) returns int | error.StdError {
-    const port is HTTP.localAddr(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return port
-    return mapIOError(err)
+public function localAddr(handle :: int) returns int | zerr.ZigError {
+    return HTTP.localAddr(handle)
 }
 ```
 
@@ -997,18 +1006,15 @@ public function localAddr(handle :: int) returns int | error.StdError {
 ### `accept`
 
 ```doxa
-public function accept(handle :: int) returns int | error.StdError
+public function accept(handle :: int) returns int | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function accept(handle :: int) returns int | error.StdError {
-    const connection is HTTP.accept(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return connection
-    return mapIOError(err)
+public function accept(handle :: int) returns int | zerr.ZigError {
+    return HTTP.accept(handle)
 }
 ```
 
@@ -1177,20 +1183,21 @@ public method hasHeader(name :: string) returns tetra {
 ### `readRequest`
 
 ```doxa
-public function readRequest(connection :: int) returns int
+public function readRequest(connection :: int) returns int | zerr.ZigError
 ```
 
 Whether a request is waiting on the connection. Returns `1` when one is
 (read it with `ServerRequest.take`), `0` when none has arrived yet (retry on the
 next `Readable` event), and a negative status once the connection has ended.
 A request only appears here complete and valid: a malformed or oversized one
-is answered by the library and the connection reports `Closed`.
+is answered by the library and the connection reports `Closed`. An unknown
+handle is `ZigError.InvalidHandle`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function readRequest(connection :: int) returns int {
+public function readRequest(connection :: int) returns int | zerr.ZigError {
     return HTTP.readRequest(connection)
 }
 ```
@@ -1282,7 +1289,7 @@ public struct Message {
 ### `upgradeWebSocket`
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns nothing | error.StdError
+public function upgradeWebSocket(connection :: int) returns nothing | zerr.ZigError
 ```
 
 Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
@@ -1293,11 +1300,8 @@ called at once and its frames follow the handshake.
 <summary>Source</summary>
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
-    HTTP.upgradeWebSocket(connection)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function upgradeWebSocket(connection :: int) returns nothing | zerr.ZigError {
+    return HTTP.upgradeWebSocket(connection)
 }
 ```
 
@@ -1306,23 +1310,21 @@ public function upgradeWebSocket(connection :: int) returns nothing | error.StdE
 ### `wsSend`
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError
 ```
 
 Queue one WebSocket frame with `data` as its payload. Returns at once: a
 peer that is slow to read never blocks the caller. A peer that falls further
 behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
-and the call returns `error.IO.WriteFailed`.
+and the call returns `ZigError.WriteFailed`. A connection that has ended is
+`ZigError.Closed`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
-    HTTP.wsSend(connection, wsOpCode(op), data)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
+    return HTTP.wsSend(connection, wsOpCode(op), data)
 }
 ```
 
@@ -1331,20 +1333,21 @@ public function wsSend(connection :: int, op :: WsOp, data :: string) returns no
 ### `wsNext`
 
 ```doxa
-public function wsNext(connection :: int) returns int
+public function wsNext(connection :: int) returns int | zerr.ZigError
 ```
 
 Take the connection's next message. Returns `1` when one is ready (read it
 with `wsMessage`), `0` when none is waiting (retry on the next `Readable`
-event), `2` once the peer has closed, and a negative status when the peer
-broke the protocol or a size limit. Messages arrive whole: fragments are
-reassembled and text is validated before they are surfaced.
+event), and `2` once the peer has closed. A message the peer broke (the
+protocol or a size limit) is `ZigError.ProtocolError`. Messages arrive
+whole: fragments are reassembled and text is validated before they are
+surfaced.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsNext(connection :: int) returns int {
+public function wsNext(connection :: int) returns int | zerr.ZigError {
     return HTTP.wsNext(connection)
 }
 ```
@@ -1413,25 +1416,6 @@ public function wsBuffered(connection :: int) returns tetra {
 
 </details>
 
-### `takeLastErrorCode`
-
-```doxa
-public function takeLastErrorCode() returns int
-```
-
-The last error code left by a `ws*` call, taken and cleared.
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function takeLastErrorCode() returns int {
-    return HTTP.takeLastErrorCode()
-}
-```
-
-</details>
-
 ### `EventKind`
 
 ```doxa
@@ -1481,26 +1465,28 @@ public struct Event {
 ### `poll`
 
 ```doxa
-public function poll(listener :: int, timeout_ms :: int) returns Event[]
+public function poll(listener :: int, timeout_ms :: int) returns Event[] | zerr.ZigError
 ```
 
 Wait for events on the listener's connections. Blocks up to `timeout_ms`
 (0 does not wait, negative waits indefinitely) and returns every event that
 is ready. Connections are read in the background whether or not the program
-is polling; `poll` only collects what is finished.
+is polling; `poll` only collects what is finished. An unknown listener is
+`ZigError.InvalidHandle`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function poll(listener :: int, timeout_ms :: int) returns Event[] {
-    HTTP.poll(listener, timeout_ms)
+public function poll(listener :: int, timeout_ms :: int) returns Event[] | zerr.ZigError {
+    const polled is HTTP.poll(listener, timeout_ms) as Polled else {
+        return polled
+    }
     var events :: Event[]
-    const count is HTTP.eventCount()
-    for i while i < count do i += 1 {
+    each handle at i in polled.handles {
         @push(events, $Event {
-            handle is HTTP.eventHandle(i),
-            kind is eventKindFromCode(HTTP.eventKind(i)),
+            handle is handle,
+            kind is eventKindFromCode(polled.kinds[i]),
         })
     }
     return events
@@ -1617,20 +1603,19 @@ public enum Limit {
 ### `setLimit`
 
 ```doxa
-public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError
+public function setLimit(which :: Limit, value :: int) returns nothing | zerr.ZigError
 ```
 
-Set one limit for connections opened from now on.
+Set one limit for connections opened from now on. A negative value is
+`ZigError.Overflow`: no size or deadline is below zero. `Limit`'s order is
+the engine's `LimitKey`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
-    HTTP.setLimit(limitCode(which), value)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function setLimit(which :: Limit, value :: int) returns nothing | zerr.ZigError {
+    return HTTP.setLimit(which, value)
 }
 ```
 
@@ -1652,14 +1637,22 @@ public struct Route {
     param_names :: string[],
     param_values :: string[],
 
-    /* The route `Router.find` just matched, with the segments it captured. */
-    public function captured(id :: int, pattern :: string) returns Route {
+    /* `pattern` matched against `path`, segment by segment: a `:name` segment
+       captures the path's segment as `name`, any other must be equal, and the
+       two must have as many segments. `nothing` when they do not match. */
+    public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing {
+        const wanted is segments(pattern)
+        const given is segments(path)
+        if @length(wanted) != @length(given) then return nothing
         var names :: string[]
         var values :: string[]
-        const count is HTTP.paramCount()
-        for i while i < count do i += 1 {
-            @push(names, HTTP.paramNameAt(i))
-            @push(values, HTTP.paramValueAt(i))
+        each part at i in wanted {
+            if @length(part) >= 2 and @slice(part, 0, 1) == ":" then {
+                @push(names, @slice(part, 1, @length(part) - 1))
+                @push(values, given[i])
+            } else if part != given[i] then {
+                return nothing
+            }
         }
         return $Route {
             id is id,
@@ -1683,25 +1676,33 @@ public struct Route {
 
 </details>
 
-#### `Route.captured`
+#### `Route.matching`
 
 ```doxa
-public function captured(id :: int, pattern :: string) returns Route
+public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing
 ```
 
-The route `Router.find` just matched, with the segments it captured.
+`pattern` matched against `path`, segment by segment: a `:name` segment
+captures the path's segment as `name`, any other must be equal, and the
+two must have as many segments. `nothing` when they do not match.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function captured(id :: int, pattern :: string) returns Route {
+public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing {
+        const wanted is segments(pattern)
+        const given is segments(path)
+        if @length(wanted) != @length(given) then return nothing
         var names :: string[]
         var values :: string[]
-        const count is HTTP.paramCount()
-        for i while i < count do i += 1 {
-            @push(names, HTTP.paramNameAt(i))
-            @push(values, HTTP.paramValueAt(i))
+        each part at i in wanted {
+            if @length(part) >= 2 and @slice(part, 0, 1) == ":" then {
+                @push(names, @slice(part, 1, @length(part) - 1))
+                @push(values, given[i])
+            } else if part != given[i] then {
+                return nothing
+            }
         }
         return $Route {
             id is id,
@@ -1770,8 +1771,9 @@ public struct Router {
        `nothing`. A `:name` pattern segment captures that path segment. */
     public method find(verb :: string, path :: string) returns Route | nothing {
         for i while i < @length(this.patterns) do i += 1 {
-            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
-                return Route.captured(this.ids[i], this.patterns[i])
+            if this.verbs[i] == verb then {
+                const route is Route.matching(this.ids[i], this.patterns[i], path)
+                route as Route then return route else {}
             }
         }
         return nothing
@@ -1836,8 +1838,9 @@ The first route added for `verb` whose pattern matches `path`, or
 ```doxa
 public method find(verb :: string, path :: string) returns Route | nothing {
         for i while i < @length(this.patterns) do i += 1 {
-            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
-                return Route.captured(this.ids[i], this.patterns[i])
+            if this.verbs[i] == verb then {
+                const route is Route.matching(this.ids[i], this.patterns[i], path)
+                route as Route then return route else {}
             }
         }
         return nothing
@@ -1849,18 +1852,20 @@ public method find(verb :: string, path :: string) returns Route | nothing {
 ### `respond`
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | zerr.ZigError
 ```
+
+Answer the pending request. With no request waiting, or one already
+answered, the call is `ZigError.NotOpenForWriting`; a status that is not
+three digits, or a header line that could break framing, is
+`ZigError.HttpHeadersInvalid`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
-    HTTP.respond(connection, status, headers, body)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | zerr.ZigError {
+    return HTTP.respond(connection, status, headers, body)
 }
 ```
 
@@ -1869,18 +1874,15 @@ public function respond(connection :: int, status :: int, headers :: string, bod
 ### `close`
 
 ```doxa
-public function close(handle :: int) returns nothing | error.StdError
+public function close(handle :: int) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function close(handle :: int) returns nothing | error.StdError {
-    HTTP.close(handle)
-    const err is HTTP.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+public function close(handle :: int) returns nothing | zerr.ZigError {
+    return HTTP.close(handle)
 }
 ```
 
@@ -1940,14 +1942,14 @@ public function new() returns Request {
 ### `get`
 
 ```doxa
-public function get(url :: string) returns Response | error.StdError
+public function get(url :: string) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function get(url :: string) returns Response | error.StdError {
+public function get(url :: string) returns Response | zerr.ZigError {
     var req is Request.new()
     return Response.send("GET", url, req)
 }
@@ -1958,14 +1960,14 @@ public function get(url :: string) returns Response | error.StdError {
 ### `getWithTimeout`
 
 ```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | zerr.ZigError {
     var req is Request.new()
     req.timeout_ms is timeout_ms
     return Response.send("GET", url, req)
@@ -1977,14 +1979,14 @@ public function getWithTimeout(url :: string, timeout_ms :: int) returns Respons
 ### `post`
 
 ```doxa
-public function post(url :: string, ^req :: Request) returns Response | error.StdError
+public function post(url :: string, ^req :: Request) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function post(url :: string, ^req :: Request) returns Response | error.StdError {
+public function post(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("POST", url, req)
 }
 ```
@@ -1994,14 +1996,14 @@ public function post(url :: string, ^req :: Request) returns Response | error.St
 ### `put`
 
 ```doxa
-public function put(url :: string, ^req :: Request) returns Response | error.StdError
+public function put(url :: string, ^req :: Request) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function put(url :: string, ^req :: Request) returns Response | error.StdError {
+public function put(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("PUT", url, req)
 }
 ```
@@ -2011,14 +2013,14 @@ public function put(url :: string, ^req :: Request) returns Response | error.Std
 ### `delete`
 
 ```doxa
-public function delete(url :: string, ^req :: Request) returns Response | error.StdError
+public function delete(url :: string, ^req :: Request) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
+public function delete(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("DELETE", url, req)
 }
 ```
@@ -2028,14 +2030,14 @@ public function delete(url :: string, ^req :: Request) returns Response | error.
 ### `head`
 
 ```doxa
-public function head(url :: string, ^req :: Request) returns Response | error.StdError
+public function head(url :: string, ^req :: Request) returns Response | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function head(url :: string, ^req :: Request) returns Response | error.StdError {
+public function head(url :: string, ^req :: Request) returns Response | zerr.ZigError {
     return Response.send("HEAD", url, req)
 }
 ```
@@ -2045,7 +2047,7 @@ public function head(url :: string, ^req :: Request) returns Response | error.St
 ### `getText`
 
 ```doxa
-public function getText(url :: string) returns string | error.StdError
+public function getText(url :: string) returns string | zerr.ZigError
 ```
 
 The body of a GET, whatever its status.
@@ -2054,29 +2056,10 @@ The body of a GET, whatever its status.
 <summary>Source</summary>
 
 ```doxa
-public function getText(url :: string) returns string | error.StdError {
+public function getText(url :: string) returns string | zerr.ZigError {
     const response is get(url)
     response as Response then return response.body()
     else return response
-}
-```
-
-</details>
-
-### `checkStatus`
-
-```doxa
-public function checkStatus(response :: Response) returns Response | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function checkStatus(response :: Response) returns Response | error.StdError {
-    const status is response.statusCode()
-    if status < 200 or status >= 300 then return error.IO.HttpStatus
-    return response
 }
 ```
 
@@ -2099,9 +2082,12 @@ is answered `426 Upgrade Required`, so its client is never left waiting.
 ```doxa
 public function wsAccept(connection :: int) returns tetra {
     if isWebSocket(connection) then return true
-    const status is readRequest(connection)
+    const status is readRequest(connection) as int else {
+        return false
+    }
     if status != 1 then return false
-    if HTTP.upgradeWebSocket(connection) == 0 then return true
+    const upgraded is upgradeWebSocket(connection)
+    upgraded as zerr.ZigError then {} else return true
     respond(connection, 426, "Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13", "")
     return false
 }
@@ -2112,7 +2098,7 @@ public function wsAccept(connection :: int) returns tetra {
 ### `wsRead`
 
 ```doxa
-public function wsRead(connection :: int) returns Message | nothing | error.StdError
+public function wsRead(connection :: int) returns Message | nothing | zerr.ZigError
 ```
 
 The next complete message, `nothing` when none is buffered yet or the peer
@@ -2123,11 +2109,11 @@ reassembled before they are surfaced.
 <summary>Source</summary>
 
 ```doxa
-public function wsRead(connection :: int) returns Message | nothing | error.StdError {
-    const status is wsNext(connection)
+public function wsRead(connection :: int) returns Message | nothing | zerr.ZigError {
+    const status is wsNext(connection) as int else {
+        return status
+    }
     if status == 1 then return wsMessage(connection)
-    const err is takeLastErrorCode()
-    if err != 0 then return mapIOError(err)
     return nothing
 }
 ```
@@ -2137,7 +2123,7 @@ public function wsRead(connection :: int) returns Message | nothing | error.StdE
 ### `wsWrite`
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError
 ```
 
 Send one frame with an explicit opcode.
@@ -2146,7 +2132,7 @@ Send one frame with an explicit opcode.
 <summary>Source</summary>
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, op, data)
 }
 ```
@@ -2156,14 +2142,14 @@ public function wsWrite(connection :: int, op :: WsOp, data :: string) returns n
 ### `wsText`
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns nothing | error.StdError
+public function wsText(connection :: int, data :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Text, data)
 }
 ```
@@ -2173,14 +2159,14 @@ public function wsText(connection :: int, data :: string) returns nothing | erro
 ### `wsBinary`
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError
+public function wsBinary(connection :: int, data :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Binary, data)
 }
 ```
@@ -2190,14 +2176,14 @@ public function wsBinary(connection :: int, data :: string) returns nothing | er
 ### `wsPing`
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns nothing | error.StdError
+public function wsPing(connection :: int, data :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Ping, data)
 }
 ```
@@ -2207,14 +2193,14 @@ public function wsPing(connection :: int, data :: string) returns nothing | erro
 ### `wsPong`
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns nothing | error.StdError
+public function wsPong(connection :: int, data :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | zerr.ZigError {
     return wsSend(connection, WsOp.Pong, data)
 }
 ```
@@ -2224,7 +2210,7 @@ public function wsPong(connection :: int, data :: string) returns nothing | erro
 ### `wsClose`
 
 ```doxa
-public function wsClose(connection :: int) returns nothing | error.StdError
+public function wsClose(connection :: int) returns nothing | zerr.ZigError
 ```
 
 Send a Close frame (empty payload) and drop the connection.
@@ -2233,7 +2219,7 @@ Send a Close frame (empty payload) and drop the connection.
 <summary>Source</summary>
 
 ```doxa
-public function wsClose(connection :: int) returns nothing | error.StdError {
+public function wsClose(connection :: int) returns nothing | zerr.ZigError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
 }
@@ -2297,18 +2283,18 @@ public function abi() returns string {
 ### `cpu`
 
 ```doxa
-public function cpu() returns string | error.StdError
+public function cpu() returns string | zerr.ZigError
 ```
 
 The model of the CPU running the program (e.g. `"znver4"`), detected when
-called rather than fixed when compiled; `error.Common.NotSupported` when the
-host cannot be probed.
+called rather than fixed when compiled; the `ZigError` Zig's target
+detection reports when the host cannot be probed.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function cpu() returns string | error.StdError {
+public function cpu() returns string | zerr.ZigError {
     return Host.cpuName()
 }
 ```
@@ -2593,33 +2579,6 @@ public function optModeName(o :: Optimization) returns string {
     if o == Optimization.Some then return "safe"
     if o == Optimization.Speed then return "fast"
     return "small"
-}
-```
-
-</details>
-
-### `joinLines`
-
-```doxa
-public function joinLines(parts :: string[]) returns string
-```
-
-The inline-Zig ABI is scalar-only, so array-valued directives cross into the
-compiler shim as newline-joined strings.
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function joinLines(parts :: string[]) returns string {
-    var out is ""
-    var i is 0
-    while i < @length(parts) {
-        if i > 0 then out is out + "\n"
-        out is out + parts[i]
-        i is i + 1
-    }
-    return out
 }
 ```
 
@@ -3068,11 +3027,12 @@ public method addArtifact(b :: Executable) {
 ### `run`
 
 ```doxa
-public function run(c :: Context) returns int | error.StdError
+public function run(c :: Context) returns process.Term | zerr.ZigError
 ```
 
-Drive the compiler over every artifact in the context. Returns the first
-non-zero exit code or mapped error encountered, or 0 on success.
+Drive the compiler over every artifact in the context, stopping at the first
+compile that does not succeed. Returns how that compile ended, or how the
+last one did; with no artifacts, an exit of 0.
 
 There is deliberately no up-to-date skip here. An earlier version compared the
 output's mtime against the entry source alone and skipped the compile when the
@@ -3087,40 +3047,22 @@ that will make the driver able to answer this content-accurately.
 <summary>Source</summary>
 
 ```doxa
-public function run(c :: Context) returns int | error.StdError {
+public function run(c :: Context) returns process.Term | zerr.ZigError {
     # A cross target must name its OS; an empty OS is never silently resolved to
     # the host.
-    if @length(c.target.os) == 0 then return error.Common.InvalidArgument
-    # Written as an assignment rather than an `if` expression: a runtime `if`
-    # expression that produces a string currently yields a corrupted value.
-    var opt is "debug"
-    if not c.debug then opt is optModeName(c.optimization)
-    # A native build names no target: the compiler's host build is the one
-    # that targets this machine's CPU.
-    var arch is c.target.arch
-    var os is c.target.os
-    var abi is c.target.abi
-    if c.target.native then {
-        arch is ""
-        os is ""
-        abi is ""
+    if not c.target.native and @length(c.target.os) == 0 then return zerr.ZigError.MissingOperatingSystem
+    const compiler is Build.compilerPath() as string else {
+        return compiler
     }
-    var i is 0
-    while i < @length(c.artifacts) {
-        const art is c.artifacts[i]
-
-        const links is joinLines(art.links)
-        const libdirs is joinLines(art.libdirs)
-        const frameworks is joinLines(art.frameworks)
-        const includes is joinLines(art.includes)
-        const code is Build.compileArtifact(art.entry_point, art.output, arch, os, abi, opt, links, libdirs, frameworks, includes)
-        const err is Build.takeLastErrorCode()
-        if err != 0 then return mapBuildError(err)
-        if code != 0 then return code
-
-        i is i + 1
+    var last is $process.Term { kind is process.TermKind.Exited, code is 0 }
+    each art in c.artifacts {
+        const term is compileArtifact(compiler, c, art) as process.Term else {
+            return term
+        }
+        if not term.succeeded() then return term
+        last is term
     }
-    return 0
+    return last
 }
 ```
 
@@ -3133,25 +3075,27 @@ public function execute(c :: Context)
 ```
 
 Drive the compiler over every artifact and propagate the outcome through the
-process exit code: a successful build exits 0, an `int` result exits with that
-code, and an `error.StdError` prints a mapped message to stderr and exits 1.
-`execute` is the terminal statement of a build script; it never returns.
+process exit code: a successful build exits 0, a failed compile exits with
+the compiler's status, and a compiler that could not run, or ended by a
+signal, prints why to stderr and exits 1. `execute` is the terminal statement
+of a build script; it never returns.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function execute(c :: Context) {
-    const outcome is run(c)
-    outcome as int then {
-        @print("build exit code: {@string(outcome)}\n")
-        if outcome != 0 then @exit(outcome)
-    } else {
-        # The compiler's own diagnostics already describe the failing artifact;
-        # here we only need to signal the failure on the standard channel.
-        io.eprintln("Build failed")
+    const outcome is run(c) as process.Term else {
+        io.eprintln("Build failed: {outcome}")
         @exit(1)
     }
+    if outcome.kind != process.TermKind.Exited then {
+        io.eprintln("Build failed: the compiler ended by {outcome.kind} {outcome.code}")
+        @exit(1)
+    }
+    # The compiler's own diagnostics already describe a failing artifact.
+    @print("build exit code: {outcome.code}\n")
+    if outcome.code != 0 then @exit(outcome.code)
 }
 ```
 
@@ -3160,7 +3104,7 @@ public function execute(c :: Context) {
 ### `compile`
 
 ```doxa
-public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError
+public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns process.Term | zerr.ZigError
 ```
 
 Low-level single-file compile, retained for direct use and the build test
@@ -3170,14 +3114,12 @@ harness. `debug` forces the debug optimization mode.
 <summary>Source</summary>
 
 ```doxa
-public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError {
-    # Assignment form: a runtime `if` expression producing a string is corrupt.
-    var opt is "debug"
-    if not debug then opt is "fast"
-    const code is Build.compileArtifact(src, out, arch, os, abi, opt, "", "", "", "")
-    const err is Build.takeLastErrorCode()
-    if err == 0 then return code
-    return mapBuildError(err)
+public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns process.Term | zerr.ZigError {
+    var c is Context.new(Target.cross(arch, os, abi))
+    c.debug is debug
+    c.optimization is Optimization.Speed
+    c.addArtifact(Executable.new(src, src, out))
+    return run(c)
 }
 ```
 
@@ -3186,14 +3128,14 @@ public function compile(src :: string, out :: string, arch :: string, os :: stri
 ### `compileHost`
 
 ```doxa
-public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError
+public function compileHost(src :: string, out :: string, debug :: tetra) returns process.Term | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError {
+public function compileHost(src :: string, out :: string, debug :: tetra) returns process.Term | zerr.ZigError {
     return compile(src, out, Build.hostArch(), Build.hostOs(), Build.hostAbi(), debug)
 }
 ```
@@ -3202,91 +3144,13 @@ public function compileHost(src :: string, out :: string, debug :: tetra) return
 
 ## `std.error`
 
-### `Common`
-
-```doxa
-public enum Common
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public enum Common {
-    InvalidArgument,
-    OutOfMemory,
-    PermissionDenied,
-    NotSupported,
-    Unexpected,
-}
-```
-
-</details>
-
-### `IO`
-
-```doxa
-public enum IO
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public enum IO {
-    NotFound,
-    AlreadyExists,
-    NotDirectory,
-    IsDirectory,
-    InvalidPath,
-    OpenFailed,
-    ReadFailed,
-    WriteFailed,
-    CreateFailed,
-    DeleteFailed,
-    RenameFailed,
-    CopyFailed,
-    IterateFailed,
-    InvalidData,
-    ConnectionFailed,
-    Timeout,
-    HttpStatus,
-    Unexpected,
-}
-```
-
-</details>
-
-### `Process`
-
-```doxa
-public enum Process
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public enum Process {
-    CommandNotFound,
-    NotExecutable,
-    SpawnFailed,
-    WaitFailed,
-    KillFailed,
-    CaptureFailed,
-    OutputTooLarge,
-    NonZeroExit,
-    Unexpected,
-}
-```
-
-</details>
-
 ### `Method`
 
 ```doxa
 public enum Method
 ```
+
+Doxa's own runtime errors, raised by the intrinsics.
 
 <details>
 <summary>Source</summary>
@@ -3298,26 +3162,6 @@ public enum Method {
     InvalidNumber,
     Overflow,
     Unexpected,
-}
-```
-
-</details>
-
-### `StdError`
-
-```doxa
-public group StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public group StdError {
-    Common,
-    IO,
-    Process,
-    Method
 }
 ```
 
@@ -3968,11 +3812,13 @@ public struct Node {
         }
     }
 
-    public function parse(text :: string) returns Node | error.StdError {
-        const root is JSON.parseDocument(text)
-        const code is JSON.takeLastErrorCode()
-        if code == 0 then return Node.new(root)
-        return mapJSONError(code)
+    # Parse `text` as one JSON document. A node of an earlier document reads
+    # as `Kind.Invalid` once another is parsed.
+    public function parse(text :: string) returns Node | zerr.ZigError {
+        const root is JSON.parseDocument(text) as int else {
+            return root
+        }
+        return Node.new(root)
     }
 
     public method kind() returns Kind {
@@ -3989,52 +3835,54 @@ public struct Node {
         }
     }
 
+    method holds(kind :: Kind) returns tetra {
+        return this.kind() == kind
+    }
+
+    # How many elements or fields, or `nothing` for a node that is neither an
+    # array nor an object.
     public method count() returns int | nothing {
-        const value is JSON.nodeCount(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Array) and not this.holds(Kind.Object) then return nothing
+        return JSON.nodeCount(this.handle)
     }
 
     public method element(index :: int) returns Node | nothing {
         const child is JSON.nodeChild(this.handle, index)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 
     public method field(name :: string) returns Node | nothing {
         const child is JSON.nodeField(this.handle, name)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 
+    # The field name this node is stored under, or `nothing` for a node that
+    # is not an object's field.
     public method key() returns string | nothing {
-        const value is JSON.nodeKey(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not JSON.nodeHasKey(this.handle) then return nothing
+        return JSON.nodeKey(this.handle)
     }
 
     public method text() returns string | nothing {
-        const value is JSON.nodeText(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Text) then return nothing
+        return JSON.nodeText(this.handle)
     }
 
     public method intValue() returns int | nothing {
-        const value is JSON.nodeIntValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Integer) then return nothing
+        return JSON.nodeIntValue(this.handle)
     }
 
     public method floatValue() returns float | nothing {
-        const value is JSON.nodeFloatValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Number) then return nothing
+        return JSON.nodeFloatValue(this.handle)
     }
 
     public method booleanValue() returns tetra | nothing {
-        const value is JSON.nodeBooleanValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Boolean) then return nothing
+        return JSON.nodeBooleanValue(this.handle)
     }
 }
 ```
@@ -4044,18 +3892,21 @@ public struct Node {
 #### `Node.parse`
 
 ```doxa
-public function parse(text :: string) returns Node | error.StdError
+public function parse(text :: string) returns Node | zerr.ZigError
 ```
+
+Parse `text` as one JSON document. A node of an earlier document reads
+as `Kind.Invalid` once another is parsed.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function parse(text :: string) returns Node | error.StdError {
-        const root is JSON.parseDocument(text)
-        const code is JSON.takeLastErrorCode()
-        if code == 0 then return Node.new(root)
-        return mapJSONError(code)
+public function parse(text :: string) returns Node | zerr.ZigError {
+        const root is JSON.parseDocument(text) as int else {
+            return root
+        }
+        return Node.new(root)
     }
 ```
 
@@ -4094,14 +3945,16 @@ public method kind() returns Kind {
 public method count() returns int | nothing
 ```
 
+How many elements or fields, or `nothing` for a node that is neither an
+array nor an object.
+
 <details>
 <summary>Source</summary>
 
 ```doxa
 public method count() returns int | nothing {
-        const value is JSON.nodeCount(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Array) and not this.holds(Kind.Object) then return nothing
+        return JSON.nodeCount(this.handle)
     }
 ```
 
@@ -4119,7 +3972,7 @@ public method element(index :: int) returns Node | nothing
 ```doxa
 public method element(index :: int) returns Node | nothing {
         const child is JSON.nodeChild(this.handle, index)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 ```
@@ -4138,7 +3991,7 @@ public method field(name :: string) returns Node | nothing
 ```doxa
 public method field(name :: string) returns Node | nothing {
         const child is JSON.nodeField(this.handle, name)
-        if JSON.takeLastErrorCode() != 0 then return nothing
+        if child == 0 then return nothing
         return Node.new(child)
     }
 ```
@@ -4151,14 +4004,16 @@ public method field(name :: string) returns Node | nothing {
 public method key() returns string | nothing
 ```
 
+The field name this node is stored under, or `nothing` for a node that
+is not an object's field.
+
 <details>
 <summary>Source</summary>
 
 ```doxa
 public method key() returns string | nothing {
-        const value is JSON.nodeKey(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not JSON.nodeHasKey(this.handle) then return nothing
+        return JSON.nodeKey(this.handle)
     }
 ```
 
@@ -4175,9 +4030,8 @@ public method text() returns string | nothing
 
 ```doxa
 public method text() returns string | nothing {
-        const value is JSON.nodeText(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Text) then return nothing
+        return JSON.nodeText(this.handle)
     }
 ```
 
@@ -4194,9 +4048,8 @@ public method intValue() returns int | nothing
 
 ```doxa
 public method intValue() returns int | nothing {
-        const value is JSON.nodeIntValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Integer) then return nothing
+        return JSON.nodeIntValue(this.handle)
     }
 ```
 
@@ -4213,9 +4066,8 @@ public method floatValue() returns float | nothing
 
 ```doxa
 public method floatValue() returns float | nothing {
-        const value is JSON.nodeFloatValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Number) then return nothing
+        return JSON.nodeFloatValue(this.handle)
     }
 ```
 
@@ -4232,9 +4084,8 @@ public method booleanValue() returns tetra | nothing
 
 ```doxa
 public method booleanValue() returns tetra | nothing {
-        const value is JSON.nodeBooleanValue(this.handle)
-        if JSON.takeLastErrorCode() != 0 then return nothing
-        return value
+        if not this.holds(Kind.Boolean) then return nothing
+        return JSON.nodeBooleanValue(this.handle)
     }
 ```
 
@@ -4243,18 +4094,15 @@ public method booleanValue() returns tetra | nothing {
 ### `beginObject`
 
 ```doxa
-public function beginObject() returns nothing | error.StdError
+public function beginObject() returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginObject() returns nothing | error.StdError {
-    JSON.writerBeginObject()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function beginObject() returns nothing | zerr.ZigError {
+    return JSON.writerBeginObject()
 }
 ```
 
@@ -4263,18 +4111,15 @@ public function beginObject() returns nothing | error.StdError {
 ### `beginArray`
 
 ```doxa
-public function beginArray() returns nothing | error.StdError
+public function beginArray() returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginArray() returns nothing | error.StdError {
-    JSON.writerBeginArray()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function beginArray() returns nothing | zerr.ZigError {
+    return JSON.writerBeginArray()
 }
 ```
 
@@ -4283,18 +4128,15 @@ public function beginArray() returns nothing | error.StdError {
 ### `end`
 
 ```doxa
-public function end() returns nothing | error.StdError
+public function end() returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function end() returns nothing | error.StdError {
-    JSON.writerEnd()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function end() returns nothing | zerr.ZigError {
+    return JSON.writerEnd()
 }
 ```
 
@@ -4303,18 +4145,15 @@ public function end() returns nothing | error.StdError {
 ### `writeKey`
 
 ```doxa
-public function writeKey(name :: string) returns nothing | error.StdError
+public function writeKey(name :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeKey(name :: string) returns nothing | error.StdError {
-    JSON.writerKey(name)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeKey(name :: string) returns nothing | zerr.ZigError {
+    return JSON.writerKey(name)
 }
 ```
 
@@ -4323,18 +4162,15 @@ public function writeKey(name :: string) returns nothing | error.StdError {
 ### `writeText`
 
 ```doxa
-public function writeText(text :: string) returns nothing | error.StdError
+public function writeText(text :: string) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeText(text :: string) returns nothing | error.StdError {
-    JSON.writerText(text)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeText(text :: string) returns nothing | zerr.ZigError {
+    return JSON.writerText(text)
 }
 ```
 
@@ -4343,18 +4179,15 @@ public function writeText(text :: string) returns nothing | error.StdError {
 ### `writeInt`
 
 ```doxa
-public function writeInt(value :: int) returns nothing | error.StdError
+public function writeInt(value :: int) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeInt(value :: int) returns nothing | error.StdError {
-    JSON.writerInt(value)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeInt(value :: int) returns nothing | zerr.ZigError {
+    return JSON.writerInt(value)
 }
 ```
 
@@ -4363,18 +4196,15 @@ public function writeInt(value :: int) returns nothing | error.StdError {
 ### `writeFloat`
 
 ```doxa
-public function writeFloat(value :: float) returns nothing | error.StdError
+public function writeFloat(value :: float) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeFloat(value :: float) returns nothing | error.StdError {
-    JSON.writerFloat(value)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeFloat(value :: float) returns nothing | zerr.ZigError {
+    return JSON.writerFloat(value)
 }
 ```
 
@@ -4383,22 +4213,16 @@ public function writeFloat(value :: float) returns nothing | error.StdError {
 ### `writeBoolean`
 
 ```doxa
-public function writeBoolean(value :: tetra) returns nothing | error.StdError
+public function writeBoolean(value :: tetra) returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeBoolean(value :: tetra) returns nothing | error.StdError {
-    if value == both or value == neither then {
-        JSON.writerReject(1)
-        return error.Common.InvalidArgument
-    }
-    JSON.writerBoolean(value == true)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeBoolean(value :: tetra) returns nothing | zerr.ZigError {
+    if value == both or value == neither then return JSON.writerRefuse()
+    return JSON.writerBoolean(value == true)
 }
 ```
 
@@ -4407,18 +4231,15 @@ public function writeBoolean(value :: tetra) returns nothing | error.StdError {
 ### `writeNull`
 
 ```doxa
-public function writeNull() returns nothing | error.StdError
+public function writeNull() returns nothing | zerr.ZigError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeNull() returns nothing | error.StdError {
-    JSON.writerNull()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return
-    return mapJSONError(code)
+public function writeNull() returns nothing | zerr.ZigError {
+    return JSON.writerNull()
 }
 ```
 
@@ -4427,18 +4248,18 @@ public function writeNull() returns nothing | error.StdError {
 ### `finish`
 
 ```doxa
-public function finish() returns string | error.StdError
+public function finish() returns string | zerr.ZigError
 ```
+
+End the document: its text, or the first refusal it met. The next write
+starts a new document either way.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function finish() returns string | error.StdError {
-    const value is JSON.writerFinish()
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return value
-    return mapJSONError(code)
+public function finish() returns string | zerr.ZigError {
+    return JSON.writerFinish()
 }
 ```
 
@@ -4581,11 +4402,34 @@ public function minByte() returns byte {
 
 ## `std.zerr`
 
+### `StdError`
+
+```doxa
+public group StdError
+```
+
+Every failure a std function reports: an error Zig raised, named as Zig
+names it, or one of Doxa's own runtime errors.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public group StdError {
+    ZigError,
+    error.Method
+}
+```
+
+</details>
+
 ### `ZigError`
 
 ```doxa
 public enum ZigError
 ```
+
+Every error name the bundled Zig standard library defines.
 
 <details>
 <summary>Source</summary>

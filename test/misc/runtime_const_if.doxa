@@ -12,7 +12,7 @@ if n > 1 then {
     @print("yes\n")
 }
 
-const argc is process.argc() as int else 0
+const argc is process.argc()
 if argc > 1 then {
     @print("checking for args\n")
 }

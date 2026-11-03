@@ -1,0 +1,15 @@
+# An inline block imports a `.zig` file beside it, which imports another: the
+# block calls into plain Zig and passes its errors through as a Doxa enum.
+enum Fail { Negative }
+
+zig Calc {
+    const engine = @import("zig_import/engine.zig");
+
+    pub fn twice(x: i64) DoxaError_Fail!i64 {
+        return engine.twice(x);
+    }
+}
+
+entry function main() {
+    @print("{Calc.twice(21)} {Calc.twice(-1)}\n")
+}

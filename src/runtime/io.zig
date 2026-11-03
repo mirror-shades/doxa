@@ -32,10 +32,7 @@ pub export fn doxa_peek_end() callconv(.c) void {
 
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
-        const handle = win32.GetStdHandle(win32.STD_OUTPUT_HANDLE);
-        if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
-        var written: u32 = 0;
-        _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        fault.writeStdHandle(win32.STD_OUTPUT_HANDLE, slice);
         return;
     }
     if (builtin.os.tag == .wasi) {

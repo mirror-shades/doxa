@@ -1,4 +1,10 @@
-module error from "../error.doxa"
+module zerr from "../zerr/zerr.doxa"
+
+# One line of input, or the end of input.
+struct Line {
+    public ended :: tetra,
+    public text :: string,
+}
 
 zig IO {
     const std = @import("std");
@@ -12,269 +18,134 @@ zig IO {
         };
     }
 
-    pub fn printlnStdout(text: []const u8) void {
-        const alloc = std.heap.page_allocator;
-        const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
-            clearLastError();
-            setLastError(2);
-            return;
-        };
-        defer alloc.free(buf);
-        print(buf);
-    }
-
-    pub fn eprintlnStderr(text: []const u8) void {
-        const alloc = std.heap.page_allocator;
-        const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
-            clearLastError();
-            setLastError(2);
-            return;
-        };
-        defer alloc.free(buf);
-        eprint(buf);
-    }
-
-    pub fn errorState(mode: i64, value: i64) i64 {
-        const State = struct {
-            var last_error_code: i64 = 0;
-        };
-        if (mode == 0) {
-            State.last_error_code = value;
-            return 0;
-        }
-        if (mode == 1) {
-            return State.last_error_code;
-        }
-        if (mode == 2) {
-            const code = State.last_error_code;
-            State.last_error_code = 0;
-            return code;
-        }
-        return 0;
-    }
-
-    pub fn clearLastError() void {
-        _ = errorState(0, 0);
-    }
-
-    pub fn setLastError(code: i64) void {
-        _ = errorState(0, code);
-    }
-
-    pub fn takeLastErrorCode() i64 {
-        return errorState(2, 0);
+    fn io() std.Io {
+        return std.Io.Threaded.global_single_threaded.io();
     }
 
     /// Write to a raw WASI file descriptor. `std.Io.Threaded`'s syscall path is
     /// not usable under wasi preview1, so IO uses the platform's direct write.
-    fn writeWasiFd(fd: i32, text: []const u8) void {
-        if (text.len == 0) return;
-        var iov = [1]std.os.wasi.ciovec_t{.{ .base = text.ptr, .len = text.len }};
-        var written: usize = 0;
-        _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
+    fn writeWasiFd(fd: i32, text: []const u8) @"DoxaError_zerr.ZigError"!void {
+        var rest = text;
+        while (rest.len > 0) {
+            var iov = [1]std.os.wasi.ciovec_t{.{ .base = rest.ptr, .len = rest.len }};
+            var written: usize = 0;
+            if (std.os.wasi.fd_write(fd, &iov, 1, &written) != .SUCCESS) return error.WriteFailed;
+            rest = rest[written..];
+        }
     }
 
-    pub fn print(text: []const u8) void {
-        clearLastError();
+    fn write(file: std.Io.File, fd: i32, text: []const u8, newline: bool) @"DoxaError_zerr.ZigError"!void {
         if (builtin.os.tag == .wasi) {
-            writeWasiFd(1, text);
+            try writeWasiFd(fd, text);
+            if (newline) try writeWasiFd(fd, nativeNewline());
             return;
         }
-        var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.Io.File.stdout().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
-        const stdout = &stdout_writer.interface;
-
-        stdout.print("{s}", .{text}) catch {
-            setLastError(107);
-            return;
-        };
-
-        stdout.flush() catch {
-            setLastError(107);
-            return;
-        };
+        var buffer: [1024]u8 = undefined;
+        var file_writer = file.writerStreaming(io(), &buffer);
+        const writer = &file_writer.interface;
+        try writer.writeAll(text);
+        if (newline) try writer.writeAll(nativeNewline());
+        try writer.flush();
     }
 
-    pub fn eprint(text: []const u8) void {
-        clearLastError();
-        if (builtin.os.tag == .wasi) {
-            writeWasiFd(2, text);
-            return;
-        }
-        var stderr_buffer: [1024]u8 = undefined;
-        var stderr_writer = std.Io.File.stderr().writerStreaming(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
-        const stderr = &stderr_writer.interface;
-
-        stderr.print("{s}", .{text}) catch {
-            setLastError(107);
-            return;
-        };
-
-        stderr.flush() catch {
-            setLastError(107);
-            return;
-        };
+    pub fn print(text: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return write(std.Io.File.stdout(), 1, text, false);
     }
 
-    pub fn input() []const u8 {
-        clearLastError();
-        // TODO(wasi): read through `std.os.wasi.fd_read`; `std.Io.Threaded`'s
-        // reader path is unusable under wasi preview1, so line input degrades to
-        // the empty string on that target.
-        //
-        // The reader and its buffer must outlive a single call: a fresh reader
-        // per call starts with an empty buffer, so at end-of-stream it would
-        // read nothing and hand back stale stack contents instead of signalling
-        // `ReadFailed`/EOF.
+    pub fn println(text: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return write(std.Io.File.stdout(), 1, text, true);
+    }
+
+    pub fn eprint(text: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return write(std.Io.File.stderr(), 2, text, false);
+    }
+
+    pub fn eprintln(text: []const u8) @"DoxaError_zerr.ZigError"!void {
+        return write(std.Io.File.stderr(), 2, text, true);
+    }
+
+    // Every read of standard input goes through one reader, so a byte read
+    // after a line sees what the line read buffered past it. The reader and
+    // its buffer outlive each call for the same reason.
+    fn stdin() *std.Io.Reader {
         const State = struct {
             var buffer: [4096]u8 = undefined;
             var reader: ?std.Io.File.Reader = null;
         };
         if (State.reader == null) {
-            State.reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &State.buffer);
+            State.reader = std.Io.File.stdin().reader(io(), &State.buffer);
         }
-        const stdin = &State.reader.?.interface;
+        return &State.reader.?.interface;
+    }
 
-        const maybe_line = stdin.takeDelimiter('\n') catch {
-            setLastError(106);
-            return "";
-        };
-        var line = maybe_line orelse {
-            setLastError(106);
-            return "";
-        };
-
+    pub fn input() @"DoxaError_zerr.ZigError"!DoxaStruct_Line {
+        // TODO(wasi): read through `std.os.wasi.fd_read`; `std.Io.Threaded`'s
+        // reader path is unusable under wasi preview1, so line input reads as
+        // the end of input on that target.
+        if (builtin.os.tag == .wasi) return .{ .ended = true, .text = "" };
+        // The returned line is a view into the reader's buffer; the wrapper
+        // copies it before the next read can move it.
+        var line = try stdin().takeDelimiter('\n') orelse return .{ .ended = true, .text = "" };
         if (line.len > 0 and line[line.len - 1] == '\r') {
             line = line[0 .. line.len - 1];
         }
-
-        const Cache = struct {
-            var cache: ?[]u8 = null;
-        };
-
-        if (Cache.cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-
-        const duped = std.heap.page_allocator.dupe(u8, line) catch {
-            setLastError(106);
-            return "";
-        };
-
-        Cache.cache = duped;
-        return duped;
+        return .{ .ended = false, .text = line };
     }
 
-    /// Read a single byte from stdin without line buffering. Returns `-1` and
-    /// sets the read-failed error at end of input, so callers can map EOF to a
-    /// value of their choosing.
-    pub fn inputByte() i64 {
-        clearLastError();
+    /// One byte from stdin without line buffering, or -1 at the end of input.
+    pub fn inputByte() @"DoxaError_zerr.ZigError"!i64 {
         var byte: [1]u8 = undefined;
         if (builtin.os.tag == .wasi) {
             var iov = [1]std.os.wasi.iovec_t{.{ .base = &byte, .len = 1 }};
             var nread: usize = 0;
-            if (std.os.wasi.fd_read(0, &iov, 1, &nread) != .SUCCESS or nread == 0) {
-                setLastError(106);
-                return -1;
-            }
-            return @intCast(byte[0]);
+            if (std.os.wasi.fd_read(0, &iov, 1, &nread) != .SUCCESS) return error.ReadFailed;
+            return if (nread == 0) -1 else byte[0];
         }
-        var iov = [1][]u8{&byte};
-        const n = std.Io.File.stdin().readStreaming(std.Io.Threaded.global_single_threaded.io(), &iov) catch {
-            setLastError(106);
-            return -1;
+        return stdin().takeByte() catch |err| switch (err) {
+            error.EndOfStream => -1,
+            else => |e| e,
         };
-        if (n == 0) {
-            setLastError(106);
-            return -1;
-        }
-        return @intCast(byte[0]);
-    }
-
-    pub fn inputPrompt(prompt: []const u8) []const u8 {
-        print(prompt);
-        if (errorState(1, 0) != 0) {
-            return "";
-        }
-        return input();
     }
 }
 
-function mapIOError(code :: int) returns error.StdError {
-    return match code {
-        1 then error.Common.InvalidArgument,
-        2 then error.Common.OutOfMemory,
-        3 then error.Common.PermissionDenied,
-        4 then error.Common.NotSupported,
-        5 then error.Common.Unexpected,
-        100 then error.IO.NotFound,
-        101 then error.IO.AlreadyExists,
-        102 then error.IO.NotDirectory,
-        103 then error.IO.IsDirectory,
-        104 then error.IO.InvalidPath,
-        105 then error.IO.OpenFailed,
-        106 then error.IO.ReadFailed,
-        107 then error.IO.WriteFailed,
-        108 then error.IO.CreateFailed,
-        109 then error.IO.DeleteFailed,
-        110 then error.IO.RenameFailed,
-        111 then error.IO.CopyFailed,
-        112 then error.IO.IterateFailed,
-        113 then error.IO.InvalidData,
-        114 then error.IO.ConnectionFailed,
-        115 then error.IO.Timeout,
-        116 then error.IO.HttpStatus,
-        117 then error.IO.Unexpected,
-        else error.Common.Unexpected,
+public function print(text :: string) returns nothing | zerr.ZigError {
+    return IO.print(text)
+}
+
+public function println(text :: string) returns nothing | zerr.ZigError {
+    return IO.println(text)
+}
+
+public function eprint(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprint(text)
+}
+
+public function eprintln(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprintln(text)
+}
+
+# The next line of standard input, without its line ending, or `nothing` at
+# the end of input.
+public function input() returns string | nothing | zerr.ZigError {
+    const line is IO.input() as Line else {
+        return line
     }
+    if line.ended then return nothing
+    return line.text
 }
 
-public function print(text :: string) returns nothing | error.StdError {
-    IO.print(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
+# The next byte of standard input, or `nothing` at the end of input.
+public function inputByte() returns byte | nothing | zerr.ZigError {
+    const value is IO.inputByte() as int else {
+        return value
+    }
+    if value < 0 then return nothing
+    return @byte(value)
 }
 
-public function println(text :: string) returns nothing | error.StdError {
-    IO.printlnStdout(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
-}
-
-public function eprint(text :: string) returns nothing | error.StdError {
-    IO.eprint(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
-}
-
-public function eprintln(text :: string) returns nothing | error.StdError {
-    IO.eprintlnStderr(text);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return
-    return mapIOError(err)
-}
-
-public function input() returns string | error.StdError {
-    const value is IO.input();
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return value
-    return mapIOError(err)
-}
-
-public function inputByte() returns byte | error.StdError {
-    const value is IO.inputByte()
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return @byte(value)
-    return mapIOError(err)
-}
-
-public function inputPrompt(prompt :: string) returns string | error.StdError {
-    const value is IO.inputPrompt(prompt);
-    const err is IO.takeLastErrorCode()
-    if err == 0 then return value
-    return mapIOError(err)
+# `print(prompt)`, then `input()`.
+public function inputPrompt(prompt :: string) returns string | nothing | zerr.ZigError {
+    const printed is print(prompt)
+    printed as zerr.ZigError then return printed else {}
+    return input()
 }

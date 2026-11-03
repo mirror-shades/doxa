@@ -341,12 +341,37 @@ pub const ModuleLoader = struct {
             // of this name; reaching here is a compiler bug.
             error.DuplicateStableKey, error.ModuleRootUnknown => unreachable,
         };
-        block.zig = .{ .name = name.lexeme, .source = source, .sigs = sigs, .location = stmt.base.location(), .origin = origin };
+        block.zig = .{
+            .name = name.lexeme,
+            .source = source,
+            .sigs = sigs,
+            .location = stmt.base.location(),
+            .origin = origin,
+            .imports = try self.zigImports(owner, source, stmt.base.location()),
+        };
         try self.collectZigFunctions(block, sigs, ast.SourceSpan.fromToken(name));
         // An inline block is parsed as part of its owner and has no imports, so
         // it is born with its declarations collected.
         block.status = .DeclarationsCollected;
         try self.graph.bindName(owner, name.lexeme, .{ .namespace = block.id }, .Private, ast.SourceSpan.fromToken(name));
+    }
+
+    /// The `.zig` files an inline block imports, resolved beside the file that
+    /// declares it. A file that is not there is reported at the block.
+    fn zigImports(self: *ModuleLoader, owner: *ModuleRecord, source: []const u8, at: Location) ErrorList![]const graph_mod.ZigImport {
+        const spellings = try inline_zig.fileImports(self.allocator, source);
+        if (spellings.len == 0) return &.{};
+        const dir = std.fs.path.dirname(owner.physical_key.?) orelse ".";
+        const imports = try self.allocator.alloc(graph_mod.ZigImport, spellings.len);
+        for (spellings, imports) |spelling, *import| {
+            const path = try std.fs.path.resolve(self.allocator, &.{ dir, spelling });
+            if (!self.exists(path)) {
+                self.reporter.reportCompileError(at, ErrorCode.MODULE_NOT_FOUND, "Inline zig block imports '{s}', which is not a file beside '{s}'", .{ spelling, std.fs.path.basename(owner.physical_key.?) });
+                return error.ModuleLoadError;
+            }
+            import.* = .{ .spelling = spelling, .path = path };
+        }
+        return imports;
     }
 
     fn collectZigFunctions(self: *ModuleLoader, record: *ModuleRecord, sigs: []ast.ZigFnSig, span: ?ast.SourceSpan) ErrorList!void {

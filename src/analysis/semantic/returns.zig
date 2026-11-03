@@ -273,8 +273,9 @@ pub fn unionHasNothing(t: *const ast.TypeInfo) bool {
 
 /// Whether `expected` accepts `actual` as the same named type: an enum
 /// value matches a named enum, and either matches a group that contains it.
-/// This is what widens `nothing | error.IO` (an inline-Zig fallible return)
-/// into `nothing | error.StdError`, where the group's members are the enums.
+/// This is what widens `nothing | zerr.ZigError` (an inline-Zig fallible
+/// return) into `nothing | zerr.StdError`, where the group's members are the
+/// enums.
 pub fn namedMemberAccepts(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *const ast.TypeInfo) bool {
     const expected_ref = switch (expected.custom_type orelse return false) {
         .ref => |r| r,

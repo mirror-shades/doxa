@@ -1,0 +1,13 @@
+# An inline block importing a `.zig` file that is not there is reported at the
+# block.
+zig Calc {
+    const engine = @import("zig_import/missing.zig");
+
+    pub fn twice(x: i64) i64 {
+        return engine.twice(x);
+    }
+}
+
+entry function main() {
+    @print("{Calc.twice(21)}\n")
+}
