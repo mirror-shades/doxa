@@ -1,0 +1,6977 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../stdlib/">
+      
+      
+        <link rel="next" href="../struct/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Standard Library API - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#standard-library-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Standard Library API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#stdio" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.io
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.io">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#print" class="md-nav__link">
+    <span class="md-ellipsis">
+      print
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#println" class="md-nav__link">
+    <span class="md-ellipsis">
+      println
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      eprint
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eprintln" class="md-nav__link">
+    <span class="md-ellipsis">
+      eprintln
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input" class="md-nav__link">
+    <span class="md-ellipsis">
+      input
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inputbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      inputByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inputprompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      inputPrompt
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdprocess" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.process
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#termkind" class="md-nav__link">
+    <span class="md-ellipsis">
+      TermKind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#term" class="md-nav__link">
+    <span class="md-ellipsis">
+      Term
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Term">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#termsucceeded" class="md-nav__link">
+    <span class="md-ellipsis">
+      Term.succeeded
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exec" class="md-nav__link">
+    <span class="md-ellipsis">
+      exec
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      execArgs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execargsenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      execArgsEnv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execok" class="md-nav__link">
+    <span class="md-ellipsis">
+      execOk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execcapture" class="md-nav__link">
+    <span class="md-ellipsis">
+      execCapture
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execcaptureargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      execCaptureArgs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execcaptureenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      execCaptureEnv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#args" class="md-nav__link">
+    <span class="md-ellipsis">
+      args
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argc" class="md-nav__link">
+    <span class="md-ellipsis">
+      argc
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argv" class="md-nav__link">
+    <span class="md-ellipsis">
+      argv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit" class="md-nav__link">
+    <span class="md-ellipsis">
+      exit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cwd" class="md-nav__link">
+    <span class="md-ellipsis">
+      cwd
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      getenv
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.file
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.file">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#makedir" class="md-nav__link">
+    <span class="md-ellipsis">
+      makeDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#makepath" class="md-nav__link">
+    <span class="md-ellipsis">
+      makePath
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#copyfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      copyFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      delete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#copydir" class="md-nav__link">
+    <span class="md-ellipsis">
+      copyDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unzipfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      unzipFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#isdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      isDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#renamedir" class="md-nav__link">
+    <span class="md-ellipsis">
+      renameDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rename" class="md-nav__link">
+    <span class="md-ellipsis">
+      rename
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read" class="md-nav__link">
+    <span class="md-ellipsis">
+      read
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#write" class="md-nav__link">
+    <span class="md-ellipsis">
+      write
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#append" class="md-nav__link">
+    <span class="md-ellipsis">
+      append
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ispresent" class="md-nav__link">
+    <span class="md-ellipsis">
+      isPresent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#isfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      isFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#list" class="md-nav__link">
+    <span class="md-ellipsis">
+      list
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touch" class="md-nav__link">
+    <span class="md-ellipsis">
+      touch
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdhttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.http
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.http">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#downloadurl" class="md-nav__link">
+    <span class="md-ellipsis">
+      downloadUrl
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#download" class="md-nav__link">
+    <span class="md-ellipsis">
+      download
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#responsesend" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.send
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responsestatuscode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.statusCode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responsebody" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.body
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responseheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responsehasheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.hasHeader
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listen" class="md-nav__link">
+    <span class="md-ellipsis">
+      listen
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#localaddr" class="md-nav__link">
+    <span class="md-ellipsis">
+      localAddr
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accept" class="md-nav__link">
+    <span class="md-ellipsis">
+      accept
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ServerRequest">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serverrequesttake" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.take
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestpath" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestbody" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.body
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequesthasheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.hasHeader
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#readrequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      readRequest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iswebsocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      isWebSocket
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keepalive" class="md-nav__link">
+    <span class="md-ellipsis">
+      keepAlive
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsop" class="md-nav__link">
+    <span class="md-ellipsis">
+      WsOp
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message" class="md-nav__link">
+    <span class="md-ellipsis">
+      Message
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgradewebsocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      upgradeWebSocket
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wssend" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsSend
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsnext" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsNext
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsmessage" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsMessage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wspending" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsPending
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsbuffered" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsBuffered
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eventkind" class="md-nav__link">
+    <span class="md-ellipsis">
+      EventKind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#event" class="md-nav__link">
+    <span class="md-ellipsis">
+      Event
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      poll
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#closereason" class="md-nav__link">
+    <span class="md-ellipsis">
+      CloseReason
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#closereason_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      closeReason
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      Limit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setlimit" class="md-nav__link">
+    <span class="md-ellipsis">
+      setLimit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route" class="md-nav__link">
+    <span class="md-ellipsis">
+      Route
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Route">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#routematching" class="md-nav__link">
+    <span class="md-ellipsis">
+      Route.matching
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routeparam" class="md-nav__link">
+    <span class="md-ellipsis">
+      Route.param
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#router" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Router">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#routernew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routeradd" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router.add
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routerfind" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router.find
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#respond" class="md-nav__link">
+    <span class="md-ellipsis">
+      respond
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#close" class="md-nav__link">
+    <span class="md-ellipsis">
+      close
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request" class="md-nav__link">
+    <span class="md-ellipsis">
+      Request
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requestnew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Request.new
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get" class="md-nav__link">
+    <span class="md-ellipsis">
+      get
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getwithtimeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      getWithTimeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post" class="md-nav__link">
+    <span class="md-ellipsis">
+      post
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#put" class="md-nav__link">
+    <span class="md-ellipsis">
+      put
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      delete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#head" class="md-nav__link">
+    <span class="md-ellipsis">
+      head
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gettext" class="md-nav__link">
+    <span class="md-ellipsis">
+      getText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsaccept" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsAccept
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsread" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsRead
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wswrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsWrite
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wstext" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsbinary" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsBinary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsping" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsPing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wspong" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsPong
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsclose" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsClose
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdhost" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.host
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#os" class="md-nav__link">
+    <span class="md-ellipsis">
+      os
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arch" class="md-nav__link">
+    <span class="md-ellipsis">
+      arch
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#abi" class="md-nav__link">
+    <span class="md-ellipsis">
+      abi
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cpu" class="md-nav__link">
+    <span class="md-ellipsis">
+      cpu
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iswindows" class="md-nav__link">
+    <span class="md-ellipsis">
+      isWindows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#islinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      isLinux
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ismac" class="md-nav__link">
+    <span class="md-ellipsis">
+      isMac
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pathfor" class="md-nav__link">
+    <span class="md-ellipsis">
+      pathFor
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path" class="md-nav__link">
+    <span class="md-ellipsis">
+      path
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.time
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unix" class="md-nav__link">
+    <span class="md-ellipsis">
+      unix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tick" class="md-nav__link">
+    <span class="md-ellipsis">
+      tick
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monotonic" class="md-nav__link">
+    <span class="md-ellipsis">
+      monotonic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unixms" class="md-nav__link">
+    <span class="md-ellipsis">
+      unixMs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sleep" class="md-nav__link">
+    <span class="md-ellipsis">
+      sleep
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sleepseconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      sleepSeconds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdrandom" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.random
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.random">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#random" class="md-nav__link">
+    <span class="md-ellipsis">
+      random
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdbuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.build
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.build">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optimization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optmodename" class="md-nav__link">
+    <span class="md-ellipsis">
+      optModeName
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#target" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#targethost" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.host
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetcross" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.cross
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetiswindows" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isWindows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetislinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isLinux
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetismac" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isMac
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Executable">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#executablenew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executableinclude" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.include
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executablelibdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.libdir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executablelink" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.link
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executableframework" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.framework
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#contextnew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contexthost" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.host
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contextaddartifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.addArtifact
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      run
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute" class="md-nav__link">
+    <span class="md-ellipsis">
+      execute
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      compile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compilehost" class="md-nav__link">
+    <span class="md-ellipsis">
+      compileHost
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stderror" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.error
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.error">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdmethods" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.methods
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#push" class="md-nav__link">
+    <span class="md-ellipsis">
+      push
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      popString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popint" class="md-nav__link">
+    <span class="md-ellipsis">
+      popInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      popFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      popByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#poptetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      popTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      popStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insert" class="md-nav__link">
+    <span class="md-ellipsis">
+      insert
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removestring" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removeint" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removebyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removetetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removestringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clear" class="md-nav__link">
+    <span class="md-ellipsis">
+      clear
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#find" class="md-nav__link">
+    <span class="md-ellipsis">
+      find
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicestring" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sliceint" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicebyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicetetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicestringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toint" class="md-nav__link">
+    <span class="md-ellipsis">
+      toInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tofloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      toFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tobyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      toByte
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.json
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.json">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      Kind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodeparse" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.parse
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodekind" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.kind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodecount" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.count
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodeelement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.element
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodefield" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.field
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodekey" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.key
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodetext" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.text
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodeintvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.intValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodefloatvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.floatValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodebooleanvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.booleanValue
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#beginobject" class="md-nav__link">
+    <span class="md-ellipsis">
+      beginObject
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#beginarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      beginArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end" class="md-nav__link">
+    <span class="md-ellipsis">
+      end
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writekey" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeKey
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writetext" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writeint" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writeboolean" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeBoolean
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writenull" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeNull
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#finish" class="md-nav__link">
+    <span class="md-ellipsis">
+      finish
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdmath" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.math
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.math">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#maxint" class="md-nav__link">
+    <span class="md-ellipsis">
+      maxInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minint" class="md-nav__link">
+    <span class="md-ellipsis">
+      minInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maxfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      maxFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      minFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minnormalfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      minNormalFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#maxbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      maxByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      minByte
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdzerr" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.zerr
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.zerr">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stderror_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      StdError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#zigerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      ZigError
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="standard-library-api">Standard Library API</h1>
+<blockquote>
+<p><strong>Generated file.</strong> Built from the Doxa standard library sources by
+<code>scripts/gen_stdlib_docs.zig</code>. Do not edit by hand; run <code>zig build docs</code>
+to regenerate it after changing anything under <code>std/</code>.</p>
+</blockquote>
+<p>Each section is one standard-library module. Every entry shows its declared
+signature, the description comment that precedes it in the source (when one
+exists), and a collapsible copy of the full source declaration.</p>
+<h2 id="stdio"><code>std.io</code></h2>
+<h3 id="print"><code>print</code></h3>
+<div class="highlight"><pre><span></span><code>public function print(text :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function print(text :: string) returns nothing | zerr.ZigError {
+    return IO.print(text)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="println"><code>println</code></h3>
+<div class="highlight"><pre><span></span><code>public function println(text :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function println(text :: string) returns nothing | zerr.ZigError {
+    return IO.println(text)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eprint"><code>eprint</code></h3>
+<div class="highlight"><pre><span></span><code>public function eprint(text :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function eprint(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprint(text)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eprintln"><code>eprintln</code></h3>
+<div class="highlight"><pre><span></span><code>public function eprintln(text :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function eprintln(text :: string) returns nothing | zerr.ZigError {
+    return IO.eprintln(text)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="input"><code>input</code></h3>
+<div class="highlight"><pre><span></span><code>public function input() returns string | nothing | zerr.ZigError
+</code></pre></div>
+<p>The next line of standard input, without its line ending, or <code>nothing</code> at
+the end of input.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function input() returns string | nothing | zerr.ZigError {
+    const line is IO.input() as Line else {
+        return line
+    }
+    if line.ended then return nothing
+    return line.text
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="inputbyte"><code>inputByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function inputByte() returns byte | nothing | zerr.ZigError
+</code></pre></div>
+<p>The next byte of standard input, or <code>nothing</code> at the end of input.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function inputByte() returns byte | nothing | zerr.ZigError {
+    const value is IO.inputByte() as int else {
+        return value
+    }
+    if value &lt; 0 then return nothing
+    return @byte(value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="inputprompt"><code>inputPrompt</code></h3>
+<div class="highlight"><pre><span></span><code>public function inputPrompt(prompt :: string) returns string | nothing | zerr.ZigError
+</code></pre></div>
+<p><code>print(prompt)</code>, then <code>input()</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function inputPrompt(prompt :: string) returns string | nothing | zerr.ZigError {
+    const printed is print(prompt)
+    printed as zerr.ZigError then return printed else {}
+    return input()
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdprocess"><code>std.process</code></h2>
+<h3 id="termkind"><code>TermKind</code></h3>
+<div class="highlight"><pre><span></span><code>public enum TermKind
+</code></pre></div>
+<p>How a child process ended, as Zig's <code>std.process.Child.Term</code> reports it.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum TermKind {
+    Exited,
+    Signal,
+    Stopped,
+    Unknown,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="term"><code>Term</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Term
+</code></pre></div>
+<p>How a child process ended. <code>code</code> is the exit status for <code>Exited</code>, the signal
+number for <code>Signal</code> and <code>Stopped</code>, and the raw status for <code>Unknown</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Term {
+    public kind :: TermKind,
+    public code :: int,
+
+    # Whether the child exited with status 0.
+    public method succeeded() returns tetra {
+        return this.kind == TermKind.Exited and this.code == 0
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="termsucceeded"><code>Term.succeeded</code></h4>
+<div class="highlight"><pre><span></span><code>public method succeeded() returns tetra
+</code></pre></div>
+<p>Whether the child exited with status 0.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method succeeded() returns tetra {
+        return this.kind == TermKind.Exited and this.code == 0
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="run"><code>Run</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Run
+</code></pre></div>
+<p>A captured run: how the child ended and everything it wrote. A non-zero exit
+is part of the result, not an error.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Run {
+    public term :: Term,
+    public stdout :: string,
+    public stderr :: string,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="exec"><code>exec</code></h3>
+<div class="highlight"><pre><span></span><code>public function exec(command :: string) returns Term | zerr.ZigError
+</code></pre></div>
+<p>Run <code>command</code> through the system shell (<code>sh -c</code>, or <code>cmd /c</code> on Windows).
+The child shares this process's stdout and stderr.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function exec(command :: string) returns Term | zerr.ZigError {
+    return Process.exec(command)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execargs"><code>execArgs</code></h3>
+<div class="highlight"><pre><span></span><code>public function execArgs(program :: string, arguments :: string[]) returns Term | zerr.ZigError
+</code></pre></div>
+<p>Run <code>program</code> with <code>arguments</code>, no shell. The child shares this process's
+stdout and stderr.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execArgs(program :: string, arguments :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, [], [])
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execargsenv"><code>execArgsEnv</code></h3>
+<div class="highlight"><pre><span></span><code>public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Term | zerr.ZigError
+</code></pre></div>
+<p><code>execArgs</code> with <code>env_keys[i]</code> set to <code>env_values[i]</code> in the child's
+environment, over this process's own.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Term | zerr.ZigError {
+    return Process.execArgs(program, arguments, env_keys, env_values)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execok"><code>execOk</code></h3>
+<div class="highlight"><pre><span></span><code>public function execOk(command :: string) returns tetra
+</code></pre></div>
+<p>Whether <code>command</code> ran and exited with status 0.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execOk(command :: string) returns tetra {
+    const term is exec(command) as Term else {
+        return false
+    }
+    return term.succeeded()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execcapture"><code>execCapture</code></h3>
+<div class="highlight"><pre><span></span><code>public function execCapture(command :: string) returns Run | zerr.ZigError
+</code></pre></div>
+<p>Run <code>command</code> through the system shell and capture what it writes.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execCapture(command :: string) returns Run | zerr.ZigError {
+    return Process.capture(command)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execcaptureargs"><code>execCaptureArgs</code></h3>
+<div class="highlight"><pre><span></span><code>public function execCaptureArgs(program :: string, arguments :: string[]) returns Run | zerr.ZigError
+</code></pre></div>
+<p>Run <code>program</code> with <code>arguments</code>, no shell, and capture what it writes.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execCaptureArgs(program :: string, arguments :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, [], [])
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execcaptureenv"><code>execCaptureEnv</code></h3>
+<div class="highlight"><pre><span></span><code>public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Run | zerr.ZigError
+</code></pre></div>
+<p><code>execCaptureArgs</code> with <code>env_keys[i]</code> set to <code>env_values[i]</code> in the child's
+environment, over this process's own.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns Run | zerr.ZigError {
+    return Process.captureArgs(program, arguments, env_keys, env_values)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="args"><code>args</code></h3>
+<div class="highlight"><pre><span></span><code>public function args() returns string[]
+</code></pre></div>
+<p>The program's command-line arguments, the program's own path first.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function args() returns string[] {
+    var result :: string[]
+    const count is argc()
+    for i while i &lt; count do i += 1 {
+        @push(result, Process.argAt(i))
+    }
+    return result
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="argc"><code>argc</code></h3>
+<div class="highlight"><pre><span></span><code>public function argc() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function argc() returns int {
+    return Process.argCount()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="argv"><code>argv</code></h3>
+<div class="highlight"><pre><span></span><code>public function argv(index :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function argv(index :: int) returns string | error.Method {
+    if index &lt; 0 or index &gt;= argc() then return error.Method.OutOfBounds
+    return Process.argAt(index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="exit"><code>exit</code></h3>
+<div class="highlight"><pre><span></span><code>public function exit(code :: int)
+</code></pre></div>
+<p>End the program with <code>code</code>; a POSIX parent sees its low byte.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function exit(code :: int) {
+    Process.exit(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="cwd"><code>cwd</code></h3>
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | zerr.ZigError {
+    return Process.cwd()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="getenv"><code>getenv</code></h3>
+<div class="highlight"><pre><span></span><code>public function getenv(name :: string) returns string | nothing
+</code></pre></div>
+<p>The variable <code>name</code> in the environment the program started with, or
+<code>nothing</code> when it is not set.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getenv(name :: string) returns string | nothing {
+    const env is Process.getEnv(name)
+    if env.found then return env.value
+    return nothing
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdfile"><code>std.file</code></h2>
+<h3 id="makedir"><code>makeDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function makeDir(path :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function makeDir(path :: string) returns nothing | zerr.ZigError {
+    return File.makeDir(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="makepath"><code>makePath</code></h3>
+<div class="highlight"><pre><span></span><code>public function makePath(path :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function makePath(path :: string) returns nothing | zerr.ZigError {
+    return File.makePath(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="copyfile"><code>copyFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function copyFile(source :: string, destination :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function copyFile(source :: string, destination :: string) returns nothing | zerr.ZigError {
+    return File.copyFile(source, destination)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="delete"><code>delete</code></h3>
+<div class="highlight"><pre><span></span><code>public function delete(path :: string, recursive :: tetra) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function delete(path :: string, recursive :: tetra) returns nothing | zerr.ZigError {
+    return File.delete(path, recursive)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="copydir"><code>copyDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function copyDir(source :: string, destination :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function copyDir(source :: string, destination :: string) returns nothing | zerr.ZigError {
+    return File.copyDir(source, destination)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="unzipfile"><code>unzipFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | zerr.ZigError {
+    return File.unzipFile(zip_path, unzip_path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="isdir"><code>isDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function isDir(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isDir(path :: string) returns tetra {
+    return File.isDir(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="renamedir"><code>renameDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function renameDir(old_folder :: string, new_folder :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function renameDir(old_folder :: string, new_folder :: string) returns nothing | zerr.ZigError {
+    return File.rename(old_folder, new_folder)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="rename"><code>rename</code></h3>
+<div class="highlight"><pre><span></span><code>public function rename(old_path :: string, new_path :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function rename(old_path :: string, new_path :: string) returns nothing | zerr.ZigError {
+    return File.rename(old_path, new_path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="read"><code>read</code></h3>
+<div class="highlight"><pre><span></span><code>public function read(path :: string) returns string | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function read(path :: string) returns string | zerr.ZigError {
+    return File.read(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="write"><code>write</code></h3>
+<div class="highlight"><pre><span></span><code>public function write(path :: string, content :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function write(path :: string, content :: string) returns nothing | zerr.ZigError {
+    return File.write(path, content)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="append"><code>append</code></h3>
+<div class="highlight"><pre><span></span><code>public function append(path :: string, content :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function append(path :: string, content :: string) returns nothing | zerr.ZigError {
+    return File.append(path, content)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="ispresent"><code>isPresent</code></h3>
+<div class="highlight"><pre><span></span><code>public function isPresent(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isPresent(path :: string) returns tetra {
+    return File.isPresent(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="isfile"><code>isFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function isFile(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isFile(path :: string) returns tetra {
+    return File.isFile(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="list"><code>list</code></h3>
+<div class="highlight"><pre><span></span><code>public function list(path :: string) returns string[] | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function list(path :: string) returns string[] | zerr.ZigError {
+    return File.list(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="touch"><code>touch</code></h3>
+<div class="highlight"><pre><span></span><code>public function touch(path :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function touch(path :: string) returns nothing | zerr.ZigError {
+    return File.touch(path)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdhttp"><code>std.http</code></h2>
+<h3 id="downloadurl"><code>downloadUrl</code></h3>
+<div class="highlight"><pre><span></span><code>public function downloadUrl(url :: string, destination :: string) returns int | zerr.ZigError
+</code></pre></div>
+<p>Stream <code>url</code>'s body into the file <code>destination</code> and return the response
+status. A non-2xx status is the server's answer, not a failure: its body is
+written like any other.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function downloadUrl(url :: string, destination :: string) returns int | zerr.ZigError {
+    return HTTP.downloadUrl(url, destination)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="download"><code>download</code></h3>
+<div class="highlight"><pre><span></span><code>public function download(url :: string) returns int | zerr.ZigError
+</code></pre></div>
+<p><code>downloadUrl</code> into the file <code>url</code> names, in the working directory.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function download(url :: string) returns int | zerr.ZigError {
+    return HTTP.download(url)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="response"><code>Response</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Response
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Response {
+    status_code :: int,
+    raw_headers :: string,
+    body_text :: string,
+
+    /* Perform one request. The error arm means no response arrived; a non-2xx
+       status is still a `Response`. */
+    public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError {
+        var header_blob is &quot;&quot;
+        for i while i &lt; @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + &quot;\u{d}\u{a}&quot;
+        }
+        return HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+    }
+
+    public method statusCode() returns int {
+        return this.status_code
+    }
+
+    public method body() returns string {
+        return this.body_text
+    }
+
+    public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+
+    public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="responsesend"><code>Response.send</code></h4>
+<div class="highlight"><pre><span></span><code>public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError
+</code></pre></div>
+<p>Perform one request. The error arm means no response arrived; a non-2xx
+status is still a <code>Response</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function send(verb :: string, url :: string, req :: Request) returns Response | zerr.ZigError {
+        var header_blob is &quot;&quot;
+        for i while i &lt; @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + &quot;\u{d}\u{a}&quot;
+        }
+        return HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responsestatuscode"><code>Response.statusCode</code></h4>
+<div class="highlight"><pre><span></span><code>public method statusCode() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method statusCode() returns int {
+        return this.status_code
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responsebody"><code>Response.body</code></h4>
+<div class="highlight"><pre><span></span><code>public method body() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method body() returns string {
+        return this.body_text
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responseheader"><code>Response.header</code></h4>
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[]
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responsehasheader"><code>Response.hasHeader</code></h4>
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="listen"><code>listen</code></h3>
+<div class="highlight"><pre><span></span><code>public function listen(port :: int) returns int | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function listen(port :: int) returns int | zerr.ZigError {
+    return HTTP.listen(port)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="localaddr"><code>localAddr</code></h3>
+<div class="highlight"><pre><span></span><code>public function localAddr(handle :: int) returns int | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function localAddr(handle :: int) returns int | zerr.ZigError {
+    return HTTP.localAddr(handle)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="accept"><code>accept</code></h3>
+<div class="highlight"><pre><span></span><code>public function accept(handle :: int) returns int | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function accept(handle :: int) returns int | zerr.ZigError {
+    return HTTP.accept(handle)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="serverrequest"><code>ServerRequest</code></h3>
+<div class="highlight"><pre><span></span><code>public struct ServerRequest
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct ServerRequest {
+    public verb :: string,
+    public target :: string,
+    public body_text :: string,
+    raw_headers :: string,
+
+    /* The request `readRequest` reported. It stays available until `respond`. */
+    public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
+
+    public method path() returns string {
+        return this.target
+    }
+
+    public method body() returns string {
+        return this.body_text
+    }
+
+    public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+
+    public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequesttake"><code>ServerRequest.take</code></h4>
+<div class="highlight"><pre><span></span><code>public function take(connection :: int) returns ServerRequest
+</code></pre></div>
+<p>The request <code>readRequest</code> reported. It stays available until <code>respond</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestpath"><code>ServerRequest.path</code></h4>
+<div class="highlight"><pre><span></span><code>public method path() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method path() returns string {
+        return this.target
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestbody"><code>ServerRequest.body</code></h4>
+<div class="highlight"><pre><span></span><code>public method body() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method body() returns string {
+        return this.body_text
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestheader"><code>ServerRequest.header</code></h4>
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[]
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequesthasheader"><code>ServerRequest.hasHeader</code></h4>
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="readrequest"><code>readRequest</code></h3>
+<div class="highlight"><pre><span></span><code>public function readRequest(connection :: int) returns int | zerr.ZigError
+</code></pre></div>
+<p>Whether a request is waiting on the connection. Returns <code>1</code> when one is
+(read it with <code>ServerRequest.take</code>), <code>0</code> when none has arrived yet (retry on the
+next <code>Readable</code> event), and a negative status once the connection has ended.
+A request only appears here complete and valid: a malformed or oversized one
+is answered by the library and the connection reports <code>Closed</code>. An unknown
+handle is <code>ZigError.InvalidHandle</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function readRequest(connection :: int) returns int | zerr.ZigError {
+    return HTTP.readRequest(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="iswebsocket"><code>isWebSocket</code></h3>
+<div class="highlight"><pre><span></span><code>public function isWebSocket(connection :: int) returns tetra
+</code></pre></div>
+<p>Whether the connection has completed the WebSocket handshake.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isWebSocket(connection :: int) returns tetra {
+    return HTTP.isWebSocket(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="keepalive"><code>keepAlive</code></h3>
+<div class="highlight"><pre><span></span><code>public function keepAlive(connection :: int) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function keepAlive(connection :: int) returns tetra {
+    return HTTP.keepAlive(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsop"><code>WsOp</code></h3>
+<div class="highlight"><pre><span></span><code>public enum WsOp
+</code></pre></div>
+<p>WebSocket frame kinds. The inline-Zig boundary only carries scalars, so the
+codes crossing it are the RFC 6455 opcodes and <code>wsOpFromCode</code>/<code>wsOpCode</code>
+translate to and from this enum.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum WsOp {
+    Text,
+    Binary,
+    Ping,
+    Pong,
+    Close,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="message"><code>Message</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Message
+</code></pre></div>
+<p>One decoded WebSocket message. Data frames carry their payload; control
+frames (ping/pong/close) are surfaced so the caller owns the policy.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Message {
+    public op :: WsOp,
+    public data :: string,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="upgradewebsocket"><code>upgradeWebSocket</code></h3>
+<div class="highlight"><pre><span></span><code>public function upgradeWebSocket(connection :: int) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
+<code>readRequest</code>. The handshake is written in the background; <code>wsSend</code> may be
+called at once and its frames follow the handshake.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function upgradeWebSocket(connection :: int) returns nothing | zerr.ZigError {
+    return HTTP.upgradeWebSocket(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wssend"><code>wsSend</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Queue one WebSocket frame with <code>data</code> as its payload. Returns at once: a
+peer that is slow to read never blocks the caller. A peer that falls further
+behind than <code>Limit.OutboundBytes</code> is closed with <code>CloseReason.SlowConsumer</code>
+and the call returns <code>ZigError.WriteFailed</code>. A connection that has ended is
+<code>ZigError.Closed</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
+    return HTTP.wsSend(connection, wsOpCode(op), data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsnext"><code>wsNext</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsNext(connection :: int) returns int | zerr.ZigError
+</code></pre></div>
+<p>Take the connection's next message. Returns <code>1</code> when one is ready (read it
+with <code>wsMessage</code>), <code>0</code> when none is waiting (retry on the next <code>Readable</code>
+event), and <code>2</code> once the peer has closed. A message the peer broke (the
+protocol or a size limit) is <code>ZigError.ProtocolError</code>. Messages arrive
+whole: fragments are reassembled and text is validated before they are
+surfaced.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsNext(connection :: int) returns int | zerr.ZigError {
+    return HTTP.wsNext(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsmessage"><code>wsMessage</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsMessage(connection :: int) returns Message
+</code></pre></div>
+<p>The message decoded by the last successful <code>wsNext</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsMessage(connection :: int) returns Message {
+    return $Message {
+        op is wsOpFromCode(HTTP.wsMessageOp(connection)),
+        data is HTTP.wsMessageData(connection),
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wspending"><code>wsPending</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsPending(connection :: int) returns int
+</code></pre></div>
+<p>How many messages are waiting for <code>wsNext</code>. The library stops reading from
+a connection once <code>Limit.InboxMessages</code> are waiting, so this never grows
+past it.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsPending(connection :: int) returns int {
+    return HTTP.wsPending(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsbuffered"><code>wsBuffered</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsBuffered(connection :: int) returns tetra
+</code></pre></div>
+<p>Whether messages are waiting for <code>wsNext</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsBuffered(connection :: int) returns tetra {
+    return HTTP.wsPending(connection) &gt; 0
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eventkind"><code>EventKind</code></h3>
+<div class="highlight"><pre><span></span><code>public enum EventKind
+</code></pre></div>
+<p>Why a <code>poll</code> event fired. <code>Accepted</code> is a fresh connection. <code>Readable</code> is a
+connection with a complete request or message waiting. <code>Closed</code> is a
+connection that has ended: it is reported once, after everything else from
+that connection, and <code>closeReason</code> says why. The library has already cleaned
+up; calling <code>close</code> afterwards is allowed and does nothing.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum EventKind {
+    Accepted,
+    Readable,
+    Closed,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="event"><code>Event</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Event
+</code></pre></div>
+<p>One readiness event from <code>poll</code>. <code>handle</code> is the connection (or listener)
+handle.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Event {
+    public handle :: int,
+    public kind :: EventKind,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="poll"><code>poll</code></h3>
+<div class="highlight"><pre><span></span><code>public function poll(listener :: int, timeout_ms :: int) returns Event[] | zerr.ZigError
+</code></pre></div>
+<p>Wait for events on the listener's connections. Blocks up to <code>timeout_ms</code>
+(0 does not wait, negative waits indefinitely) and returns every event that
+is ready. Connections are read in the background whether or not the program
+is polling; <code>poll</code> only collects what is finished. An unknown listener is
+<code>ZigError.InvalidHandle</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function poll(listener :: int, timeout_ms :: int) returns Event[] | zerr.ZigError {
+    const polled is HTTP.poll(listener, timeout_ms) as Polled else {
+        return polled
+    }
+    var events :: Event[]
+    each handle at i in polled.handles {
+        @push(events, $Event {
+            handle is handle,
+            kind is eventKindFromCode(polled.kinds[i]),
+        })
+    }
+    return events
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="closereason"><code>CloseReason</code></h3>
+<div class="highlight"><pre><span></span><code>public enum CloseReason
+</code></pre></div>
+<p>Why a connection ended.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum CloseReason {
+    Open,
+    PeerClosed,
+    Reset,
+    LocalClose,
+    IdleTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    HandlerTimeout,
+    SlowConsumer,
+    TooLarge,
+    ProtocolError,
+    HandshakeFailed,
+    ConnectFailed,
+    TlsError,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="closereason_1"><code>closeReason</code></h3>
+<div class="highlight"><pre><span></span><code>public function closeReason(connection :: int) returns CloseReason
+</code></pre></div>
+<p>Why <code>connection</code> ended; <code>CloseReason.Open</code> while it has not. Valid from the
+<code>Closed</code> event until the next <code>poll</code>. A connection the program closed itself
+reads as <code>LocalClose</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function closeReason(connection :: int) returns CloseReason {
+    return closeReasonFromCode(HTTP.closeReason(connection))
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="limit"><code>Limit</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Limit
+</code></pre></div>
+<p>The caps and deadlines every connection runs under. Sizes are in bytes and
+deadlines in milliseconds; a deadline of 0 is disabled.</p>
+<ul>
+<li><code>HeadBytes</code>: a request's headers. Over it: <code>431</code>, then <code>TooLarge</code>.</li>
+<li><code>BodyBytes</code>: a request's body. Over it: <code>413</code>, then <code>TooLarge</code>.</li>
+<li><code>MessageBytes</code>: one reassembled WebSocket message. Over it: <code>TooLarge</code>.</li>
+<li><code>OutboundBytes</code>: frames queued for one peer. Over it: <code>SlowConsumer</code>.</li>
+<li><code>InboxMessages</code>: messages one connection may have waiting for the program
+before the library stops reading from it.</li>
+<li><code>PendingBytes</code>: bytes waiting for the program across all connections
+before the library stops reading.</li>
+<li><code>Connections</code>: open connections; further ones wait to be accepted.</li>
+<li><code>HandshakeMs</code>: opening a client connection.</li>
+<li><code>HeadMs</code>: the rest of a request's headers once they have started.</li>
+<li><code>ReadMs</code>: a body or message making no progress.</li>
+<li><code>WriteMs</code>: a send making no progress.</li>
+<li><code>IdleMs</code>: a kept-alive connection with no request, or a WebSocket with
+no incoming frame. Until heartbeats land, a WebSocket peer stays open by
+sending something, a ping included, within it.</li>
+<li><code>HandlerMs</code>: the program answering a request it was given.</li>
+<li><code>LingerMs</code>: the peer acknowledging a close the library started.</li>
+</ul>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Limit {
+    HeadBytes,
+    BodyBytes,
+    MessageBytes,
+    OutboundBytes,
+    InboxMessages,
+    PendingBytes,
+    Connections,
+    HandshakeMs,
+    HeadMs,
+    ReadMs,
+    WriteMs,
+    IdleMs,
+    HandlerMs,
+    LingerMs,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="setlimit"><code>setLimit</code></h3>
+<div class="highlight"><pre><span></span><code>public function setLimit(which :: Limit, value :: int) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Set one limit for connections opened from now on. A negative value is
+<code>ZigError.Overflow</code>: no size or deadline is below zero. <code>Limit</code>'s order is
+the engine's <code>LimitKey</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function setLimit(which :: Limit, value :: int) returns nothing | zerr.ZigError {
+    return HTTP.setLimit(which, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="route"><code>Route</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Route
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Route {
+    public id :: int,
+    public pattern :: string,
+    param_names :: string[],
+    param_values :: string[],
+
+    /* `pattern` matched against `path`, segment by segment: a `:name` segment
+       captures the path&#39;s segment as `name`, any other must be equal, and the
+       two must have as many segments. `nothing` when they do not match. */
+    public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing {
+        const wanted is segments(pattern)
+        const given is segments(path)
+        if @length(wanted) != @length(given) then return nothing
+        var names :: string[]
+        var values :: string[]
+        each part at i in wanted {
+            if @length(part) &gt;= 2 and @slice(part, 0, 1) == &quot;:&quot; then {
+                @push(names, @slice(part, 1, @length(part) - 1))
+                @push(values, given[i])
+            } else if part != given[i] then {
+                return nothing
+            }
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
+
+    public method param(name :: string) returns string | nothing {
+        for i while i &lt; @length(this.param_names) do i += 1 {
+            if this.param_names[i] == name then {
+                const found is this.param_values[i]
+                return found
+            }
+        }
+        return nothing
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="routematching"><code>Route.matching</code></h4>
+<div class="highlight"><pre><span></span><code>public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing
+</code></pre></div>
+<p><code>pattern</code> matched against <code>path</code>, segment by segment: a <code>:name</code> segment
+captures the path's segment as <code>name</code>, any other must be equal, and the
+two must have as many segments. <code>nothing</code> when they do not match.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function matching(id :: int, pattern :: string, path :: string) returns Route | nothing {
+        const wanted is segments(pattern)
+        const given is segments(path)
+        if @length(wanted) != @length(given) then return nothing
+        var names :: string[]
+        var values :: string[]
+        each part at i in wanted {
+            if @length(part) &gt;= 2 and @slice(part, 0, 1) == &quot;:&quot; then {
+                @push(names, @slice(part, 1, @length(part) - 1))
+                @push(values, given[i])
+            } else if part != given[i] then {
+                return nothing
+            }
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="routeparam"><code>Route.param</code></h4>
+<div class="highlight"><pre><span></span><code>public method param(name :: string) returns string | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method param(name :: string) returns string | nothing {
+        for i while i &lt; @length(this.param_names) do i += 1 {
+            if this.param_names[i] == name then {
+                const found is this.param_values[i]
+                return found
+            }
+        }
+        return nothing
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="router"><code>Router</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Router
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Router {
+    verbs :: string[],
+    patterns :: string[],
+    ids :: int[],
+
+    public function new() returns Router {
+        return $Router {
+            verbs is [],
+            patterns is [],
+            ids is [],
+        }
+    }
+
+    public method add(verb :: string, pattern :: string, id :: int) {
+        @push(this.verbs, verb)
+        @push(this.patterns, pattern)
+        @push(this.ids, id)
+    }
+
+    /* The first route added for `verb` whose pattern matches `path`, or
+       `nothing`. A `:name` pattern segment captures that path segment. */
+    public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i &lt; @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb then {
+                const route is Route.matching(this.ids[i], this.patterns[i], path)
+                route as Route then return route else {}
+            }
+        }
+        return nothing
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="routernew"><code>Router.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new() returns Router
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new() returns Router {
+        return $Router {
+            verbs is [],
+            patterns is [],
+            ids is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="routeradd"><code>Router.add</code></h4>
+<div class="highlight"><pre><span></span><code>public method add(verb :: string, pattern :: string, id :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method add(verb :: string, pattern :: string, id :: int) {
+        @push(this.verbs, verb)
+        @push(this.patterns, pattern)
+        @push(this.ids, id)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="routerfind"><code>Router.find</code></h4>
+<div class="highlight"><pre><span></span><code>public method find(verb :: string, path :: string) returns Route | nothing
+</code></pre></div>
+<p>The first route added for <code>verb</code> whose pattern matches <code>path</code>, or
+<code>nothing</code>. A <code>:name</code> pattern segment captures that path segment.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i &lt; @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb then {
+                const route is Route.matching(this.ids[i], this.patterns[i], path)
+                route as Route then return route else {}
+            }
+        }
+        return nothing
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="respond"><code>respond</code></h3>
+<div class="highlight"><pre><span></span><code>public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Answer the pending request. With no request waiting, or one already
+answered, the call is <code>ZigError.NotOpenForWriting</code>; a status that is not
+three digits, or a header line that could break framing, is
+<code>ZigError.HttpHeadersInvalid</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | zerr.ZigError {
+    return HTTP.respond(connection, status, headers, body)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="close"><code>close</code></h3>
+<div class="highlight"><pre><span></span><code>public function close(handle :: int) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function close(handle :: int) returns nothing | zerr.ZigError {
+    return HTTP.close(handle)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="request"><code>Request</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Request
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Request {
+    public headers :: string[],
+    public body :: string,
+    public timeout_ms :: int,
+    public max_redirects :: int,
+
+    public function new() returns Request {
+        return $Request {
+            headers is [],
+            body is &quot;&quot;,
+            timeout_ms is 30000,
+            max_redirects is 3,
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="requestnew"><code>Request.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new() returns Request
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new() returns Request {
+        return $Request {
+            headers is [],
+            body is &quot;&quot;,
+            timeout_ms is 30000,
+            max_redirects is 3,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="get"><code>get</code></h3>
+<div class="highlight"><pre><span></span><code>public function get(url :: string) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function get(url :: string) returns Response | zerr.ZigError {
+    var req is Request.new()
+    return Response.send(&quot;GET&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="getwithtimeout"><code>getWithTimeout</code></h3>
+<div class="highlight"><pre><span></span><code>public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | zerr.ZigError {
+    var req is Request.new()
+    req.timeout_ms is timeout_ms
+    return Response.send(&quot;GET&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="post"><code>post</code></h3>
+<div class="highlight"><pre><span></span><code>public function post(url :: string, ^req :: Request) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function post(url :: string, ^req :: Request) returns Response | zerr.ZigError {
+    return Response.send(&quot;POST&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="put"><code>put</code></h3>
+<div class="highlight"><pre><span></span><code>public function put(url :: string, ^req :: Request) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function put(url :: string, ^req :: Request) returns Response | zerr.ZigError {
+    return Response.send(&quot;PUT&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="delete_1"><code>delete</code></h3>
+<div class="highlight"><pre><span></span><code>public function delete(url :: string, ^req :: Request) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function delete(url :: string, ^req :: Request) returns Response | zerr.ZigError {
+    return Response.send(&quot;DELETE&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="head"><code>head</code></h3>
+<div class="highlight"><pre><span></span><code>public function head(url :: string, ^req :: Request) returns Response | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function head(url :: string, ^req :: Request) returns Response | zerr.ZigError {
+    return Response.send(&quot;HEAD&quot;, url, req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="gettext"><code>getText</code></h3>
+<div class="highlight"><pre><span></span><code>public function getText(url :: string) returns string | zerr.ZigError
+</code></pre></div>
+<p>The body of a GET, whatever its status.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getText(url :: string) returns string | zerr.ZigError {
+    const response is get(url)
+    response as Response then return response.body()
+    else return response
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsaccept"><code>wsAccept</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsAccept(connection :: int) returns tetra
+</code></pre></div>
+<p>Complete the handshake if <code>connection</code>'s buffered request is a WebSocket
+upgrade. Returns <code>true</code> once it is a WebSocket; while it is still <code>false</code>,
+call again after the next readable event. A request that is not an upgrade
+is answered <code>426 Upgrade Required</code>, so its client is never left waiting.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsAccept(connection :: int) returns tetra {
+    if isWebSocket(connection) then return true
+    const status is readRequest(connection) as int else {
+        return false
+    }
+    if status != 1 then return false
+    const upgraded is upgradeWebSocket(connection)
+    upgraded as zerr.ZigError then {} else return true
+    respond(connection, 426, &quot;Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13&quot;, &quot;&quot;)
+    return false
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsread"><code>wsRead</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsRead(connection :: int) returns Message | nothing | zerr.ZigError
+</code></pre></div>
+<p>The next complete message, <code>nothing</code> when none is buffered yet or the peer
+closed, or an error on a protocol/transport failure. Fragmented messages are
+reassembled before they are surfaced.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsRead(connection :: int) returns Message | nothing | zerr.ZigError {
+    const status is wsNext(connection) as int else {
+        return status
+    }
+    if status == 1 then return wsMessage(connection)
+    return nothing
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wswrite"><code>wsWrite</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Send one frame with an explicit opcode.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | zerr.ZigError {
+    return wsSend(connection, op, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wstext"><code>wsText</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsText(connection :: int, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsText(connection :: int, data :: string) returns nothing | zerr.ZigError {
+    return wsSend(connection, WsOp.Text, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsbinary"><code>wsBinary</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsBinary(connection :: int, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsBinary(connection :: int, data :: string) returns nothing | zerr.ZigError {
+    return wsSend(connection, WsOp.Binary, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsping"><code>wsPing</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsPing(connection :: int, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsPing(connection :: int, data :: string) returns nothing | zerr.ZigError {
+    return wsSend(connection, WsOp.Ping, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wspong"><code>wsPong</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsPong(connection :: int, data :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsPong(connection :: int, data :: string) returns nothing | zerr.ZigError {
+    return wsSend(connection, WsOp.Pong, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsclose"><code>wsClose</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsClose(connection :: int) returns nothing | zerr.ZigError
+</code></pre></div>
+<p>Send a Close frame (empty payload) and drop the connection.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsClose(connection :: int) returns nothing | zerr.ZigError {
+    wsSend(connection, WsOp.Close, &quot;&quot;)
+    return close(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdhost"><code>std.host</code></h2>
+<h3 id="os"><code>os</code></h3>
+<div class="highlight"><pre><span></span><code>public function os() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function os() returns string {
+    return Host.osName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="arch"><code>arch</code></h3>
+<div class="highlight"><pre><span></span><code>public function arch() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function arch() returns string {
+    return Host.archName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="abi"><code>abi</code></h3>
+<div class="highlight"><pre><span></span><code>public function abi() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function abi() returns string {
+    return Host.abiName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="cpu"><code>cpu</code></h3>
+<div class="highlight"><pre><span></span><code>public function cpu() returns string | zerr.ZigError
+</code></pre></div>
+<p>The model of the CPU running the program (e.g. <code>"znver4"</code>), detected when
+called rather than fixed when compiled; the <code>ZigError</code> Zig's target
+detection reports when the host cannot be probed.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cpu() returns string | zerr.ZigError {
+    return Host.cpuName()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="iswindows"><code>isWindows</code></h3>
+<div class="highlight"><pre><span></span><code>public function isWindows() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isWindows() returns tetra {
+    return Host.isWindows();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="islinux"><code>isLinux</code></h3>
+<div class="highlight"><pre><span></span><code>public function isLinux() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isLinux() returns tetra {
+    return Host.isLinux();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="ismac"><code>isMac</code></h3>
+<div class="highlight"><pre><span></span><code>public function isMac() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isMac() returns tetra {
+    return Host.isMac();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pathfor"><code>pathFor</code></h3>
+<div class="highlight"><pre><span></span><code>public function pathFor(platform :: string, parts :: string[]) returns string
+</code></pre></div>
+<p>Joins <code>parts</code> with the separator for <code>platform</code> (one of the names returned by
+<code>os()</code>, e.g. <code>"windows"</code>, <code>"linux"</code>, <code>"macos"</code>). Empty segments are skipped,
+an absolute segment resets the result, and a separator already at the join
+point is not doubled.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pathFor(platform :: string, parts :: string[]) returns string {
+    const sep is sepFor(platform)
+    var result is &quot;&quot;
+    var i is 0
+    while i &lt; @length(parts) {
+        const part is parts[i]
+        if @length(part) == 0 then {
+            i is i + 1
+            continue
+        }
+
+        if isAbsolute(part, platform) then {
+            result is part
+        } else if @length(result) == 0 then {
+            result is part
+        } else if isSep(result[@length(result) - 1], platform) then {
+            result is result + part
+        } else {
+            result is result + sep + part
+        }
+        i is i + 1
+    }
+    return result
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="path"><code>path</code></h3>
+<div class="highlight"><pre><span></span><code>public function path(parts :: string[]) returns string
+</code></pre></div>
+<p>Joins <code>parts</code> with the host OS's separator. See <code>pathFor</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function path(parts :: string[]) returns string {
+    return pathFor(os(), parts)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdtime"><code>std.time</code></h2>
+<h3 id="unix"><code>unix</code></h3>
+<div class="highlight"><pre><span></span><code>public function unix() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unix() returns int {
+    return Time.unixSeconds();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tick"><code>tick</code></h3>
+<div class="highlight"><pre><span></span><code>public function tick() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function tick() returns int {
+    return Time.tickNs();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="monotonic"><code>monotonic</code></h3>
+<div class="highlight"><pre><span></span><code>public function monotonic() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function monotonic() returns int {
+    return Time.monotonicNs();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="unixms"><code>unixMs</code></h3>
+<div class="highlight"><pre><span></span><code>public function unixMs() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unixMs() returns int {
+    return Time.unixMillis();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sleep"><code>sleep</code></h3>
+<div class="highlight"><pre><span></span><code>public function sleep(ms :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sleep(ms :: int) {
+    Time.sleepMs(@string(ms));
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sleepseconds"><code>sleepSeconds</code></h3>
+<div class="highlight"><pre><span></span><code>public function sleepSeconds(s :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sleepSeconds(s :: int) {
+    Time.sleepSeconds(@string(s));
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdrandom"><code>std.random</code></h2>
+<h3 id="random"><code>random</code></h3>
+<div class="highlight"><pre><span></span><code>public function random() returns float
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function random() returns float {
+    return Random.floatUnit();
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdbuild"><code>std.build</code></h2>
+<h3 id="optimization"><code>Optimization</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Optimization
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Optimization {
+    None,
+    Some,
+    Speed,
+    Size,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="optmodename"><code>optModeName</code></h3>
+<div class="highlight"><pre><span></span><code>public function optModeName(o :: Optimization) returns string
+</code></pre></div>
+<p>Maps the four-cornered Optimization to the backend's release modes, mirrored by
+the compiler's <code>--opt-mode</code> flag (debug | safe | fast | small). Written with
+enum equality rather than <code>match</code>: a <code>match</code> expression on an enum currently
+does not produce its arm value (a compiler bug; <code>==</code> is correct).</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function optModeName(o :: Optimization) returns string {
+    if o == Optimization.None then return &quot;debug&quot;
+    if o == Optimization.Some then return &quot;safe&quot;
+    if o == Optimization.Speed then return &quot;fast&quot;
+    return &quot;small&quot;
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="target"><code>Target</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Target
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Target {
+    public arch :: string,
+    public os :: string,
+    public abi :: string,
+    # The machine running the build, compiled for its own CPU. A cross target
+    # naming the host&#39;s triple is still a cross target: it compiles for the
+    # triple&#39;s baseline CPU, so its binary runs on any machine of that triple.
+    public native :: tetra,
+
+    public function host() returns Target {
+        return $Target {
+            arch is Build.hostArch(),
+            os is Build.hostOs(),
+            abi is Build.hostAbi(),
+            native is true,
+        }
+    }
+
+    # Cross-compilation target. `os` is the raw OS name passed to `--os=`; an
+    # empty OS is rejected at build time (`run`), never silently collapsed to the
+    # host.
+    public function cross(arch :: string, os :: string, abi :: string) returns Target {
+        return $Target {
+            arch is arch,
+            os is os,
+            abi is abi,
+            native is false,
+        }
+    }
+
+    public method isWindows() returns tetra {
+        return this.os == &quot;windows&quot;
+    }
+
+    public method isLinux() returns tetra {
+        return this.os == &quot;linux&quot;
+    }
+
+    public method isMac() returns tetra {
+        return this.os == &quot;macos&quot;
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="targethost"><code>Target.host</code></h4>
+<div class="highlight"><pre><span></span><code>public function host() returns Target
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function host() returns Target {
+        return $Target {
+            arch is Build.hostArch(),
+            os is Build.hostOs(),
+            abi is Build.hostAbi(),
+            native is true,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetcross"><code>Target.cross</code></h4>
+<div class="highlight"><pre><span></span><code>public function cross(arch :: string, os :: string, abi :: string) returns Target
+</code></pre></div>
+<p>Cross-compilation target. <code>os</code> is the raw OS name passed to <code>--os=</code>; an
+empty OS is rejected at build time (<code>run</code>), never silently collapsed to the
+host.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cross(arch :: string, os :: string, abi :: string) returns Target {
+        return $Target {
+            arch is arch,
+            os is os,
+            abi is abi,
+            native is false,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetiswindows"><code>Target.isWindows</code></h4>
+<div class="highlight"><pre><span></span><code>public method isWindows() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isWindows() returns tetra {
+        return this.os == &quot;windows&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetislinux"><code>Target.isLinux</code></h4>
+<div class="highlight"><pre><span></span><code>public method isLinux() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isLinux() returns tetra {
+        return this.os == &quot;linux&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetismac"><code>Target.isMac</code></h4>
+<div class="highlight"><pre><span></span><code>public method isMac() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isMac() returns tetra {
+        return this.os == &quot;macos&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="executable"><code>Executable</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Executable
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Executable {
+    public name :: string,
+    public entry_point :: string,
+    public output :: string,
+    public includes :: string[],
+    public libdirs :: string[],
+    public links :: string[],
+    public frameworks :: string[],
+
+    public function new(name :: string, entry_point :: string, output :: string) returns Executable {
+        return $Executable {
+            name is name,
+            entry_point is entry_point,
+            output is output,
+            includes is [],
+            libdirs is [],
+            links is [],
+            frameworks is [],
+        }
+    }
+
+    public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method libdir(x :: string | string[]) {
+        x as string then @push(this.libdirs, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.libdirs, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method link(x :: string | string[]) {
+        x as string then @push(this.links, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.links, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method framework(x :: string | string[]) {
+        x as string then @push(this.frameworks, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.frameworks, x[i])
+                i is i + 1
+            }
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="executablenew"><code>Executable.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new(name :: string, entry_point :: string, output :: string) returns Executable
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new(name :: string, entry_point :: string, output :: string) returns Executable {
+        return $Executable {
+            name is name,
+            entry_point is entry_point,
+            output is output,
+            includes is [],
+            libdirs is [],
+            links is [],
+            frameworks is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executableinclude"><code>Executable.include</code></h4>
+<div class="highlight"><pre><span></span><code>public method include(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executablelibdir"><code>Executable.libdir</code></h4>
+<div class="highlight"><pre><span></span><code>public method libdir(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method libdir(x :: string | string[]) {
+        x as string then @push(this.libdirs, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.libdirs, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executablelink"><code>Executable.link</code></h4>
+<div class="highlight"><pre><span></span><code>public method link(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method link(x :: string | string[]) {
+        x as string then @push(this.links, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.links, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executableframework"><code>Executable.framework</code></h4>
+<div class="highlight"><pre><span></span><code>public method framework(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method framework(x :: string | string[]) {
+        x as string then @push(this.frameworks, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.frameworks, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="context"><code>Context</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Context {
+    public target :: Target,
+    public debug :: tetra,
+    public optimization :: Optimization,
+    public artifacts :: Executable[],
+
+    public function new(target :: Target) returns Context {
+        return $Context {
+            target is target,
+            debug is false,
+            optimization is Optimization.None,
+            artifacts is [],
+        }
+    }
+
+    public function host() returns Context {
+        return Context.new(Target.host())
+    }
+
+    public method addArtifact(b :: Executable) {
+        @push(this.artifacts, b)
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="contextnew"><code>Context.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new(target :: Target) returns Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new(target :: Target) returns Context {
+        return $Context {
+            target is target,
+            debug is false,
+            optimization is Optimization.None,
+            artifacts is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="contexthost"><code>Context.host</code></h4>
+<div class="highlight"><pre><span></span><code>public function host() returns Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function host() returns Context {
+        return Context.new(Target.host())
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="contextaddartifact"><code>Context.addArtifact</code></h4>
+<div class="highlight"><pre><span></span><code>public method addArtifact(b :: Executable)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method addArtifact(b :: Executable) {
+        @push(this.artifacts, b)
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="run_1"><code>run</code></h3>
+<div class="highlight"><pre><span></span><code>public function run(c :: Context) returns process.Term | zerr.ZigError
+</code></pre></div>
+<p>Drive the compiler over every artifact in the context, stopping at the first
+compile that does not succeed. Returns how that compile ended, or how the
+last one did; with no artifacts, an exit of 0.</p>
+<p>There is deliberately no up-to-date skip here. An earlier version compared the
+output's mtime against the entry source alone and skipped the compile when the
+output looked newer, which silently ignored every change in an imported module
+and reported success while leaving a stale binary in place — including when the
+program no longer compiled at all. Re-deriving the module closure in this layer
+would mean duplicating the compiler's import resolution, so the check is the
+driver's alone; <code>plan/incremental-builds.md</code> tracks the whole-unit manifest
+that will make the driver able to answer this content-accurately.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function run(c :: Context) returns process.Term | zerr.ZigError {
+    # A cross target must name its OS; an empty OS is never silently resolved to
+    # the host.
+    if not c.target.native and @length(c.target.os) == 0 then return zerr.ZigError.MissingOperatingSystem
+    const compiler is Build.compilerPath() as string else {
+        return compiler
+    }
+    var last is $process.Term { kind is process.TermKind.Exited, code is 0 }
+    each art in c.artifacts {
+        const term is compileArtifact(compiler, c, art) as process.Term else {
+            return term
+        }
+        if not term.succeeded() then return term
+        last is term
+    }
+    return last
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execute"><code>execute</code></h3>
+<div class="highlight"><pre><span></span><code>public function execute(c :: Context)
+</code></pre></div>
+<p>Drive the compiler over every artifact and propagate the outcome through the
+process exit code: a successful build exits 0, a failed compile exits with
+the compiler's status, and a compiler that could not run, or ended by a
+signal, prints why to stderr and exits 1. <code>execute</code> is the terminal statement
+of a build script; it never returns.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execute(c :: Context) {
+    const outcome is run(c) as process.Term else {
+        io.eprintln(&quot;Build failed: {outcome}&quot;)
+        @exit(1)
+    }
+    if outcome.kind != process.TermKind.Exited then {
+        io.eprintln(&quot;Build failed: the compiler ended by {outcome.kind} {outcome.code}&quot;)
+        @exit(1)
+    }
+    # The compiler&#39;s own diagnostics already describe a failing artifact.
+    @print(&quot;build exit code: {outcome.code}\n&quot;)
+    if outcome.code != 0 then @exit(outcome.code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="compile"><code>compile</code></h3>
+<div class="highlight"><pre><span></span><code>public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns process.Term | zerr.ZigError
+</code></pre></div>
+<p>Low-level single-file compile, retained for direct use and the build test
+harness. <code>debug</code> forces the debug optimization mode.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns process.Term | zerr.ZigError {
+    var c is Context.new(Target.cross(arch, os, abi))
+    c.debug is debug
+    c.optimization is Optimization.Speed
+    c.addArtifact(Executable.new(src, src, out))
+    return run(c)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="compilehost"><code>compileHost</code></h3>
+<div class="highlight"><pre><span></span><code>public function compileHost(src :: string, out :: string, debug :: tetra) returns process.Term | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function compileHost(src :: string, out :: string, debug :: tetra) returns process.Term | zerr.ZigError {
+    return compile(src, out, Build.hostArch(), Build.hostOs(), Build.hostAbi(), debug)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stderror"><code>std.error</code></h2>
+<h3 id="method"><code>Method</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Method
+</code></pre></div>
+<p>Doxa's own runtime errors, raised by the intrinsics.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Method {
+    OutOfBounds,
+    EmptyCollection,
+    InvalidNumber,
+    Overflow,
+    Unexpected,
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdmethods"><code>std.methods</code></h2>
+<h3 id="push"><code>push</code></h3>
+<div class="highlight"><pre><span></span><code>public function push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra)
+</code></pre></div>
+<p>The collection families that do not return the collection's own type collapse
+to one union-typed entry point. The element type is checked at run time: a
+value that does not match the collection's element type panics rather than
+silently doing nothing.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) {
+    match collection {
+        string then {
+            const element is value as string else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+        int[] then {
+            const element is value as int else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+        float[] then {
+            const element is value as float else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+        byte[] then {
+            const element is value as byte else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+        tetra[] then {
+            const element is value as tetra else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+        string[] then {
+            const element is value as string else { @panic(&quot;methods.push: value type does not match the collection element type&quot;) }
+            @push(collection, element)
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popstring"><code>popString</code></h3>
+<div class="highlight"><pre><span></span><code>public function popString(^collection :: string) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popString(^collection :: string) returns string | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popint"><code>popInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function popInt(^collection :: int[]) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popInt(^collection :: int[]) returns int | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popfloat"><code>popFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function popFloat(^collection :: float[]) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popFloat(^collection :: float[]) returns float | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popbyte"><code>popByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function popByte(^collection :: byte[]) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popByte(^collection :: byte[]) returns byte | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="poptetra"><code>popTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function popTetra(^collection :: tetra[]) returns tetra | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popTetra(^collection :: tetra[]) returns tetra | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popstringarray"><code>popStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function popStringArray(^collection :: string[]) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popStringArray(^collection :: string[]) returns string | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insert"><code>insert</code></h3>
+<div class="highlight"><pre><span></span><code>public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns nothing | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns nothing | error.Method {
+    match collection {
+        string then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        int[] then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as int else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        float[] then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as float else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        byte[] then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as byte else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        tetra[] then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as tetra else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        string[] then {
+            if index &lt; 0 then return error.Method.OutOfBounds
+            if index &gt; @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removestring"><code>removeString</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeString(^collection :: string, index :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeString(^collection :: string, index :: int) returns string | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removeint"><code>removeInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeInt(^collection :: int[], index :: int) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeInt(^collection :: int[], index :: int) returns int | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removefloat"><code>removeFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeFloat(^collection :: float[], index :: int) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeFloat(^collection :: float[], index :: int) returns float | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removebyte"><code>removeByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeByte(^collection :: byte[], index :: int) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeByte(^collection :: byte[], index :: int) returns byte | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removetetra"><code>removeTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removestringarray"><code>removeStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeStringArray(^collection :: string[], index :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeStringArray(^collection :: string[], index :: int) returns string | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clear"><code>clear</code></h3>
+<div class="highlight"><pre><span></span><code>public function clear(^collection :: string | int[] | float[] | byte[] | tetra[] | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clear(^collection :: string | int[] | float[] | byte[] | tetra[] | string[]) {
+    match collection {
+        string then { @clear(collection) }
+        int[] then { @clear(collection) }
+        float[] then { @clear(collection) }
+        byte[] then { @clear(collection) }
+        tetra[] then { @clear(collection) }
+        string[] then { @clear(collection) }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="find"><code>find</code></h3>
+<div class="highlight"><pre><span></span><code>public function find(collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function find(collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) returns int {
+    match collection {
+        string then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+        int[] then {
+            const needle is value as int else { return -1 }
+            return @find(collection, needle)
+        }
+        float[] then {
+            const needle is value as float else { return -1 }
+            return @find(collection, needle)
+        }
+        byte[] then {
+            const needle is value as byte else { return -1 }
+            return @find(collection, needle)
+        }
+        tetra[] then {
+            const needle is value as tetra else { return -1 }
+            return @find(collection, needle)
+        }
+        string[] then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+    }
+    return -1
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicestring"><code>sliceString</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sliceint"><code>sliceInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicefloat"><code>sliceFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicebyte"><code>sliceByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicetetra"><code>sliceTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicestringarray"><code>sliceStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="toint"><code>toInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function toInt(value :: int | float | byte | string) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toInt(value :: int | float | byte | string) returns int | error.Method {
+    match value {
+        int then {
+            return value
+        } 
+        float then {
+        if value != value then return error.Method.InvalidNumber
+        if value &gt; 9223372036854775807.0 then return error.Method.Overflow
+        if value &lt; -9223372036854775808.0 then return error.Method.Overflow
+        return @int(value)
+        }
+        byte then {
+            if value &lt; 0 or value &gt; 255 then return error.Method.Overflow
+            return @int(value)
+        }
+        string then {
+            return Parse.parseIntSafe(value)
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tofloat"><code>toFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function toFloat(value :: int | float | byte | string) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toFloat(value :: int | float | byte | string) returns float | error.Method {
+    match value {
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            return value
+        }
+        int then {
+            return @float(value)
+        }
+        byte then {
+            return @float(value)
+        }
+        string then {
+            if Parse.isFloat(value) then return Parse.parseFloatSafe(value)
+            return error.Method.InvalidNumber
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tobyte"><code>toByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function toByte(value :: int | float | byte | string) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toByte(value :: int | float | byte | string) returns byte | error.Method {
+    match value {
+        byte then {
+            return value
+        }
+        int then {
+            if value &lt; 0 or value &gt; 255 then return error.Method.Overflow
+            return @byte(value)
+        }
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            if value &lt; 0.0 or value &gt; 255.0 then return error.Method.Overflow
+            return @byte(value)
+        }
+        string then {
+            if Parse.isByte(value) then return Parse.parseByteSafe(value)
+            return error.Method.InvalidNumber
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdjson"><code>std.json</code></h2>
+<h3 id="kind"><code>Kind</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Kind
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Kind {
+    Invalid,
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    Text,
+    Array,
+    Object,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="node"><code>Node</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Node
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Node {
+    handle :: int,
+
+    function new(h :: int) returns Node {
+        return $Node {
+            handle is h
+        }
+    }
+
+    # Parse `text` as one JSON document. A node of an earlier document reads
+    # as `Kind.Invalid` once another is parsed.
+    public function parse(text :: string) returns Node | zerr.ZigError {
+        const root is JSON.parseDocument(text) as int else {
+            return root
+        }
+        return Node.new(root)
+    }
+
+    public method kind() returns Kind {
+        const code is JSON.nodeKind(this.handle)
+        return match code {
+            1 then Kind.Null,
+            2 then Kind.Boolean,
+            3 then Kind.Integer,
+            4 then Kind.Number,
+            5 then Kind.Text,
+            6 then Kind.Array,
+            7 then Kind.Object,
+            else Kind.Invalid,
+        }
+    }
+
+    method holds(kind :: Kind) returns tetra {
+        return this.kind() == kind
+    }
+
+    # How many elements or fields, or `nothing` for a node that is neither an
+    # array nor an object.
+    public method count() returns int | nothing {
+        if not this.holds(Kind.Array) and not this.holds(Kind.Object) then return nothing
+        return JSON.nodeCount(this.handle)
+    }
+
+    public method element(index :: int) returns Node | nothing {
+        const child is JSON.nodeChild(this.handle, index)
+        if child == 0 then return nothing
+        return Node.new(child)
+    }
+
+    public method field(name :: string) returns Node | nothing {
+        const child is JSON.nodeField(this.handle, name)
+        if child == 0 then return nothing
+        return Node.new(child)
+    }
+
+    # The field name this node is stored under, or `nothing` for a node that
+    # is not an object&#39;s field.
+    public method key() returns string | nothing {
+        if not JSON.nodeHasKey(this.handle) then return nothing
+        return JSON.nodeKey(this.handle)
+    }
+
+    public method text() returns string | nothing {
+        if not this.holds(Kind.Text) then return nothing
+        return JSON.nodeText(this.handle)
+    }
+
+    public method intValue() returns int | nothing {
+        if not this.holds(Kind.Integer) then return nothing
+        return JSON.nodeIntValue(this.handle)
+    }
+
+    public method floatValue() returns float | nothing {
+        if not this.holds(Kind.Number) then return nothing
+        return JSON.nodeFloatValue(this.handle)
+    }
+
+    public method booleanValue() returns tetra | nothing {
+        if not this.holds(Kind.Boolean) then return nothing
+        return JSON.nodeBooleanValue(this.handle)
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="nodeparse"><code>Node.parse</code></h4>
+<div class="highlight"><pre><span></span><code>public function parse(text :: string) returns Node | zerr.ZigError
+</code></pre></div>
+<p>Parse <code>text</code> as one JSON document. A node of an earlier document reads
+as <code>Kind.Invalid</code> once another is parsed.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function parse(text :: string) returns Node | zerr.ZigError {
+        const root is JSON.parseDocument(text) as int else {
+            return root
+        }
+        return Node.new(root)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodekind"><code>Node.kind</code></h4>
+<div class="highlight"><pre><span></span><code>public method kind() returns Kind
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method kind() returns Kind {
+        const code is JSON.nodeKind(this.handle)
+        return match code {
+            1 then Kind.Null,
+            2 then Kind.Boolean,
+            3 then Kind.Integer,
+            4 then Kind.Number,
+            5 then Kind.Text,
+            6 then Kind.Array,
+            7 then Kind.Object,
+            else Kind.Invalid,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodecount"><code>Node.count</code></h4>
+<div class="highlight"><pre><span></span><code>public method count() returns int | nothing
+</code></pre></div>
+<p>How many elements or fields, or <code>nothing</code> for a node that is neither an
+array nor an object.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method count() returns int | nothing {
+        if not this.holds(Kind.Array) and not this.holds(Kind.Object) then return nothing
+        return JSON.nodeCount(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodeelement"><code>Node.element</code></h4>
+<div class="highlight"><pre><span></span><code>public method element(index :: int) returns Node | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method element(index :: int) returns Node | nothing {
+        const child is JSON.nodeChild(this.handle, index)
+        if child == 0 then return nothing
+        return Node.new(child)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodefield"><code>Node.field</code></h4>
+<div class="highlight"><pre><span></span><code>public method field(name :: string) returns Node | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method field(name :: string) returns Node | nothing {
+        const child is JSON.nodeField(this.handle, name)
+        if child == 0 then return nothing
+        return Node.new(child)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodekey"><code>Node.key</code></h4>
+<div class="highlight"><pre><span></span><code>public method key() returns string | nothing
+</code></pre></div>
+<p>The field name this node is stored under, or <code>nothing</code> for a node that
+is not an object's field.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method key() returns string | nothing {
+        if not JSON.nodeHasKey(this.handle) then return nothing
+        return JSON.nodeKey(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodetext"><code>Node.text</code></h4>
+<div class="highlight"><pre><span></span><code>public method text() returns string | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method text() returns string | nothing {
+        if not this.holds(Kind.Text) then return nothing
+        return JSON.nodeText(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodeintvalue"><code>Node.intValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method intValue() returns int | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method intValue() returns int | nothing {
+        if not this.holds(Kind.Integer) then return nothing
+        return JSON.nodeIntValue(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodefloatvalue"><code>Node.floatValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method floatValue() returns float | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method floatValue() returns float | nothing {
+        if not this.holds(Kind.Number) then return nothing
+        return JSON.nodeFloatValue(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodebooleanvalue"><code>Node.booleanValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method booleanValue() returns tetra | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method booleanValue() returns tetra | nothing {
+        if not this.holds(Kind.Boolean) then return nothing
+        return JSON.nodeBooleanValue(this.handle)
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="beginobject"><code>beginObject</code></h3>
+<div class="highlight"><pre><span></span><code>public function beginObject() returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function beginObject() returns nothing | zerr.ZigError {
+    return JSON.writerBeginObject()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="beginarray"><code>beginArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function beginArray() returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function beginArray() returns nothing | zerr.ZigError {
+    return JSON.writerBeginArray()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="end"><code>end</code></h3>
+<div class="highlight"><pre><span></span><code>public function end() returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function end() returns nothing | zerr.ZigError {
+    return JSON.writerEnd()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writekey"><code>writeKey</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeKey(name :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeKey(name :: string) returns nothing | zerr.ZigError {
+    return JSON.writerKey(name)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writetext"><code>writeText</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeText(text :: string) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeText(text :: string) returns nothing | zerr.ZigError {
+    return JSON.writerText(text)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writeint"><code>writeInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeInt(value :: int) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeInt(value :: int) returns nothing | zerr.ZigError {
+    return JSON.writerInt(value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writefloat"><code>writeFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeFloat(value :: float) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeFloat(value :: float) returns nothing | zerr.ZigError {
+    return JSON.writerFloat(value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writeboolean"><code>writeBoolean</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeBoolean(value :: tetra) returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeBoolean(value :: tetra) returns nothing | zerr.ZigError {
+    if value == both or value == neither then return JSON.writerRefuse()
+    return JSON.writerBoolean(value == true)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writenull"><code>writeNull</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeNull() returns nothing | zerr.ZigError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeNull() returns nothing | zerr.ZigError {
+    return JSON.writerNull()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="finish"><code>finish</code></h3>
+<div class="highlight"><pre><span></span><code>public function finish() returns string | zerr.ZigError
+</code></pre></div>
+<p>End the document: its text, or the first refusal it met. The next write
+starts a new document either way.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function finish() returns string | zerr.ZigError {
+    return JSON.writerFinish()
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdmath"><code>std.math</code></h2>
+<h3 id="maxint"><code>maxInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function maxInt() returns int
+</code></pre></div>
+<p>The largest <code>int</code>, 9223372036854775807.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function maxInt() returns int {
+    return 9223372036854775807
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="minint"><code>minInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function minInt() returns int
+</code></pre></div>
+<p>The smallest <code>int</code>, -9223372036854775808.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function minInt() returns int {
+    return -9223372036854775807 - 1
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="maxfloat"><code>maxFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function maxFloat() returns float
+</code></pre></div>
+<p>The largest finite <code>float</code>, about 1.7976931348623157e308.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function maxFloat() returns float {
+    return 1.7976931348623157e308
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="minfloat"><code>minFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function minFloat() returns float
+</code></pre></div>
+<p>The smallest finite <code>float</code>: the negation of <code>maxFloat()</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function minFloat() returns float {
+    return -1.7976931348623157e308
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="minnormalfloat"><code>minNormalFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function minNormalFloat() returns float
+</code></pre></div>
+<p>The smallest positive normal <code>float</code>, about 2.2250738585072014e-308.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function minNormalFloat() returns float {
+    return 2.2250738585072014e-308
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="maxbyte"><code>maxByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function maxByte() returns byte
+</code></pre></div>
+<p>The largest <code>byte</code>, 0xFF.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function maxByte() returns byte {
+    return 0xFF
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="minbyte"><code>minByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function minByte() returns byte
+</code></pre></div>
+<p>The smallest <code>byte</code>, 0x00.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function minByte() returns byte {
+    return 0x00
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdzerr"><code>std.zerr</code></h2>
+<h3 id="stderror_1"><code>StdError</code></h3>
+<div class="highlight"><pre><span></span><code>public group StdError
+</code></pre></div>
+<p>Every failure a std function reports: an error Zig raised, named as Zig
+names it, or one of Doxa's own runtime errors.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public group StdError {
+    ZigError,
+    error.Method
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="zigerror"><code>ZigError</code></h3>
+<div class="highlight"><pre><span></span><code>public enum ZigError
+</code></pre></div>
+<p>Every error name the bundled Zig standard library defines.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum ZigError {
+    Aborted,
+    AccessDenied,
+    AddressFamilyUnsupported,
+    AddressInUse,
+    AddressUnavailable,
+    AllocatorRequired,
+    AlreadyConnected,
+    AlreadyReported,
+    AlreadyStarted,
+    AlreadyTerminated,
+    AnalysisFail,
+    AntivirusInterference,
+    ApiLevelQueryFailed,
+    ArgumentsInvalid,
+    AuthenticationFailed,
+    BadBufferSize,
+    BadFd,
+    BadGzipHeader,
+    BadHeader,
+    BadMagic,
+    BadPathName,
+    BadString,
+    BadSubsectionSize,
+    BadSymtab,
+    BadToken,
+    BadVersion,
+    BadZlibHeader,
+    BlockOversize,
+    BlockedByFirewall,
+    BrokenPipe,
+    BufferInvalid,
+    BufferTooSmall,
+    BufferUnderrun,
+    BuffersNotRegistered,
+    CCompilerCannotFindHeaders,
+    CCompilerCrashed,
+    CCompilerExitCode,
+    CacheCheckFailed,
+    CancelRequested,
+    Canceled,
+    CertificateAuthorityBundleTooBig,
+    CertificateBundleLoadFailure,
+    CertificateExpired,
+    CertificateFieldHasInvalidLength,
+    CertificateFieldHasWrongDataType,
+    CertificateHasInvalidBitString,
+    CertificateHasUnrecognizedObjectId,
+    CertificateHostMismatch,
+    CertificateIssuerMismatch,
+    CertificateIssuerNotFound,
+    CertificateNotYetValid,
+    CertificatePublicKeyInvalid,
+    CertificateSignatureAlgorithmMismatch,
+    CertificateSignatureAlgorithmUnsupported,
+    CertificateSignatureInvalid,
+    CertificateSignatureInvalidLength,
+    CertificateSignatureNamedCurveUnsupported,
+    CertificateSignatureUnsupportedBitCount,
+    CertificateTimeInvalid,
+    ChecksumFailure,
+    ClockUnavailable,
+    Closed,
+    ClosingBraceNotLast,
+    CodepointTooLarge,
+    CompletionQueueOvercommitted,
+    CompressedSizeMismatch,
+    CompressionUnsupported,
+    CompromisedData,
+    ConcurrencyUnavailable,
+    ConnectionAborted,
+    ConnectionClose,
+    ConnectionFin,
+    ConnectionPending,
+    ConnectionRefused,
+    ConnectionReset,
+    ConnectionResetByPeer,
+    ContentOversize,
+    ContextTooLong,
+    CorruptInput,
+    CorruptPasswordFile,
+    CorruptedData,
+    CrcError,
+    CrcMismatch,
+    CrossDevice,
+    CurrentDirUnlinked,
+    DanglingSurrogateHalf,
+    DarwinSdkNotFound,
+    DeadLock,
+    DecompressedSizeMismatch,
+    DetectingNetworkConfigurationFailed,
+    DeviceBusy,
+    DeviceError,
+    DictionaryIdFlagUnsupported,
+    DirNotEmpty,
+    DiskQuota,
+    DivisionByZero,
+    DuplicateField,
+    DwordNotFound,
+    EOF,
+    ElementNotFound,
+    ElfHashTableNotFound,
+    ElfStringSectionNotFound,
+    ElfSymSectionNotFound,
+    EndOfFile,
+    EndOfMedia,
+    EndOfStream,
+    EntriesNotInRange,
+    EntriesNotPowerOfTwo,
+    EntriesZero,
+    EntropyUnavailable,
+    EnvironmentVariableMissing,
+    EvenModulus,
+    EventNotFound,
+    EventNotSupported,
+    EventRequiresUnsupportedCpuFeature,
+    ExceededMaxDepth,
+    ExecNotSupported,
+    ExitCodeFailure,
+    ExpectedError,
+    ExpectedSecondSurrogateHalf,
+    FailedTest,
+    FastOpenAlreadyInProgress,
+    FieldInAttrNeedsZeroing,
+    FileBusy,
+    FileDescriptorInBadState,
+    FileDescriptorInvalid,
+    FileDescriptorNotASocket,
+    FileLocksUnsupported,
+    FileNotFound,
+    FileSystem,
+    FileTooBig,
+    FilesAlreadyRegistered,
+    FilesEmpty,
+    FilesNotRegistered,
+    GLibCNotFound,
+    HardwareFailure,
+    HeaderConfigFailed,
+    HostUnreachable,
+    HttpChunkInvalid,
+    HttpChunkTruncated,
+    HttpConnectionClosing,
+    HttpConnectionHeaderUnsupported,
+    HttpContentEncodingUnsupported,
+    HttpError,
+    HttpExpectationFailed,
+    HttpHeaderContinuationsUnsupported,
+    HttpHeadersInvalid,
+    HttpHeadersOversize,
+    HttpRedirectLocationInvalid,
+    HttpRedirectLocationMissing,
+    HttpRedirectLocationOversize,
+    HttpRequestTruncated,
+    HttpTransferEncodingUnsupported,
+    HuffmanTreeIncomplete,
+    IcmpError,
+    IdentityElement,
+    IncompatibleRegisterSize,
+    IncompatibleVersion,
+    Incomplete,
+    IncompleteExpressionContext,
+    IncompleteHuffmanTree,
+    InnerCarriageReturn,
+    InodeMountFail,
+    InputBufferUndersize,
+    InputOutput,
+    InstallationNotFound,
+    InsufficientEntropy,
+    InsufficientRandomness,
+    InsufficientSeed,
+    InterfaceNotFound,
+    Invalid,
+    InvalidAbbrevId,
+    InvalidAbiVersion,
+    InvalidAddress,
+    InvalidArchiveHeaderMagicNumber,
+    InvalidArchiveMagicNumber,
+    InvalidArchivePadding,
+    InvalidArg0,
+    InvalidArrayElement,
+    InvalidBase,
+    InvalidBatchScriptArg,
+    InvalidBitStream,
+    InvalidBitString,
+    InvalidBlockIndex,
+    InvalidBlockType,
+    InvalidBool,
+    InvalidBuildIdStyle,
+    InvalidCFAOpcode,
+    InvalidCharacter,
+    InvalidCode,
+    InvalidCodepoint,
+    InvalidCompressedSection,
+    InvalidContentLength,
+    InvalidDebugDirectory,
+    InvalidDebugInfo,
+    InvalidDepFile,
+    InvalidDnsAAAARecord,
+    InvalidDnsARecord,
+    InvalidDnsCnameRecord,
+    InvalidDnsPacket,
+    InvalidDwarf,
+    InvalidDynamicBlockHeader,
+    InvalidElfClass,
+    InvalidElfEndian,
+    InvalidElfFile,
+    InvalidElfMagic,
+    InvalidElfVersion,
+    InvalidEncoding,
+    InvalidEnd,
+    InvalidEndBlock,
+    InvalidEnumTag,
+    InvalidExe,
+    InvalidExpression,
+    InvalidFileDescriptor,
+    InvalidFileName,
+    InvalidFormat,
+    InvalidFrameBase,
+    InvalidGnuLibCVersion,
+    InvalidHandle,
+    InvalidHostName,
+    InvalidInput,
+    InvalidIntegralTypeSize,
+    InvalidLanguage,
+    InvalidLength,
+    InvalidLiteral,
+    InvalidMachO,
+    InvalidMachine,
+    InvalidMagic,
+    InvalidMagicByte,
+    InvalidMagicNumber,
+    InvalidMatch,
+    InvalidName,
+    InvalidNumber,
+    InvalidOpcode,
+    InvalidOperand,
+    InvalidOperatingSystemVersion,
+    InvalidOperation,
+    InvalidPEHeader,
+    InvalidPEMagic,
+    InvalidPadding,
+    InvalidParameter,
+    InvalidPort,
+    InvalidProcessGroupId,
+    InvalidProgram,
+    InvalidProtocolOption,
+    InvalidRangeCode,
+    InvalidRecordId,
+    InvalidRegister,
+    InvalidSignature,
+    InvalidStreamDirectory,
+    InvalidStrtabSize,
+    InvalidSubExpression,
+    InvalidSyscall,
+    InvalidSyscallParameters,
+    InvalidThread,
+    InvalidToken,
+    InvalidTypeLength,
+    InvalidUserId,
+    InvalidUtf8,
+    InvalidVersion,
+    InvalidWtf8,
+    IpAddressConflict,
+    IsDir,
+    IterativeHashDidNotMatchDirect,
+    IterativeHashWasNotIdempotent,
+    KeyMismatch,
+    KeyNotFound,
+    LargeValue,
+    LengthMismatch,
+    LibCInstallationMissingCrtDir,
+    LibCKernel32LibNotFound,
+    LibCRuntimeNotFound,
+    LibCStdLibHeaderNotFound,
+    LimitTooBig,
+    LinkQuotaExceeded,
+    LoadError,
+    LockViolation,
+    LockedMemoryLimitExceeded,
+    MadviseUnavailable,
+    MakeFailed,
+    MakeSkipped,
+    Malformed,
+    MalformedAccuracyLog,
+    MalformedBlock,
+    MalformedCompressedBlock,
+    MalformedFrame,
+    MalformedFseBits,
+    MalformedFseTable,
+    MalformedHuffmanTree,
+    MalformedLiteralsHeader,
+    MalformedLiteralsLength,
+    MalformedLiteralsSection,
+    MalformedSequence,
+    MapTypeOrAttrInvalid,
+    MappingAlreadyExists,
+    MarkAlreadyExists,
+    MediaChanged,
+    MemoryLeakDetected,
+    MemoryMappingNotSupported,
+    MessageOversize,
+    MessageTooLong,
+    MincoreUnavailable,
+    MissingBraceValue,
+    MissingClosingBrace,
+    MissingCoffSection,
+    MissingCoreServicesSymbol,
+    MissingDebugInfo,
+    MissingDynamicLinkingInformation,
+    MissingEndCertificateMarker,
+    MissingEndOfBlockCode,
+    MissingField,
+    MissingFinalNewline,
+    MissingKey,
+    MissingMaskBit,
+    MissingOperatingSystem,
+    MissingPEHeader,
+    MissingPrefix,
+    MissingStartBit,
+    MissingStringTable,
+    MissingValue,
+    ModulusTooSmall,
+    MsvcLibDirNotFound,
+    NameServerFailure,
+    NameTooLong,
+    NeedCompileErrorCheck,
+    NegativeDenominator,
+    NegativeIntoUnsigned,
+    NetworkDown,
+    NetworkNotFound,
+    NetworkUnreachable,
+    NoAddressReturned,
+    NoBufferSelected,
+    NoDevice,
+    NoMapping,
+    NoMedia,
+    NoResponse,
+    NoSpaceLeft,
+    NoStrtab,
+    NoSymtab,
+    NonCanonical,
+    NonResizable,
+    NondeterministicMemoryUsage,
+    NotADword,
+    NotAPgrpMember,
+    NotAString,
+    NotASubPath,
+    NotATerminal,
+    NotAssociatedWithFileSystem,
+    NotDir,
+    NotDynamicLibrary,
+    NotElfFile,
+    NotFound,
+    NotLink,
+    NotNtPath,
+    NotOpenForReading,
+    NotOpenForWriting,
+    NotReady,
+    NotSquare,
+    NotStarted,
+    NotTerminalDevice,
+    NotXzStream,
+    NullExponent,
+    OSVersionDetectionFail,
+    OctalOverflow,
+    OpcodeNotSupported,
+    OpenFrameworkFailed,
+    OperationUnsupported,
+    OptionUnsupported,
+    OutOfMemory,
+    OutOfResources,
+    OutputBufferUndersize,
+    OutputTooLong,
+    Overflow,
+    OverheadTooLarge,
+    OverlargeFooter,
+    OversubscribedHuffmanTree,
+    PackageNotFound,
+    ParamsOutsideAccessibleAddressSpace,
+    ParseError,
+    ParseFailed,
+    ParseZon,
+    PasswordVerificationFailed,
+    PathAlreadyExists,
+    PathNotFound,
+    PathTooLong,
+    PaxInvalidAttributeEnd,
+    PaxNullInKeyword,
+    PaxNullInValue,
+    PaxSizeAttrOverflow,
+    PermissionDenied,
+    PipeBusy,
+    PkgConfigCrashed,
+    PkgConfigFailed,
+    PkgConfigInvalidOutput,
+    PkgConfigNotInstalled,
+    PortUnreachable,
+    ProcessAlreadyExec,
+    ProcessFdQuotaExceeded,
+    ProcessNotFound,
+    ProcessOrphaned,
+    ProcessResources,
+    ProcessTerminated,
+    ProtocolError,
+    ProtocolFailure,
+    ProtocolUnreachable,
+    ProtocolUnsupportedByAddressFamily,
+    ProtocolUnsupportedBySystem,
+    ReachedMaxEntries,
+    ReadDirectoryChangesUnsupported,
+    ReadFailed,
+    ReadFailure,
+    ReadOnlyFileSystem,
+    RedirectRequiresResend,
+    RejectionSamplingFailed,
+    RelativeShebang,
+    RepeatModeFirst,
+    ReservedBitSet,
+    ReservedBlock,
+    ResolvConfParseFailed,
+    ResourceLimitReached,
+    RingShuttingDown,
+    RingShuttingDownOrAlreadyRegisteringFiles,
+    SampleMaxStackOverflow,
+    SampleStackNotSupported,
+    SectionOversize,
+    SecurityViolation,
+    SequenceBufferUndersize,
+    ServerError,
+    SignalInterrupt,
+    SignatureVerificationFailed,
+    SizeMismatch,
+    SizeTooSmall,
+    SkipZigTest,
+    SocketModeUnsupported,
+    SocketNotBound,
+    SocketNotListening,
+    SocketUnconnected,
+    SqrtOfNegativeNumber,
+    StartFailed,
+    StaticElfFile,
+    StderrStreamTooLong,
+    StdoutStreamTooLong,
+    StreamTooLong,
+    Streaming,
+    StringNotFound,
+    SubmissionQueueEntryInvalid,
+    SubmissionQueueFull,
+    SuccessfulEndOfStream,
+    SwallowedOutOfMemoryError,
+    SymLinkLoop,
+    SyntaxError,
+    SystemCannotYield,
+    SystemFdQuotaExceeded,
+    SystemOutdated,
+    SystemResources,
+    TagNotFound,
+    TarComponentsOutsideStrippedPrefix,
+    TarHeader,
+    TarHeaderChksum,
+    TarHeadersTooBig,
+    TarInsufficientBuffer,
+    TarNumericValueNegative,
+    TarNumericValueTooBig,
+    TarUnsupportedHeader,
+    TargetTooSmall,
+    TestExpectedApproxEqAbs,
+    TestExpectedApproxEqRel,
+    TestExpectedEndsWith,
+    TestExpectedEqual,
+    TestExpectedError,
+    TestExpectedStartsWith,
+    TestFailed,
+    TestUnexpectedError,
+    TestUnexpectedResult,
+    TftpError,
+    ThreadQuotaExceeded,
+    Timeout,
+    TimeoutTooBig,
+    TlsAlert,
+    TlsAlertAccessDenied,
+    TlsAlertBadCertificate,
+    TlsAlertBadCertificateStatusResponse,
+    TlsAlertBadRecordMac,
+    TlsAlertCertificateExpired,
+    TlsAlertCertificateRequired,
+    TlsAlertCertificateRevoked,
+    TlsAlertCertificateUnknown,
+    TlsAlertDecodeError,
+    TlsAlertDecryptError,
+    TlsAlertHandshakeFailure,
+    TlsAlertIllegalParameter,
+    TlsAlertInappropriateFallback,
+    TlsAlertInsufficientSecurity,
+    TlsAlertInternalError,
+    TlsAlertMissingExtension,
+    TlsAlertNoApplicationProtocol,
+    TlsAlertProtocolVersion,
+    TlsAlertRecordOverflow,
+    TlsAlertUnexpectedMessage,
+    TlsAlertUnknown,
+    TlsAlertUnknownCa,
+    TlsAlertUnknownPskIdentity,
+    TlsAlertUnrecognizedName,
+    TlsAlertUnsupportedCertificate,
+    TlsAlertUnsupportedExtension,
+    TlsBadEndValue,
+    TlsBadLength,
+    TlsBadRecordMac,
+    TlsBadRsaSignatureBitCount,
+    TlsBadSignatureScheme,
+    TlsBadStartValue,
+    TlsCertificateNotVerified,
+    TlsConnectionTruncated,
+    TlsDecodeError,
+    TlsDecryptError,
+    TlsDecryptFailure,
+    TlsIllegalParameter,
+    TlsInitializationFailed,
+    TlsRecordOverflow,
+    TlsSequenceOverflow,
+    TlsUnexpectedMessage,
+    TooBig,
+    TooManyBreakpoints,
+    TooManyHttpRedirects,
+    TooManyParentDirs,
+    TreelessLiteralsFirst,
+    TruncatedElfFile,
+    TruncatedInput,
+    TruncatedIntegralType,
+    TunnelNotSupported,
+    UnableToCreateSymLink,
+    UnableToOpenElfFile,
+    UnableToSpawnCCompiler,
+    UnalignedMemory,
+    Underflow,
+    Unexpected,
+    UnexpectedCharacter,
+    UnexpectedElement,
+    UnexpectedEndOfInput,
+    UnexpectedEndOfLiteralStream,
+    UnexpectedEndOfStream,
+    UnexpectedEof,
+    UnexpectedExtraField,
+    UnexpectedOpCode,
+    UnexpectedRemainder,
+    UnexpectedRepresentation,
+    UnexpectedSecondSurrogateHalf,
+    UnexpectedSubgroup,
+    UnexpectedToken,
+    UnhandledBigDirectoryStream,
+    UnhelpfulFile,
+    Unimplemented,
+    UnimplementedExpressionCall,
+    UnimplementedOpcode,
+    UnimplementedTypeConversion,
+    UnimplementedTypedComparison,
+    UnimplementedUserOpcode,
+    UnknownApplicationBinaryInterface,
+    UnknownArchitecture,
+    UnknownCpuFeature,
+    UnknownCpuModel,
+    UnknownExpressionOpcode,
+    UnknownField,
+    UnknownHostName,
+    UnknownHttpMethod,
+    UnknownName,
+    UnknownObjectFormat,
+    UnknownOid,
+    UnknownOperatingSystem,
+    UnknownPDBVersion,
+    UnknownTotalSystemMemory,
+    UnknownVariable,
+    UnmappedMemory,
+    UnrecognizedFormat,
+    UnrecognizedGnuLibCFileName,
+    UnrecognizedVolume,
+    UnrecoverableInvalidExe,
+    UnresolvedScope,
+    UnsafeProgram,
+    Unseekable,
+    UnspecifiedBlockId,
+    UnsuportedAbbrevEncoding,
+    Unsupported,
+    UnsupportedAddrSize,
+    UnsupportedArchitecture,
+    UnsupportedArrayElement,
+    UnsupportedBlockId,
+    UnsupportedBlockInfoRecord,
+    UnsupportedCertificateVersion,
+    UnsupportedCompressionMethod,
+    UnsupportedDebugInfo,
+    UnsupportedDwarfVersion,
+    UnsupportedEncoding,
+    UnsupportedFeature,
+    UnsupportedFlags,
+    UnsupportedOperation,
+    UnsupportedRegister,
+    UnsupportedReparsePointType,
+    UnsupportedTarget,
+    UnsupportedUriScheme,
+    UnsupportedWasmVersion,
+    UnusedValue,
+    UriMissingHost,
+    UserFdQuotaExceeded,
+    UserMarkQuotaExceeded,
+    UserNotFound,
+    Utf16InvalidStartCodeUnit,
+    Utf8CannotEncodeSurrogateHalf,
+    Utf8CodepointTooLarge,
+    Utf8EncodesSurrogateHalf,
+    Utf8ExpectedContinuation,
+    Utf8InvalidStartByte,
+    Utf8OverlongEncoding,
+    ValueNameNotFound,
+    ValueTooLong,
+    VersionTooLong,
+    VolumeCorrupted,
+    VolumeFull,
+    WasmCompilationFailed,
+    WeakParameters,
+    WeakPublicKey,
+    WindowOversize,
+    WindowSizeUnknown,
+    WindowTooSmall,
+    WindowsSdkNotFound,
+    WouldBlock,
+    WouldExceedMaximumResidentSetSize,
+    WriteFailed,
+    WriteProtected,
+    WrongChecksum,
+    WrongGzipChecksum,
+    WrongGzipSize,
+    WrongStoredBlockNlen,
+    WrongType,
+    WrongZlibChecksum,
+    ZigIsTheCCompiler,
+    ZigProtocolVersionMismatch,
+    Zip64CentralDirectoryOffsetMismatch,
+    Zip64CentralDirectorySizeMismatch,
+    Zip64RecordCountTotalMismatch,
+    ZipBadCd64Size,
+    ZipBadCdOffset,
+    ZipBadDirectorySize,
+    ZipBadEndRecord64Sig,
+    ZipBadExtraFieldSize,
+    ZipBadFileOffset,
+    ZipBadFilename,
+    ZipBadLocatorSig,
+    ZipCdOversized,
+    ZipCdUndersized,
+    ZipDecompressTruncated,
+    ZipDiskRecordCountTooLarge,
+    ZipEncryptionUnsupported,
+    ZipEndRecord64SizeTooSmall,
+    ZipEndRecord64UnhandledExtraData,
+    ZipFilenameHasBackslash,
+    ZipInsufficientBuffer,
+    ZipInvalid,
+    ZipMismatchCompLen,
+    ZipMismatchCrc32,
+    ZipMismatchFilenameLen,
+    ZipMismatchFlags,
+    ZipMismatchModDate,
+    ZipMismatchModTime,
+    ZipMismatchUncompLen,
+    ZipMismatchVersionNeeded,
+    ZipMultiDiskUnsupported,
+    ZipNoEndRecord,
+    ZipTruncated,
+    ZipUnsupportedVersion,
+    ZipUnsupportedZip64DiskCount
+}
+</code></pre></div>
+
+</details>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

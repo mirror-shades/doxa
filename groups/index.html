@@ -1,0 +1,1254 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../loops/">
+      
+      
+        <link rel="next" href="../math/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Groups - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#groups" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Groups
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-design-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Design invariants
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Syntax
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-group-declaration" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.1 Group declaration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-transitive-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.2 Transitive groups
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-qualified-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.3 Qualified access
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-type-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Type system
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Type system">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-a-union-of-its-members" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.1 A union of its members
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-member-identity-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.2 Member identity preserved
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-widening-and-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.3 Widening and narrowing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-equality" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.4 Equality
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-unions" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.5 Unions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Pattern matching
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Pattern matching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-exhaustiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Exhaustiveness
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-enum-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Enum patterns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-struct-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 Struct patterns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-matching-on-unions-containing-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.4 Matching on unions containing groups
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-collisions-and-ill-formed-programs" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Collisions and ill-formed programs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-runtime-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Runtime representation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-grammar-sketch" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Grammar sketch
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-differences-from-the-prior-set-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Differences from the prior set design
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-implementation-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Implementation checklist
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="groups">Groups</h1>
+<p>This document specifies <strong>groups</strong>: a nominal type that merges existing enums, structs, and other groups into a single type, re-exporting their members under qualified names. A group is a <strong>named tagged union</strong> — it provides a single type arm for function signatures and APIs without creating new values.</p>
+<p><strong>Status:</strong> specification. Replaces the prior <code>set</code> design. When implemented, update <a href="../syntax/">syntax.md</a> and <a href="../unions/">unions.md</a> to reference this page.</p>
+<hr />
+<h2 id="1-design-invariants">1. Design invariants</h2>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Members are existing types or other groups</td>
+<td>A group contains <code>enums</code>, <code>structs</code>, and <code>groups</code> declared elsewhere</td>
+</tr>
+<tr>
+<td>Group membership is flattened</td>
+<td>Transitive group members are expanded into a flat member list at the declaration site</td>
+</tr>
+<tr>
+<td>Groups do not create new values</td>
+<td><code>Error.IO.NotFound</code> is the same value as <code>IO.NotFound</code></td>
+</tr>
+<tr>
+<td>A type appears at most once</td>
+<td>Deduplication during flattening; reaching the same type through multiple paths is harmless</td>
+</tr>
+<tr>
+<td>Members are types, not names</td>
+<td>Two distinct types may share a bare name (<code>fs.File.OpenError</code>, <code>fs.Dir.OpenError</code>); each is named by its own path</td>
+</tr>
+<tr>
+<td>Cycles are illegal</td>
+<td>A group may not include itself directly or transitively</td>
+</tr>
+<tr>
+<td>A group is the union of its members</td>
+<td>A group value fits wherever all of its members do: in a group holding them all, and in another group with the same members</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-syntax">2. Syntax</h2>
+<h3 id="21-group-declaration">2.1 Group declaration</h3>
+<p>A group is declared with the <code>group</code> keyword. The body lists member types.</p>
+<div class="highlight"><pre><span></span><code>public group Error {
+    CommonError,
+    IOError,
+    CompilerError,
+    FileError,
+}
+</code></pre></div>
+<p>Members are referenced by their unqualified or module-qualified name. Each member contributes its variants/fields under a <strong>qualifier</strong> — its unqualified type name.</p>
+<div class="highlight"><pre><span></span><code>public group Error {
+    error.CommonError,
+    error.IOError,
+    error.CompilerError,
+    structs.FileError,
+}
+</code></pre></div>
+<h3 id="22-transitive-groups">2.2 Transitive groups</h3>
+<p>A group may include another group. All members of the included group are <strong>flattened</strong> into the declaring group.</p>
+<div class="highlight"><pre><span></span><code>public group CoreError {
+    IOError,
+    CommonError,
+}
+
+public group AppError {
+    CoreError,      // flattened → IOError, CommonError
+    UserCancelled,
+    ConfigInvalid,
+}
+</code></pre></div>
+<p><code>AppError</code> expands to <code>{ IOError, CommonError, UserCancelled, ConfigInvalid }</code>. There is no nesting in the expanded member list.</p>
+<h3 id="23-qualified-access">2.3 Qualified access</h3>
+<p>Members are accessed through the group name with the qualifier:</p>
+<div class="highlight"><pre><span></span><code>Error.IOError.NotFound
+AppError.UserCancelled           // local variant — unqualified under the group
+</code></pre></div>
+<p>When a variant name is unique across all group members, it may be accessed directly:</p>
+<div class="highlight"><pre><span></span><code>Error.NotFound                   // OK if NotFound exists in exactly one member
+</code></pre></div>
+<p>When ambiguous, qualified access is required:</p>
+<div class="highlight"><pre><span></span><code>group G {
+    A,    // enum with variant X
+    B,    // enum with variant X
+}
+G.X                              // ERROR: ambiguous — X exists in both A and B (E1039)
+G.A.X                            // OK
+</code></pre></div>
+<p>A member's qualifier is its bare type name, and it reaches the member only while
+no other member shares it. Members that share a bare name are named by their own
+paths, which always work:</p>
+<div class="highlight"><pre><span></span><code>group ZigErr { zerr.fs.File.OpenError, zerr.fs.Dir.OpenError }
+ZigErr.OpenError.AccessDenied    // ERROR: two members are named OpenError (E1039)
+zerr.fs.Dir.OpenError.NotDir     // OK: the member&#39;s own path
+</code></pre></div>
+<p>Only the variants of a group's enum members count toward <code>Group.Variant</code>. A
+struct member is a type, not a value, so a struct member sharing a variant's
+name makes nothing ambiguous.</p>
+<p>The same spellings name members in a match pattern: <code>Error.IOError.NotFound
+then</code>, or <code>Error.NotFound then</code> when <code>NotFound</code> is unique. A group declared in
+another module is reached through it, like any type: <code>errs.Error.NotFound</code>.</p>
+<hr />
+<h2 id="3-type-system">3. Type system</h2>
+<h3 id="31-a-union-of-its-members">3.1 A union of its members</h3>
+<p>A group names the union of its flattened members; the name adds no identity of
+its own. A group value is assignable wherever every one of its members is:
+to a group that holds them all (<code>CoreError</code> into <code>AppError</code>, which includes
+it), and to another group with the same members. A member type is not the
+group: <code>IOError</code> widens to <code>AppError</code>, and narrows back only explicitly.</p>
+<h3 id="32-member-identity-preserved">3.2 Member identity preserved</h3>
+<p>A value's identity is determined by its source type — not by the group that wraps it. <code>Error.IOError.NotFound</code> and <code>IOError.NotFound</code> are the same value, of the same type: a group creates no values, so spelling a variant through the group names the member's value and types it as the member. It widens to the group wherever one is expected.</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Type</th>
+<th>Identity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IOError.NotFound</code></td>
+<td><code>IOError</code></td>
+<td><code>IOError::NotFound</code></td>
+</tr>
+<tr>
+<td><code>Error.IOError.NotFound</code></td>
+<td><code>IOError</code></td>
+<td><code>IOError::NotFound</code> (same)</td>
+</tr>
+<tr>
+<td><code>Error.NotFound</code> (unique in <code>Error</code>)</td>
+<td><code>IOError</code></td>
+<td><code>IOError::NotFound</code> (same)</td>
+</tr>
+<tr>
+<td><code>const e :: Error is IOError.NotFound</code></td>
+<td><code>Error</code></td>
+<td><code>IOError::NotFound</code> (same)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-widening-and-narrowing">3.3 Widening and narrowing</h3>
+<p><strong>Widening (implicit):</strong> A value of a member type is assignable where the group type is expected, and so is a value of a group whose members the target holds (3.1). The compiler inserts a tag to track which member the value belongs to at runtime, and re-indexes it for the target group.</p>
+<div class="highlight"><pre><span></span><code>function open(path: string) -&gt; string | Error {
+    if path is &quot;&quot; then return IOError.NotFound  // widens to Error
+    if path is &quot;/&quot; then return FileError { path } // widens to Error
+    return &quot;ok&quot;
+}
+</code></pre></div>
+<p><strong>Narrowing (explicit):</strong> From a group type to a member type via <code>match</code> or <code>as</code>:</p>
+<div class="highlight"><pre><span></span><code>x as IOError          // succeeds if x is an IOError member; else the `else` branch runs
+</code></pre></div>
+<p>No implicit narrowing from a group type to a member type.</p>
+<h3 id="34-equality">3.4 Equality</h3>
+<p>Values compare equal when they carry the same source type and same payload. A
+group value compares with a value of one of its members; a group-qualified
+variant is such a value (3.2).</p>
+<div class="highlight"><pre><span></span><code>Error.IOError.NotFound == IOError.NotFound     → true
+e == Error.IOError.NotFound  (e :: Error)      → true when e holds IOError.NotFound
+IOError.NotFound == FileError { path: &quot;x&quot; }    → type error (different members)
+</code></pre></div>
+<p>Cross-member equality is a compile error, not <code>false</code>.</p>
+<h3 id="35-unions">3.5 Unions</h3>
+<p>A single group member replaces multiple individual arms in return types:</p>
+<div class="highlight"><pre><span></span><code>// Before
+function read() -&gt; string | IOError | CommonError | CompilerError
+
+// After
+function read() -&gt; string | Error
+</code></pre></div>
+<p>A function declared <code>returns string | Error</code> accepts <code>string</code>, any <code>Error</code> value, or any value of a member type (widened to <code>Error</code>).</p>
+<p>A union holds a group's members, not the group: <code>string | Error</code> is the same type as <code>string | IOError | CommonError | CompilerError</code>. A value keeps the member it is through the union and back — narrowing to <code>Error</code> with <code>as</code> or <code>match</code> gives the same <code>Error</code> value that went in, and <code>Error then</code> is a test that the union holds any of <code>Error</code>'s members. Diagnostics and <code>?</code> still name the group as written (<code>string | &gt;Error</code>).</p>
+<hr />
+<h2 id="4-pattern-matching">4. Pattern matching</h2>
+<h3 id="41-exhaustiveness">4.1 Exhaustiveness</h3>
+<p>Matching on a group must cover every member. This is a <strong>flat</strong> check over the expanded member list.</p>
+<div class="highlight"><pre><span></span><code>group Error { IOError, CommonError, FileError }
+
+match err {
+    IOError.NotFound then { }
+    IOError.PermissionDenied then { }
+    // IOError.EOF missing → not exhaustive
+    CommonError.* then { }       # wildcard covers all CommonError variants
+    FileError { path } then { }
+}
+</code></pre></div>
+<p>An exhaustive match requires either:
+- a pattern for every variant in every enum member, plus every struct member, or
+- a <code>*</code> wildcard for any remaining enum members, or
+- an <code>else</code> arm</p>
+<h3 id="42-enum-patterns">4.2 Enum patterns</h3>
+<div class="highlight"><pre><span></span><code>match err {
+    Error.IOError.NotFound then { }      # single variant
+    Error.IOError.* then handle_io(err), # all IOError variants (narrows to IOError)
+    else { }
+}
+</code></pre></div>
+<p>Inside <code>Error.IOError.*</code>, the bound value is narrowed to <code>IOError</code>.</p>
+<h3 id="43-struct-patterns">4.3 Struct patterns</h3>
+<p>Struct members are matched with destructuring syntax:</p>
+<div class="highlight"><pre><span></span><code>match err {
+    Error.FileError { path } then print(path),
+    Error.ConfigError { key, value } then { }
+}
+</code></pre></div>
+<p>The struct is narrowed to its member type, and fields are available directly.</p>
+<h3 id="44-matching-on-unions-containing-groups">4.4 Matching on unions containing groups</h3>
+<div class="highlight"><pre><span></span><code>match result {
+    string then use(result),
+    Error then handle(result),      # catch-all for the group
+    Error.IOError.* then { }
+}
+</code></pre></div>
+<hr />
+<h2 id="5-collisions-and-ill-formed-programs">5. Collisions and ill-formed programs</h2>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two members with the same bare name after flattening</td>
+<td>Allowed; the bare name reaches neither through the group (E1039 where it is written), and a non-exhaustive match names each by its module</td>
+</tr>
+<tr>
+<td>Unqualified variant name exists in more than one member</td>
+<td><strong>Error</strong> (ambiguous access, E1039)</td>
+</tr>
+<tr>
+<td>Cycle in group membership</td>
+<td><strong>Error</strong></td>
+</tr>
+<tr>
+<td>Empty group (no members)</td>
+<td><strong>Error</strong></td>
+</tr>
+<tr>
+<td>Group member is not a declared type</td>
+<td><strong>Error</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-runtime-representation">6. Runtime representation</h2>
+<p>A group value has a hidden tag to identify which member it belongs to, followed by the member's payload.</p>
+<div class="highlight"><pre><span></span><code>Group value = [member_index: u32] [payload: union { enum_variant, struct_instance }]
+</code></pre></div>
+<p>This is identical in shape to how tagged unions already work. The difference is that group members are named and traceable, whereas union arms are anonymous. A group value stored in a union is re-indexed to the union's position for the same member, and back when it is narrowed to the group, so the index always names a concrete member type.</p>
+<p>The member index is stable for the lifetime of the group declaration. Reordering members changes the index and is an ABI break.</p>
+<hr />
+<h2 id="7-grammar-sketch">7. Grammar sketch</h2>
+<div class="highlight"><pre><span></span><code>GroupDecl       := &#39;group&#39; IDENT &#39;{&#39; GroupBody &#39;}&#39;
+GroupBody       := ( GroupMember )*
+GroupMember     := TypePath  (&#39;,&#39; | NEWLINE)*
+TypePath        := IDENT ( &#39;.&#39; IDENT )*
+</code></pre></div>
+<hr />
+<h2 id="8-differences-from-the-prior-set-design">8. Differences from the prior <code>set</code> design</h2>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th><code>set</code> (old)</th>
+<th><code>group</code> (new)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Members</td>
+<td>Enums only</td>
+<td>Enums, structs, other groups</td>
+</tr>
+<tr>
+<td>Local variants</td>
+<td>Supported</td>
+<td>Not supported — everything is a member type</td>
+</tr>
+<tr>
+<td>Transitivity</td>
+<td>Nested qualifier chains (<code>AppErr.Std.IO.NotFound</code>)</td>
+<td>Flattened (<code>AppError.IOError.NotFound</code>)</td>
+</tr>
+<tr>
+<td>Duplicate types</td>
+<td>Error</td>
+<td>Deduplicated silently</td>
+</tr>
+<tr>
+<td>Runtime shape</td>
+<td>Enum discriminant only (zero-cost widen)</td>
+<td>Tag + payload (tagged union)</td>
+</tr>
+<tr>
+<td><code>is_set</code> flag</td>
+<td>Unused</td>
+<td>Not needed — flattened at parse/semantic time</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-implementation-checklist">9. Implementation checklist</h2>
+<ul>
+<li>[x] Rename <code>SET_TYPE</code> token to <code>GROUP_TYPE</code> and register the <code>group</code> keyword in the lexer.</li>
+<li>[x] Rename <code>SetDecl</code>, <code>SetSource</code>, <code>SetMember</code> AST nodes to <code>GroupDecl</code>, <code>GroupMember</code> throughout <code>ast.zig</code>, parser, semantic, and HIR layers.</li>
+<li>[x] Update <code>parseSetDecl</code> to <code>parseGroupDecl</code> and remove local variant parsing from the group body.</li>
+<li>[x] Create a <code>GroupTable</code> global registry with <code>GroupId</code> and flat <code>Member</code> entries (<code>qualifier</code>, <code>kind</code>, <code>id</code>).</li>
+<li>[x] Add <code>HIRType.Group(GroupId)</code> and remove <code>HIRType.Set(EnumId)</code> from <code>soxa_types.zig</code>.</li>
+<li>[ ] Unify the duplicated <code>CustomTypeInfo</code> definition across <code>types/types.zig</code> and <code>type_system.zig</code> into a single source of truth.</li>
+<li>[x] Implement flattening: when a group member is another group, expand its members into the declaring group's member list with deduplication by type identity.</li>
+<li>[x] Implement cycle detection by tracking visited group IDs during expansion.</li>
+<li>[x] Resolve <code>Group.Member.Variant</code> and <code>Group.Variant</code> as values of the group, and report a <code>Group.Variant</code> more than one enum member declares (<code>E1039</code>, <code>patterns.groupVariantMember</code>).</li>
+<li>[x] Add <code>group_instance: HIRGroup { member_index, payload }</code> to <code>HIRValue</code> for runtime group representation.</li>
+<li>[x] Implement implicit widening from member types to their enclosing group in the type checker (<code>typeIsGroupMember</code>, <code>typeMatchesUnionMember</code> in <code>unifyTypes</code>).</li>
+<li>[x] Emit the group tag at every construction site so a member value widens to its group on assignment, return, and call argument (<code>buildDoxaValue</code>, <code>isBoxedMemberType</code>).</li>
+<li>[x] Implement <code>match</code> on a group subject: <code>GroupCheck</code> decides an arm by boxed member index, and an arm naming a variant (<code>Group.Member.Variant</code>) additionally compares the extracted payload.</li>
+<li>[x] Implement domain wildcard patterns (<code>Group.Member.*</code>) that narrow the matched value to the member type.</li>
+<li>[x] Implement struct destructuring patterns (<code>Group.Member { field }</code>) inside <code>match</code> arms, including binding the fields as arm locals.</li>
+<li>[x] Implement <code>match</code> exhaustiveness checking across the flat expanded member list per §4.1: an arm list that leaves a member uncovered is a compile error (<code>E1033</code>) unless it ends in <code>else</code>.</li>
+<li>[ ] Implement <code>as</code> narrowing from a group type to a member type as a value transform. Observed working on 2026-10-19 (<code>d as zerr.fs.Dir.OpenError then</code> reads the narrowed binding; <code>test/misc/group_shared_member_names.doxa</code>); re-verify the case this item recorded before ticking it.</li>
+<li>[x] A group is the union of its members: a group widens into a group holding all of its members (<code>helpers.groupWithin</code>), re-indexed by <code>repack</code>.</li>
+<li>[x] Members sharing a bare name: allowed; the qualifier reaches a member only while unique (<code>patterns.groupMemberType</code>), and written through the group a shared one is E1039 (<code>reportSharedQualifier</code>).</li>
+<li>[ ] Implement cross-member equality as a compile error.</li>
+<li>[x] Add group type handling to the native LLVM backend: <code>GroupCheck</code> and <code>GroupExtractPayload</code> lower against <code>%DoxaValue</code>, and group members are wrapped like union arms.</li>
+<li>[x] Validate that <code>registerSpecificSymbol</code> uses the correct <code>.Group</code> kind instead of <code>.Enum</code> for imported group symbols.</li>
+<li>[x] Read a group's member names from the group table's expanded members (the fixed-2 allocation is gone).</li>
+<li>[ ] Give the group-cycle error (<code>E1003</code>) a real source location; it currently reports <code>:0:0</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

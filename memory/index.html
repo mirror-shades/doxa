@@ -1,0 +1,1097 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../math/">
+      
+      
+        <link rel="next" href="../methods/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Memory - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#memory-management" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Memory
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Principles
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Principles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#every-block-is-a-lifetime-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      Every Block is a Lifetime Boundary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plain-stores-copy-only-shares" class="md-nav__link">
+    <span class="md-ellipsis">
+      Plain Stores Copy; Only ^ Shares
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anonymous-block-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Anonymous Block Cleanup
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parameter-aliasing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parameter Aliasing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#native-runtime-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Native Runtime Model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#seeing-where-memory-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Seeing where memory goes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-characteristics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Performance Characteristics
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance Characteristics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#advantages" class="md-nav__link">
+    <span class="md-ellipsis">
+      Advantages
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trade-offs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#known-trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Known Trade-offs
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#edge-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Edge Cases
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Edge Cases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cyclic-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      Cyclic References
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dangling-pointers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dangling Pointers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-leaks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Memory Leaks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#large-allocations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Large Allocations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analysis-phase-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Analysis-Phase Scopes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lexer-lifetime-borrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lexer-Lifetime Borrowing
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="memory-management">Memory Management</h1>
+<p>Doxa's memory system uses arena-based scoping to provide automatic management that is consistent, predictable, and fast. Doxa does not use garbage collection. It relies on arena allocations tied to block scopes.</p>
+<h2 id="core-principles">Core Principles</h2>
+<h3 id="every-block-is-a-lifetime-boundary">Every Block is a Lifetime Boundary</h3>
+<p>The fundamental rule is that <strong>every <code>{</code> creates a lexical lifetime boundary and every <code>}</code> ends it.</strong> The compiler may represent that boundary without creating a physical arena when the block contains only primitives, borrows, or other trivially managed values. When managed storage is required, the arena is entered and all memory allocated within that scope is freed in O(1) time.</p>
+<div class="highlight"><pre><span></span><code>fn registerEmployee(name :: string, age :: int) returns Employee
+{ # arena scope created for this function body
+    return $Employee {name is name, age is age}
+} # arena scope bulk-freed — returned value is copied (or constructed) into the caller&#39;s arena
+</code></pre></div>
+<p>Nothing can outlive its allocating scope. This means:
+- Any value returned from a scope must be deep-copied into the parent scope's arena.
+  The compiler satisfies this either by cloning after the fact or, for a value
+  built directly in the <code>return</code>, by constructing it in the parent arena.
+- There are no dangling pointers, no use-after-free, no memory leaks.
+- Deep copies are the cost of this guarantee; aliases are the escape hatch.</p>
+<h3 id="plain-stores-copy-only-shares">Plain Stores Copy; Only <code>^</code> Shares</h3>
+<p>Two names never share an array or a struct unless the source says so. A
+plain store of a value another binding holds (a variable, a field, an
+element) copies it: <code>var b is a</code>, <code>x is a</code>, <code>return a</code>, <code>arr[i] is a</code>,
+<code>o.f is a</code>, <code>@push(arr, a)</code>. A fresh value (a literal, a call's result) is
+moved, with no copy. Sharing is written with <code>^</code>: a <code>^</code> parameter
+(<code>f(^x)</code>) and an <code>each n in ^items</code> loop, whose body changes the elements
+through <code>n</code>. A string's bytes are written once, so whether two names share
+them is never observable: a string store shares, and a string variable still
+grows in place (<a href="../strings/#values-and-variables">strings.md</a>).</p>
+<h3 id="anonymous-block-cleanup">Anonymous Block Cleanup</h3>
+<p>The easiest mental model: curly braces are where memory arenas are created and destroyed. Anonymous blocks are a tool for controlling memory lifetime within a function.</p>
+<div class="highlight"><pre><span></span><code>fn processData(id :: int) returns Employee | nothing {
+    var result :: Employee | nothing is nothing
+    { # anonymous arena created
+        const list is loadEmployeeList()   # large allocation
+        result is list.find(id)            # deep-copied out to parent arena
+    } # arena bulk-freed — list is gone
+    return result
+}
+</code></pre></div>
+<p>Because the anonymous block is its own managed lifetime, the large list is freed immediately after <code>result</code> is extracted, rather than living until the function returns. Whatever leaves a block (a value stored to an outer variable, the block's own value, a <code>return</code>) is copied out before its arena is reclaimed, as it is out of a function. A block that allocates nothing opens no arena. <code>if</code>, <code>match</code> and <code>while</code> bodies written with braces are blocks too; a loop's body reuses its loop's arena, reset every iteration.</p>
+<h3 id="parameter-aliasing">Parameter Aliasing</h3>
+<p>Pointers don't play well with arena scoping — a pointer into a freed arena is a dangling pointer. Instead, Doxa uses <strong>parameter aliasing</strong> (<code>^</code>). When you declare a parameter with <code>^</code>, the function accesses the <em>caller's</em> variable directly. This is the mechanism for mutation without pointers.</p>
+<div class="highlight"><pre><span></span><code>fn incByReturn(value :: int) returns int {
+    return value + 1   # caller gets a copy in its arena
+}
+
+fn incByAlias(^value :: int) {
+    value += 1          # caller&#39;s variable mutated in place, no allocation
+}
+</code></pre></div>
+<p>Aliases can be chained — <code>levelOne(^x)</code> calls <code>levelTwo(^x)</code> — passing the alias reference through the call stack.</p>
+<p><strong>Safety rules:</strong>
+- Only full variables can be aliased (no temporaries, fields, or array elements)
+- Explicit opt-in at call site with <code>^</code>
+- No alias duplication or mixing aliased/by-value parameters
+- Exclusive borrow during call (the aliased variable cannot be read or written elsewhere)</p>
+<h2 id="native-runtime-model">Native Runtime Model</h2>
+<p>The compiled backend implements the arena model directly. Each scope is an arena the program holds as a value (<code>src/runtime/scope_arena.zig</code>, a tree of <code>std.heap.ArenaAllocator</code> nodes), and every allocation names the arena it is made in — there is no implicit current scope. The compiler opens one arena per function body, per loop body and per block (<code>doxa_scope_enter(parent)</code>, reset each iteration with <code>doxa_scope_reset</code>, closed with <code>doxa_scope_exit</code>), and drops every arena nothing allocates in. The program root scope (<code>doxa_scope_root</code>) is created once at the start of <code>doxa_program_main</code> and is never freed — the OS reclaims it at process exit. Exited scope nodes are not returned to the OS: they are rewound and kept on a bounded spare list (at most 64 nodes, each keeping at most 64 KiB of its buffers), so entering a scope does not cost a page allocation and the memory held for reuse stays bounded.</p>
+<p>Loop bodies have two logical lifetimes: a loop scope for state that persists between iterations and a body scope for iteration-local values. The body arena is entered once, reset at each iteration boundary, and exited once when the loop ends. <code>continue</code> resets the body before continuing; <code>break</code> exits both scopes; <code>return</code> unwinds all active scopes after preparing any escaping result.</p>
+<p>All heap values are allocated from the <strong>current</strong> scope arena:</p>
+<table>
+<thead>
+<tr>
+<th>Value kind</th>
+<th>Allocation path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrays</td>
+<td><code>doxa_array_new</code> → <code>doxa_scope_alloc</code> (header + data)</td>
+</tr>
+<tr>
+<td>Strings</td>
+<td><code>doxa_str_clone</code>, <code>doxa_str_concat</code>, <code>doxa_substring</code>, …</td>
+</tr>
+<tr>
+<td>Structs</td>
+<td><code>doxa_scope_alloc</code> (contiguous <code>i64</code> field array)</td>
+</tr>
+</tbody>
+</table>
+<p>Because a value can only be reached while its allocating scope is on the stack, values that escape a scope are <strong>rehomed into the destination scope</strong>:</p>
+<ul>
+<li><strong>Copy or rehome on store.</strong> A store of a value a binding already holds is a copy (a <code>clone</code> into the destination's arena), as the language requires. A fresh value is re-homed instead: kept where it is when its arena outlives the destination, copied when it could be destroyed first. The arena pass settles every re-home whose arenas are static; the rest check at runtime (<code>scope_arena.isEqualOrDescendant</code>).</li>
+<li><strong>Globals</strong> live in the program-root arena. Storing a new value into a global places it there. In-place mutations (<code>@push</code>, <code>arr[i] is x</code>, <code>n.field is …</code>) write through the existing root-owned object — they do not snapshot it.</li>
+<li><strong>By-value parameters</strong> a callee changes are copied on entry, so the caller's value is untouched. A change is any write through the parameter: a field or element store, an in-place intrinsic, <code>each … in ^p</code>, a method that writes its receiver, or lending it to a <code>^</code> parameter the callee writes through. Rebinding the parameter (<code>p is other</code>) is not a change. A parameter the body only reads is not copied.</li>
+<li>
+<p><strong>Strings</strong> have bytes that are written once, so a copy is observationally identical to keeping the original: the compiler decides every string store statically, with no runtime check. A string variable is a buffer, <code>(ptr, len, cap)</code>: an append writes only into its own spare room and moves to a bigger buffer in the variable's arena when full, leaving the old bytes for every value that still shows them. A by-value string parameter needs no copy on entry: its buffer starts with no spare room, so the callee's first append moves it into the callee's arena.</p>
+</li>
+<li>
+<p><strong>Clone on return.</strong> A function frees its body scope on <code>return</code>; a heap
+  return value is placed in the caller's arena first. A struct or array
+  literal written in the <code>return</code> is built there directly, with the literals
+  nested in it, so the deep copy is folded into construction.</p>
+</li>
+<li><strong>Placed on element and field store.</strong> A heap value stored into an array or a struct is placed in the arena that container lives in (the <code>ArrayHeader.scope</code> field, or a struct's header), copied there or re-homed, which is what makes <code>^</code>-aliased containers safe — a value built in a callee is copied into the caller's container before the callee tears down. The store itself then keeps it as given. A literal stored this way is built in the container's arena to begin with. A fixed array has no header: where it lives is known at compile time (its owner's storage, or what holds it), and that arena is used.</li>
+</ul>
+<p>Structs and arrays are cloned recursively: string fields and array fields are re-cloned into the destination arena, so a deep copy is genuinely independent of the source.</p>
+<h2 id="seeing-where-memory-goes">Seeing where memory goes</h2>
+<p><code>--emit-memory</code> writes the compiler's own account of a program's memory beside
+the binary, and <code>doxa report</code> prints it:</p>
+<div class="highlight"><pre><span></span><code>doxa run app.doxa --emit-memory
+doxa report app
+</code></pre></div>
+<ul>
+<li><strong>Allocations:</strong> every allocation site, its type, the arena it lands in (a
+  function's, a loop's, a block's, the caller's, a <code>^</code> argument's, the root),
+  and when that arena is reclaimed, with the line of each explicit <code>return</code>
+  that closes it.</li>
+<li><strong>Copies kept:</strong> each copy the compiler placed, a <code>clone</code> it decided
+  statically or a <code>rehome</code> it left to a runtime check, with what the copy is
+  for (returned, stored to a longer-lived variable, carried out of a loop, …).</li>
+<li><strong>Copies removed:</strong> copies the compiler proved unnecessary, because the
+  value already lives where it is going or nothing used it.</li>
+<li><strong>Arenas dropped:</strong> arenas nothing allocates in, and <code>@caller</code> parameters a
+  function never needs, which the compiler removed.</li>
+<li><strong>Retention:</strong> what a loop makes every iteration that no iteration
+  reclaims: a value kept by a global (the root arena grows by it every
+  iteration, until the program ends), one carried across iterations in a
+  variable outside the loop (it stays until the function returns; a block
+  around the loop and that variable reclaims it at the block's <code>}</code>), or one
+  that lands in an enclosing loop's arena. Built and run with
+  <code>--instrument=memtrace</code> too, each row also says what it allocated in that
+  run.</li>
+</ul>
+<p>The rows come from the decisions the compiler made, so they always match the
+program it built. The flag changes nothing in the program itself.</p>
+<p><code>--instrument=memtrace</code> measures the same sites while the program runs, and
+<code>doxa report</code> adds four tables:</p>
+<ul>
+<li><strong>Allocations by site:</strong> the bytes each site asked for, how many
+  allocations that took (a deep copy counts its nested ones to the copy's
+  site), and the most the site held at once.</li>
+<li><strong>Arenas:</strong> for each place that opens an arena, how many it opened and reset,
+  the most one of them took from the system, and the bytes released when they
+  were reclaimed, plus what the root arena holds at exit (what globals retain).</li>
+<li><strong>Root growth by site:</strong> the bytes each site put into the root arena,
+  which is never reclaimed: which code grew what globals retain.</li>
+<li><strong>Runtime-checked copies:</strong> for each <code>rehome</code> of an array or struct, how
+  often it copied and how often the value already lived where it was going.</li>
+</ul>
+<p>A traced binary runs slower and is a diagnostic build: never time it. Without
+the flag nothing is counted and the program is unchanged.</p>
+<p><code>--instrument=memcheck</code> checks the memory model while the program runs. When
+an arena is reset or closed, its memory is filled with a poison byte (<code>0xDD</code>)
+and kept aside, never reused. Every read of a string, array or struct
+first checks that it is not in such memory, and a read that is faults:</p>
+<div class="highlight"><pre><span></span><code>Read of memory its arena reclaimed at app.doxa:12:9
+</code></pre></div>
+<p>That can happen only through a compiler or runtime bug, since the compiler
+proves every value outlives its uses, so it exits with status 2, like
+<code>unreachable</code>. Kept memory is capped at 256 MiB, oldest freed first. A stale
+read into memory freed past the cap is not caught. Combine it with the other
+members (<code>--instrument=memcheck,memtrace</code>); it is a diagnostic build too.</p>
+<h2 id="performance-characteristics">Performance Characteristics</h2>
+<h3 id="advantages">Advantages</h3>
+<ul>
+<li><strong>Fast allocation:</strong> Arena allocation is bump-pointer, extremely efficient</li>
+<li><strong>Bulk deallocation:</strong> Scopes clean up in O(1) by rewinding their arena; the node and up to 64 KiB of its buffers are kept for the next scope</li>
+<li><strong>Cache-friendly:</strong> Related data allocated contiguously within the arena</li>
+<li><strong>No GC pauses:</strong> Deterministic cleanup timing, scope-exit bounded</li>
+<li><strong>Memory safe:</strong> No dangling pointers, no use-after-free, no leaks by construction</li>
+</ul>
+<h3 id="trade-offs">Trade-offs</h3>
+<ul>
+<li><strong>Memory usage:</strong> Arenas hold all memory until scope exit (no incremental free)</li>
+<li><strong>No heap compaction:</strong> Memory fragmentation within arenas</li>
+<li><strong>Scope lifetime:</strong> Objects can't outlive their allocating scope</li>
+<li><strong>Deep copy cost:</strong> Return values are copied between scopes</li>
+</ul>
+<h3 id="known-trade-offs">Known Trade-offs</h3>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Arena buffer accumulation on resize</strong> — When an array grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers.</td>
+<td>All buffers bulk-freed on scope exit in O(1).</td>
+</tr>
+<tr>
+<td><strong>A described struct carries a two-word header</strong> — its descriptor and its owning arena, just before its fields, as an array header carries its arena. A scalar-only struct that is never reflected and never crosses a container/union/signature boundary has no descriptor and no header, and is cloned with a typed word copy (B2/B3-lite).</td>
+<td>Needed for <code>@string(struct)</code>, descriptor-backed recursive cloning, and placing a field's string or box in the struct's own arena. 16 bytes per described struct, reclaimed with its arena; there is no global registry.</td>
+</tr>
+<tr>
+<td><strong>Empty array literals require an element type</strong> — <code>var x is []</code> is a compile error (E6019); the element type must come from an annotation (<code>var x :: int[] is []</code>) or surrounding context (<code>x = []</code>, <code>foo([])</code>, <code>return []</code>).</td>
+<td>An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="edge-cases">Edge Cases</h2>
+<h3 id="cyclic-references">Cyclic References</h3>
+<p>Scope cleanup prevents cycles by design. A value's arena outlives all references to it.</p>
+<h3 id="dangling-pointers">Dangling Pointers</h3>
+<p>Objects can't outlive their scope. There are no pointers in user code; aliases are scoped to the call.</p>
+<h3 id="memory-leaks">Memory Leaks</h3>
+<p>Scopes guarantee cleanup. A function's arena is freed when it returns, and a loop's at the end of every iteration.</p>
+<h3 id="large-allocations">Large Allocations</h3>
+<p>Controlled through scope-based cleanup timing: a loop body's allocations are reclaimed every iteration, a block's at its <code>}</code>, and a helper function's when it returns.</p>
+<h3 id="analysis-phase-scopes">Analysis-Phase Scopes</h3>
+<p>During semantic analysis, a parallel scope tree is maintained by <code>MemoryManager</code> / <code>ScopeManager</code> (see <code>src/utils/memory.zig</code>). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime arenas and are cleaned up after IR generation.</p>
+<h3 id="lexer-lifetime-borrowing">Lexer-Lifetime Borrowing</h3>
+<p>The AST borrows lexer-owned buffers: string literal contents and the lexemes of tokens inside format-string placeholders (<code>{@string(x)}</code>) are slices into a <code>LexicalAnalyzer</code>'s buffers. A lexer must not be freed while the AST it produced is still alive. The main-file lexer is deliberately leaked into the analysis arena for this reason; module and placeholder lexers transfer ownership of their string buffers (<code>takeOwnershipOfStrings</code>) before deinit. The analysis arena reclaims everything at program end.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

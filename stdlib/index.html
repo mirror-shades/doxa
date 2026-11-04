@@ -1,0 +1,1255 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../methods/">
+      
+      
+        <link rel="next" href="../stdlib-api/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Standard Library - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#standard-library" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Standard Library
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-to-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      How to use
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zig-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Zig errors
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#file" class="md-nav__link">
+    <span class="md-ellipsis">
+      File
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#host" class="md-nav__link">
+    <span class="md-ellipsis">
+      Host
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#http" class="md-nav__link">
+    <span class="md-ellipsis">
+      HTTP
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#io" class="md-nav__link">
+    <span class="md-ellipsis">
+      IO
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#json" class="md-nav__link">
+    <span class="md-ellipsis">
+      JSON
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#math" class="md-nav__link">
+    <span class="md-ellipsis">
+      Math
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Methods
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#process" class="md-nav__link">
+    <span class="md-ellipsis">
+      Process
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#random" class="md-nav__link">
+    <span class="md-ellipsis">
+      Random
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#time" class="md-nav__link">
+    <span class="md-ellipsis">
+      Time
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="standard-library">Standard Library</h1>
+<h2 id="how-to-use">How to use</h2>
+<p>The standard library is imported like any other module. <code>@std()</code> is its specifier, the string <code>"std//std.doxa"</code> (the file <code>std.doxa</code> under the <code>std</code> root; see <a href="../modules/#specifiers">Modules</a>).
+<div class="highlight"><pre><span></span><code>module std from @std()
+</code></pre></div></p>
+<h2 id="zig-errors">Zig errors</h2>
+<p><code>std.zerr.ZigError</code> is an ordinary enum holding every error name in the bundled
+Zig standard library. It is opt-in:</p>
+<div class="highlight"><pre><span></span><code>import zerr from @std()
+
+const e is zerr.ZigError.AccessDenied
+</code></pre></div>
+<p>Like any enum, a <code>match</code> on it needs an <code>else</code> (or every variant). The enum is
+generated from the bundled Zig sources by <code>zig build zerr</code>; <code>zig build test</code>
+runs <code>check zerr</code> and fails when the committed <code>std/zerr/zerr.doxa</code> is stale.</p>
+<p>A std function that can fail returns <code>T | zerr.ZigError</code>, the error named as
+Zig names it (<code>ZigError.FileNotFound</code>, <code>ZigError.AccessDenied</code>). Nothing maps
+Zig's errors onto a coarser enum. <code>zerr.StdError</code> is an ordinary group of
+<code>ZigError</code> and Doxa's own runtime errors, <code>error.Method</code>, for code that
+handles both:</p>
+<div class="highlight"><pre><span></span><code>import zerr, error from @std()
+
+function describe(e :: zerr.StdError) {
+    match e {
+        zerr.ZigError then @print(&quot;Zig: {e}\n&quot;),
+        error.Method then @print(&quot;Doxa: {e}\n&quot;),
+    }
+}
+</code></pre></div>
+<p>No std function reports a result through state a later call reads: a second
+result is a struct field, and an error is the returned union.</p>
+<h2 id="build">Build</h2>
+<p><code>std.build</code> drives the compiler from a build script. <code>execute(c)</code> compiles
+every artifact in a <code>Context</code> and ends the script: it exits 0 when all compile,
+with the compiler's status when one fails, and with 1 (after printing why)
+when the compiler could not run or ended by a signal. <code>run(c)</code> does the same
+work and returns the result instead, as <code>process.Term | zerr.ZigError</code>: how
+the first failing compile ended, or the last one. A cross target with no OS is
+<code>ZigError.MissingOperatingSystem</code>.</p>
+<h2 id="file">File</h2>
+<p><code>std.file</code> reads, writes and lists files and directories relative to the
+working directory. A failing call returns <code>zerr.ZigError</code>, named as Zig names
+it: <code>FileNotFound</code>, <code>PathAlreadyExists</code>, <code>NotDir</code>, <code>DirNotEmpty</code> (deleting a
+non-empty directory without <code>recursive</code>), <code>AccessDenied</code>. An empty path is
+<code>BadPathName</code>. <code>isDir</code>, <code>isFile</code> and <code>isPresent</code> answer a question and never
+fail.</p>
+<h2 id="host">Host</h2>
+<h2 id="http">HTTP</h2>
+<p><code>std.http</code> provides a buffered client plus the loopback socket primitives that
+the sequential server layer builds on.</p>
+<div class="highlight"><pre><span></span><code>module std from @std()
+
+function printResponse(response :: Response) {
+    @print(&quot;status {response.statusCode()}\n&quot;)
+    @print(&quot;{response.body()}\n&quot;)
+    const content_types is response.header(&quot;content-type&quot;)
+    if @length(content_types) &gt; 0 then {
+        @print(&quot;content type {content_types[0]}\n&quot;)
+    }
+}
+
+const response is std.http.get(&quot;https://example.com/&quot;)
+response as Response then {
+    const value is response
+    printResponse(value)
+}
+else {
+    @print(&quot;request failed\n&quot;)
+}
+</code></pre></div>
+<ul>
+<li><code>get(url)</code> returns <code>Response | zerr.ZigError</code>. HTTP status is data; a <code>404</code>
+  still returns a response, and <code>getText(url)</code> returns the body regardless of
+  status. A request that gets no response fails with the name Zig's client
+  gives it: <code>ConnectionRefused</code>, <code>UnknownHostName</code>, <code>Timeout</code> when the deadline
+  passes, <code>HttpConnectionClosing</code> when the server closes without answering,
+  <code>TooManyHttpRedirects</code>, <code>HttpHeadersInvalid</code> for a header line that could
+  break framing.</li>
+<li><code>Request.new()</code> creates request settings with an empty <code>headers</code> array and
+  defaults of a 30-second response-read timeout and three followed redirects.
+  Each header entry is a <code>"Name: value"</code> string. Set <code>body</code>, <code>timeout_ms</code>, or
+  <code>max_redirects</code> on the request before calling
+  <code>Response.send(method, url, req)</code>. <code>post(url, ^req)</code>, <code>put(url, ^req)</code>,
+  <code>delete(url, ^req)</code>, and <code>head(url, ^req)</code> are thin method-specific wrappers
+  over it.</li>
+</ul>
+<p><div class="highlight"><pre><span></span><code>var req is std.http.Request.new()
+req.body is &quot;hello&quot;
+@push(req.headers, &quot;Content-Type: text/plain&quot;)
+@push(req.headers, &quot;X-Trace: demo&quot;)
+const response is std.http.post(&quot;https://example.com/submit&quot;, ^req)
+</code></pre></div>
+- <code>Response.statusCode()</code>, <code>body()</code>, <code>header(name)</code>, and <code>hasHeader(name)</code> are
+  accessors. <code>header</code> returns every matching value in order and compares names
+  case-insensitively.
+- <code>timeout_ms</code> and <code>getWithTimeout(url, timeout_ms)</code> bound the whole exchange:
+  name resolution, connecting, the TLS handshake, sending, and receiving. A
+  value of <code>0</code> disables the deadline.
+- Redirects are followed up to <code>max_redirects</code> times (three by default); an
+  exhausted limit is <code>ZigError.TooManyHttpRedirects</code>. <code>Authorization</code>, <code>Proxy-Authorization</code>,
+  <code>Cookie</code>, and <code>Cookie2</code> are stripped when the redirect changes the strict
+  origin (scheme, host, or effective port). Other custom headers continue to
+  the destination.
+- The server primitives bind only to loopback: <code>listen(port)</code> (use <code>0</code> for an
+  ephemeral port), <code>localAddr(listener)</code>, <code>accept(listener)</code>, <code>close(handle)</code>,
+  and the request/response pair <code>readRequest(connection)</code> /
+  <code>ServerRequest.take(connection)</code> and
+  <code>respond(connection, status, headers, body)</code>. <code>readRequest</code> is
+  <strong>non-blocking</strong>: it returns <code>1</code> when a request is ready (read it with
+  <code>ServerRequest.take</code>, a <code>ServerRequest</code> whose <code>.verb</code>, <code>.target</code>, and
+  <code>.body_text</code> hold the parsed fields, with <code>header(name)</code> / <code>hasHeader(name)</code>
+  reading repeated request headers case-insensitively), <code>0</code> when none has
+  arrived yet (retry on the next <code>Readable</code> event), and <code>-1</code> once the
+  connection has ended; it returns <code>int | zerr.ZigError</code>, the error being
+  <code>InvalidHandle</code> for a handle the library does not know. A malformed or oversized request never reaches the
+  program: the library answers it (400, 413, 417, or 431) and reports the
+  connection <code>Closed</code>. <code>respond</code> must follow a successfully parsed request
+  (otherwise it is <code>ZigError.NotOpenForWriting</code>); its
+  <code>headers</code> argument is a CRLF-separated blob, and the library supplies
+  <code>Content-Length</code> and connection framing. A client that asks for
+  <code>Connection: close</code> gets it back, and <code>keepAlive(connection)</code> reports whether
+  the request may reuse the connection. <code>accept(listener)</code> is the low-level
+  primitive; a poll loop reads requests from <code>poll</code> events instead.</p>
+<ul>
+<li><code>poll(listener, timeout_ms)</code> waits across the listener and every live
+  connection at once and returns <code>Event[] | zerr.ZigError</code> (<code>InvalidHandle</code>
+  for a listener that is not open). Each <code>Event</code> carries a connection
+  <code>handle</code> and a <code>kind :: EventKind</code>: <code>Accepted</code> for a freshly accepted
+  connection, <code>Readable</code> for a complete request or message waiting, and
+  <code>Closed</code> once a connection has ended (<code>closeReason(connection)</code> says why).
+  One <code>poll</code> reports a connection at most once, and keeps reporting it while
+  messages remain unread. <code>timeout_ms == 0</code> polls immediately and a negative
+  value blocks until an event; closing the listener closes its connections and
+  is the way to stop a loop. Connections are served by background tasks, so a
+  slow peer never holds up another; <code>setLimit(limit, value)</code> adjusts the caps
+  and deadlines (open connections, header/body/message sizes, idle and read
+  deadlines) for connections opened afterwards. A server serves many
+  keep-alive clients without
+  blocking on any one connection by polling instead of calling <code>accept</code>
+  directly:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000) as std.http.Event[] else @panic(&quot;the listener closed&quot;)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else {
+            # 1 = request ready, 0 = wait for more bytes, -1 = ended.
+            const status is std.http.readRequest(event.handle) as int else -1
+            if status == 1 then {
+                const value is std.http.ServerRequest.take(event.handle)
+                std.http.respond(event.handle, 200, &quot;Content-Type: text/plain\r\n&quot;, &quot;hello {value.target}&quot;)
+            } else if status &lt; 0 then {
+                std.http.close(event.handle)
+            }
+        }
+    }
+}
+</code></pre></div>
+<ul>
+<li><code>Router</code> matches request paths to integer route ids as data:
+  <code>Router.new()</code>, <code>add(verb, pattern, id)</code>, and
+  <code>router.find(verb, path) → Route | nothing</code>. A pattern segment written
+  <code>:name</code> captures the matching path segment, and <code>Route.param(name)</code> reads the
+  capture. Matching is exact per segment and verb, so <code>/users/:id</code> matches
+  <code>/users/42</code> with <code>param("id") == "42"</code>, but not <code>/users/42/posts</code> or a
+  different verb. (<code>{}</code> placeholders are not usable: Doxa string literals
+  interpolate on <code>{</code>.)</li>
+</ul>
+<div class="highlight"><pre><span></span><code>var router is std.http.Router.new()
+router.add(&quot;GET&quot;, &quot;/users/:id&quot;, 1)
+
+const matched is router.find(&quot;GET&quot;, &quot;/users/42&quot;)
+matched as Route then {
+    const id is matched.param(&quot;id&quot;) as string else &quot;&quot;
+    @print(&quot;user {id}\n&quot;)
+}
+</code></pre></div>
+<ul>
+<li><code>download(url)</code> / <code>downloadUrl(url, destination)</code> use the same redirect,
+  timeout, and status handling as requests, but stream response bytes directly
+  to the destination file, and return the response status as
+  <code>int | zerr.ZigError</code>. A non-2xx status is the server's answer, not a
+  failure: its body is written like any other.</li>
+<li>WebSockets upgrade a connection after its handshake request has been read:
+  <code>isWebSocket(connection)</code> reports whether the handshake has completed, and
+  <code>upgradeWebSocket(connection)</code> completes the RFC 6455 handshake on a buffered
+  request that asked to switch protocols. <code>wsSend(connection, op, data)</code> sends
+  one frame; <code>wsNext(connection)</code> advances the decoder and returns <code>1</code> when a
+  message is ready (read it with <code>wsMessage</code>, whose <code>op</code> is <code>WsOp.Text</code>,
+  <code>Binary</code>, <code>Ping</code>, <code>Pong</code>, or <code>Close</code> and whose <code>data</code> is the payload), <code>0</code> when
+  none is waiting (retry on the next <code>Readable</code> event), <code>2</code> when the peer
+  closed, and <code>ZigError.ProtocolError</code> on a protocol or size violation. A
+  frame sent to a connection that has ended is <code>ZigError.Closed</code>. Fragmented
+  messages are reassembled before they are surfaced, and control frames are
+  surfaced rather than handled silently, so the caller owns ping/pong/close
+  policy. Frames are read in the background, so a partial frame from one peer
+  cannot stall other connections. A WebSocket with no incoming frame for
+  <code>Limit.IdleMs</code> (120 s by default) is closed as <code>CloseReason.IdleTimeout</code>;
+  until heartbeats land, a peer stays open by sending something, a ping
+  included, within it. A text message that is not valid UTF-8, a malformed close
+  frame, or a frame larger than 16 MiB fails the connection with the
+  corresponding Close code (<code>1007</code> / <code>1002</code> / <code>1009</code>).</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000) as std.http.Event[] else @panic(&quot;the listener closed&quot;)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else {
+            if not std.http.isWebSocket(event.handle) then {
+                const status is std.http.readRequest(event.handle) as int else -1
+                if status == 1 then {
+                    std.http.upgradeWebSocket(event.handle)
+                } else if status &lt; 0 then {
+                    std.http.close(event.handle)
+                }
+            }
+            if std.http.isWebSocket(event.handle) then {
+                var reading is true
+                while reading {
+                    const ws is std.http.wsNext(event.handle) as int else -1
+                    if ws == 1 then {
+                        const message is std.http.wsMessage(event.handle)
+                        if message.op == std.http.WsOp.Text then {
+                            std.http.wsSend(event.handle, std.http.WsOp.Text, message.data)
+                        } else if message.op == std.http.WsOp.Close then {
+                            std.http.wsSend(event.handle, std.http.WsOp.Close, message.data)
+                            std.http.close(event.handle)
+                            reading is false
+                        }
+                    } else if ws == 2 or ws &lt; 0 then {
+                        std.http.close(event.handle)
+                        reading is false
+                    } else {
+                        reading is false
+                    }
+                }
+            }
+        }
+    }
+}
+</code></pre></div>
+<p>Most servers only need the Go-flavoured sugar; the primitives above stay
+  public for full control:</p>
+<ul>
+<li><code>wsAccept(connection)</code> completes the handshake once the request is buffered
+    and returns <code>true</code> once the connection is a WebSocket (it is a no-op after).
+    It returns <code>false</code> while no request has arrived. A request that is not an
+    upgrade is answered <code>426 Upgrade Required</code>.</li>
+<li><code>wsRead(connection)</code> returns the next <code>Message</code>, <code>nothing</code> when none is
+    buffered yet or the peer closed, or an error on failure.</li>
+<li><code>wsWrite(connection, op, data)</code> sends a frame with an explicit opcode;
+    <code>wsText</code>, <code>wsBinary</code>, <code>wsPing</code>, <code>wsPong</code> name the common kinds, and
+    <code>wsClose(connection)</code> sends a Close frame and drops the connection.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else if std.http.wsAccept(event.handle) then {
+            var reading is true
+            while reading {
+                const m is std.http.wsRead(event.handle)
+                m as Message then {
+                    const message is m
+                    if message.op == std.http.WsOp.Text then {
+                        std.http.wsText(event.handle, &quot;echo: {message.data}&quot;)
+                    } else if message.op == std.http.WsOp.Close then {
+                        std.http.wsClose(event.handle)
+                        reading is false
+                    }
+                } else {
+                    reading is false
+                }
+            }
+        }
+    }
+}
+</code></pre></div>
+<ul>
+<li>Client WebSockets (dialing out to <code>ws://</code> / <code>wss://</code>) are not available yet;
+  see phase R4 of <code>plan/http-robustness.md</code>.</li>
+</ul>
+<h2 id="io">IO</h2>
+<p><code>std.io</code> writes to standard output and standard error and reads standard
+input.</p>
+<ul>
+<li><code>print(text)</code> and <code>println(text)</code> write to standard output, <code>eprint</code> and
+  <code>eprintln</code> to standard error; the <code>ln</code> forms add the platform's line ending
+  (<code>\r\n</code> on Windows). Each returns <code>nothing | zerr.ZigError</code>
+  (<code>ZigError.WriteFailed</code> when the stream cannot be written).</li>
+<li><code>input()</code> returns the next line without its <code>\n</code> or <code>\r\n</code>,
+  <code>inputByte()</code> the next byte, and <code>inputPrompt(prompt)</code> prints <code>prompt</code> and
+  then reads a line. At the end of input each returns <code>nothing</code>: running out of
+  input is an outcome, not an error. A failed read is a <code>zerr.ZigError</code>
+  (<code>ReadFailed</code>; <code>StreamTooLong</code> for a line longer than the 4 KiB input
+  buffer).</li>
+<li>Every read goes through one buffered reader, so a byte read after a line
+  sees what the line read buffered past it.</li>
+</ul>
+<h2 id="json">JSON</h2>
+<p><code>std.json</code> parses a document into a handle-based tree and writes one back out.
+A <code>Node</code> is a small generation-checked handle into a single document slot, so
+retaining one past the next <code>parse</code> is safe: it reads as <code>Kind.Invalid</code> rather
+than a dangling value.</p>
+<div class="highlight"><pre><span></span><code>module std from @std()
+
+const result is std.json.Node.parse(&quot;{\&quot;name\&quot;:\&quot;doxa\&quot;,\&quot;stars\&quot;:5}&quot;)
+match result {
+    std.json.Node then {
+        const name is result.field(&quot;name&quot;)
+        match name {
+            std.json.Node then @print(&quot;{name.text()}\n&quot;)
+            else @print(&quot;no name\n&quot;)
+        }
+    }
+    else {
+        @print(&quot;malformed\n&quot;)
+    }
+}
+</code></pre></div>
+<ul>
+<li><code>parse(text)</code> returns <code>Node | zerr.ZigError</code>, the error named as Zig's JSON
+  parser names it: <code>SyntaxError</code> for a malformed document,
+  <code>UnexpectedEndOfInput</code> for one that stops early, <code>DuplicateField</code> for a
+  repeated key. Objects keep their key order.</li>
+<li>The writer refuses what that parser would reject, by the same name: a write
+  the grammar does not allow (a value where a key was expected, an unbalanced
+  <code>end()</code>, a second root value, NaN or infinity, a tetra's <code>both</code> or
+  <code>neither</code>) is <code>SyntaxError</code>, and <code>finish()</code> with a container still open or
+  nothing written is <code>UnexpectedEndOfInput</code>. Text that is not UTF-8 is
+  <code>InvalidUtf8</code>.</li>
+<li><code>kind()</code> never fails and returns a <code>Kind</code>: <code>Invalid</code>, <code>Null</code>, <code>Boolean</code>,
+  <code>Integer</code>, <code>Number</code>, <code>Text</code>, <code>Array</code>, or <code>Object</code>. An integer that the runtime
+  could not fit in <code>i64</code> or an exponent beyond the float range arrives as
+  <code>Number</code> (<code>1e400</code> reads as infinity from <code>floatValue()</code>).</li>
+<li><code>count()</code>, <code>element(index)</code>, <code>field(name)</code>, <code>key()</code>, <code>text()</code>, <code>intValue()</code>,
+  <code>floatValue()</code>, and <code>booleanValue()</code> are strict: a wrong kind, a missing
+  field, or an out-of-range index yields <code>nothing</code>. <code>count</code> works on arrays and
+  objects; <code>field</code> only on objects; the value accessors only on the matching
+  scalar kind.</li>
+<li>Writing mirrors the document shape: <code>beginObject()</code> / <code>beginArray()</code> open a
+  container, <code>writeKey(name)</code> precedes a member value, and <code>end()</code> closes it.
+  <code>finish()</code> returns the escaped text as <code>string | zerr.ZigError</code> and releases
+  the writer; the next writer call starts a fresh document. A refused write
+  refuses the rest of its document, and <code>finish()</code> reports it; the document
+  after it starts clean.</li>
+<li>The writer emits <code>\b</code>, <code>\f</code>, <code>\n</code>, <code>\r</code>, <code>\t</code> as their two-character escapes
+  and any other control byte below <code>0x20</code> as a lowercase <code>\u00xx</code> sequence. It
+  validates UTF-8 before quoting and refuses NaN or infinity.</li>
+</ul>
+<h2 id="math">Math</h2>
+<p><code>std.math</code> holds the numeric limits. Each is a constant expression, so a call
+folds to its value. Wrapping arithmetic is the <code>+%</code>, <code>-%</code> and <code>*%</code> operators,
+not a library call (<a href="../math/#overflow-and-wrapping">Overflow and wrapping</a>).</p>
+<div class="highlight"><pre><span></span><code>module std from @std()
+
+function inRange(x :: int, delta :: int) returns tetra {
+    return delta &lt;= 0 or x &lt;= std.math.maxInt() - delta
+}
+</code></pre></div>
+<ul>
+<li>Limits: <code>maxInt()</code> and <code>minInt()</code> (<code>i64</code>), <code>maxByte()</code> and <code>minByte()</code>
+  (<code>0xFF</code>, <code>0x00</code>), <code>maxFloat()</code> (the largest finite <code>float</code>), <code>minFloat()</code>
+  (<code>-maxFloat()</code>, the lowest finite <code>float</code>), and <code>minNormalFloat()</code> (the
+  smallest positive normal <code>float</code>).</li>
+</ul>
+<h2 id="methods">Methods</h2>
+<h2 id="process">Process</h2>
+<p><code>std.process</code> runs other programs and reads the program's own arguments and
+environment. Running a program comes in two forms: one passes a command line
+to the platform shell, the other starts a program directly with its arguments.</p>
+<div class="highlight"><pre><span></span><code>import process from @std()
+
+# Portable: no shell, so the path and arguments arrive as written.
+const run is process.execCaptureArgs(&quot;bin/tool&quot;, [&quot;--version&quot;]) as process.Run else {
+    return
+}
+if run.term.succeeded() then @print(run.stdout)
+
+# Shell: the command line is cmd.exe&#39;s on Windows, `sh`&#39;s elsewhere.
+const built is process.execOk(&quot;make all&quot;)
+</code></pre></div>
+<ul>
+<li><strong>Shell commands.</strong> <code>exec(command)</code> runs <code>command</code> and waits for it;
+  <code>execCapture(command)</code> also captures what it writes; <code>execOk(command)</code> says
+  whether it ran and exited 0. The text is handed to the platform shell
+  unchanged: <code>cmd.exe</code> on Windows, <code>sh -c</code> elsewhere. Its grammar is that
+  shell's: quoting, pipes, <code>%VAR%</code> or <code>$VAR</code>. On Windows <code>/</code> begins a switch,
+  so an unquoted relative program path must use <code>\</code> (<code>bin\tool</code>) or be quoted
+  (<code>"bin/tool"</code>); <code>bin/tool</code> runs <code>bin</code> with the switch <code>/tool</code>.</li>
+<li><strong>Programs.</strong> <code>execArgs(program, arguments)</code> runs <code>program</code> and waits for
+  it; <code>execCaptureArgs(program, arguments)</code> also captures what it writes. No
+  shell is involved: <code>program</code> is a path (<code>/</code> or <code>\</code> on Windows) or a name
+  looked up on <code>PATH</code>, and each argument arrives as one argument. These are
+  the form to use for a path a program computed, such as a build script
+  running what it just compiled. <code>execArgsEnv</code> and <code>execCaptureEnv</code> take two
+  more arrays, <code>env_keys</code> and <code>env_values</code>, set in the child's environment on
+  top of the parent's.</li>
+<li><strong>Results.</strong> The <code>exec</code> forms return a <code>Term</code>, how the child ended: <code>kind</code>
+  (<code>TermKind.Exited</code>, <code>Signal</code>, <code>Stopped</code> or <code>Unknown</code>, as Zig reports it) and
+  <code>code</code>, the exit status or signal number. <code>term.succeeded()</code> is "exited with
+  0". The capture forms return a <code>Run</code>: its <code>term</code>, and the child's <code>stdout</code>
+  and <code>stderr</code>. A non-zero exit is part of the result, not an error.</li>
+<li><strong>Failures</strong> are <code>zerr.ZigError</code> values, named as Zig names them: a program
+  that does not exist is <code>ZigError.FileNotFound</code>, one that cannot run
+  <code>ZigError.InvalidExe</code> or <code>ZigError.AccessDenied</code>. A failure means the
+  program never ran (or could not be waited for); nothing of the result is
+  built.</li>
+<li><strong>The program itself.</strong> <code>args()</code> returns every argument, the program's own
+  path first; <code>argc()</code> is how many, and <code>argv(index)</code> one of them, or
+  <code>error.Method.OutOfBounds</code>. <code>cwd()</code> is the working directory (or a
+  <code>ZigError</code>). <code>getenv(name)</code> is an environment variable as the program
+  started with it, or <code>nothing</code> when it is not set. <code>exit(code)</code> ends the
+  program with <code>code</code>; a POSIX parent sees its low byte.</li>
+</ul>
+<h2 id="random">Random</h2>
+<h2 id="time">Time</h2>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

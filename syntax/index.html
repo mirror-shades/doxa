@@ -1,0 +1,1365 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../alias/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Syntax - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#doxa-language-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Syntax
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-language-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core Language Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Core Language Features">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#primitive-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Primitive Types
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scalar" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scalar
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#composite" class="md-nav__link">
+    <span class="md-ellipsis">
+      Composite
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names" class="md-nav__link">
+    <span class="md-ellipsis">
+      Names
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#line-continuation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Line Continuation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arithmetic-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arithmetic Operators
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#comparison-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Comparison Operators
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Strings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arrays
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Arrays">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#array-storage-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      Array Storage Kinds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#control-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Control Flow
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Control Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pattern Matching
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#enum-variant-shorthand" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum variant shorthand
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error Handling
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unreachable" class="md-nav__link">
+    <span class="md-ellipsis">
+      unreachable
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#special-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Special Operators
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Special Operators">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#peek-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      Peek operator (?)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#range-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      Range (to)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collection-quantifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Collection Quantifiers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conditional-expressions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conditional Expressions
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conditional Expressions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#function-return-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      Function Return Types
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logic
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Logic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#first-order-logic" class="md-nav__link">
+    <span class="md-ellipsis">
+      First order logic
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="doxa-language-reference">Doxa Language Reference</h1>
+<h2 id="core-language-features">Core Language Features</h2>
+<p>A source file is UTF-8. A byte order mark at its very start is ignored; one
+anywhere else is an error.</p>
+<h3 id="primitive-types">Primitive Types</h3>
+<p>Doxa has two general categories of types, scalar and composite:</p>
+<h3 id="scalar">Scalar</h3>
+<p>Scalar types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.</p>
+<p>int (64 bit integer)
+float (64 bit floating point)
+byte (8 bit hex literal)
+string
+tetra (2 bit integer)
+enum
+nothing (void)</p>
+<p><code>int</code> and <code>byte</code> arithmetic never wraps silently. A <code>byte</code> is unsigned, so
+<code>0xFF + 0x01</code> and <code>0x00 - 0x01</code> fault, like <code>int</code> overflow, in every build mode;
+<code>+%</code>, <code>-%</code> and <code>*%</code> wrap modulo 256 on request (<a href="../math/#overflow-and-wrapping">Overflow and wrapping</a>).</p>
+<h3 id="composite">Composite</h3>
+<p>Composite types are constructed out of scalar types. They are</p>
+<p>array - must be homogenous
+struct - no classes, no inheretance, only composition
+group -  can be used as an umbrella type for enums and structs
+union - can be handled with switch statements and type narrowing, see page on unions for more info</p>
+<h3 id="names">Names</h3>
+<p>A name has one meaning wherever it can be seen. Doxa has no shadowing and no
+overloading:</p>
+<ul>
+<li>A declaration inside a function, a block, a loop or a pattern may not reuse a
+  name already visible where it appears: an enclosing local or parameter, or any
+  top-level name of the file. A file's top-level names are visible throughout
+  it, so a parameter may not share a name with a global declared further down
+  (E1035).</li>
+<li>A file binds each top-level name once, whether by a declaration, a <code>module</code>
+  alias, an <code>import</code>, or a <code>zig</code> block (E1002). Two imports of symbols that share
+  a name conflict; import one through a <code>module</code> alias instead
+  (<a href="../modules/">Modules</a>).</li>
+<li>A struct names each member once: no two fields, no two methods or functions,
+  and no method or function sharing a field's name (E1002).</li>
+<li>Functions and types are declared at file scope only (E2029), so a function
+  never hides another inside a body.</li>
+<li>Expressions, blocks and type expressions nest at most 256 deep (E2031).</li>
+<li>Only an identifier names a declaration: a function, parameter, method,
+  variable, field, type, enum variant or loop variable. A keyword (<code>to</code>, <code>at</code>,
+  <code>exists</code>, …) is refused where it is declared (E2032), since no expression
+  could refer to it.</li>
+</ul>
+<p>A binding that is not visible does not conflict, so sibling blocks may each
+declare the same name:</p>
+<div class="highlight"><pre><span></span><code>{
+    var t :: int is 1
+}
+{
+    var t :: string is &quot;two&quot;   # fine: the first `t` is out of scope
+}
+</code></pre></div>
+<p>Narrowing does not declare anything: inside <code>x as int then { … }</code> or a match
+arm, <code>x</code> is the same variable seen at a narrower type. Likewise, inside the
+branches of <code>const v is expr as T else { … }</code>, <code>v</code> is the declaration itself,
+holding the subject narrowed to that branch's type.</p>
+<h3 id="line-continuation">Line Continuation</h3>
+<p>A newline ends a statement. A statement, a declaration or a <code>return</code> holds one
+expression, and must end where that expression does: <code>const y is 5 6</code> is an
+error at the <code>6</code> (E2023). A statement that computes a value and drops it, such
+as a bare <code>x + 1</code>, does nothing and is a warning (W2012). To continue one expression across lines, begin the
+next line with <code>...</code>, which joins it to the line above:</p>
+<div class="highlight"><pre><span></span><code>function inRange(v :: int) returns tetra {
+    return v &gt;= 0
+        ...and v &lt;= 7
+}
+</code></pre></div>
+<p><code>...</code> must be the first thing on its line. Placed anywhere else it is an error:</p>
+<div class="highlight"><pre><span></span><code>return @length(&quot;ab&quot;) == 2 ...and true
+                          ^^^ EllipsisWithoutNewline: &#39;...&#39; continuation must follow a completed line
+</code></pre></div>
+<h3 id="arithmetic-operators">Arithmetic Operators</h3>
+<p>Arithmetic follows Python-like semantics. See the <a href="../math/">Arithmetic</a> page for full details on type promotion, division, and modulo.</p>
+<table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Name</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>+</code></td>
+<td>Addition</td>
+<td><code>1 + 2</code> → <code>3</code></td>
+</tr>
+<tr>
+<td><code>-</code></td>
+<td>Subtraction</td>
+<td><code>3 - 1</code> → <code>2</code></td>
+</tr>
+<tr>
+<td><code>*</code></td>
+<td>Multiplication</td>
+<td><code>2 * 3</code> → <code>6</code></td>
+</tr>
+<tr>
+<td><code>**</code></td>
+<td>Exponentiation</td>
+<td><code>2 ** 3</code> → <code>8</code></td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>Float division</td>
+<td><code>10 / 4</code> → <code>2.5</code></td>
+</tr>
+<tr>
+<td><code>//</code></td>
+<td>Integer division (floored)</td>
+<td><code>-7 // 2</code> → <code>-4</code></td>
+</tr>
+<tr>
+<td><code>%</code></td>
+<td>Modulo (floored)</td>
+<td><code>-7 % 2</code> → <code>1</code></td>
+</tr>
+</tbody>
+</table>
+<p>Compound assignment is supported for all arithmetic operators: <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>**=</code>.</p>
+<p><code>target op= value</code> computes its target's place once: in <code>a[k()] += 1</code>, <code>k()</code> runs once, and the element it reads is the one it writes.</p>
+<p><code>//=</code> and <code>%=</code> are integer-only, matching their binary forms: both operands must be <code>int</code> or <code>byte</code>.</p>
+<p><code>/=</code> is the exception that looks like the others but is not. Doxa's <code>/</code> is <em>float</em> division, so <code>/=</code> computes a <code>float</code> whatever the operands are — assigning that back into an <code>int</code> is a narrowing, which Doxa rejects everywhere else. Use <code>//=</code> for integer division:</p>
+<div class="highlight"><pre><span></span><code>var n is 10
+n /= 3      # Error: Float is not assignable to type Int
+n //= 3     # n is now 3
+
+var f is 10.0
+f /= 4      # f is now 2.5
+</code></pre></div>
+<p>Dividing or taking a remainder by zero is a runtime fault (<code>Division by zero at &lt;file&gt;:&lt;line&gt;:&lt;column&gt;</code>, exit 1; see <a href="../methods/#runtime-faults">Runtime faults</a>) rather than undefined behaviour. Float division is unaffected and follows IEEE 754, so <code>5 / 0</code> is <code>inf</code>.</p>
+<h3 id="comparison-operators">Comparison Operators</h3>
+<p><code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and <code>&gt;=</code> compare two numbers or two strings.
+Two tetras, two values of the same enum, or two <code>nothing</code>s compare with <code>==</code>
+and <code>!=</code> only. A group value compares through the member it holds, so
+<code>err == IOError.Denied</code> tests an error set against one of its members.
+Anything else — structs, arrays, functions, values of two different enums, an
+ordering of tetras or enums, or a union value — is a compile error (<code>E1016</code>).
+A union must be narrowed first:</p>
+<div class="highlight"><pre><span></span><code>var u :: int | string is 3
+const three is u as int then u == 3 else false
+</code></pre></div>
+<h3 id="strings">Strings</h3>
+<p>Double-quoted strings interpolate expressions in <code>{...}</code> anywhere a string expression is accepted:</p>
+<div class="highlight"><pre><span></span><code>var name is &quot;Doxa&quot;
+var greeting is &quot;Hello {name}&quot;
+@print(&quot;{greeting}\n&quot;)
+</code></pre></div>
+<p>A literal brace is written <code>\{</code> or <code>\}</code>. The escapes are <code>\"</code>, <code>\\</code>, <code>\n</code>, <code>\r</code>, <code>\t</code>,
+<code>\{</code>, <code>\}</code> and <code>\u{...}</code>; see <a href="../strings/#escapes">strings.md</a>.</p>
+<p>The <code>tetra</code> type represents a four cornered value with the possible states: <code>true</code>, <code>false</code>, <code>both</code>, and <code>neither</code>. For additional information see the tetra page.</p>
+<h3 id="arrays">Arrays</h3>
+<p>Arrays are homogeneous collections with type inference:</p>
+<div class="highlight"><pre><span></span><code>var nums :: int[] is [1, 2, 3]    # Explicit typing
+var strs is [&quot;a&quot;, &quot;b&quot;]            # Inferred as string[]
+
+# Invalid operations
+var mixed is [1, &quot;two&quot;, true]     # Error: mixed types
+@push(nums, &quot;four&quot;)                # Error: type mismatch
+</code></pre></div>
+<h4 id="array-storage-kinds">Array Storage Kinds</h4>
+<p>Doxa tracks how every array is stored, and that storage kind determines which builtins can mutate it.</p>
+<ul>
+<li><code>dynamic</code> — default for <code>var</code> arrays and anything returned from runtime helpers. These can grow and shrink freely.</li>
+<li><code>fixed</code> — any type annotation that names a literal size (for example, <code>int[4]</code>) produces a fixed array. Type aliases preserve this metadata, so wrapping <code>int[4]</code> in an alias and then declaring <code>var data :: MyAlias</code> still behaves as fixed storage with an immutable length/capacity.</li>
+<li><code>const literal</code> — a <code>const</code> binding that receives a compile-time literal (including nested literals) is tagged immutable. Any other <code>const</code> that aliases that value inherits the same storage kind.</li>
+</ul>
+<p>Mutating methods like <code>@push</code>, <code>@insert</code>, <code>@remove</code>, or <code>@clear</code> require dynamic storage. Coerce a fixed/const literal array into dynamic form by copying it into a mutable declaration:</p>
+<p><div class="highlight"><pre><span></span><code>const literal = [1, 2]
+var copy :: int[] is literal  # copy becomes dynamic and @push-friendly
+</code></pre></div>
+````</p>
+<h2 id="control-flow">Control Flow</h2>
+<h3 id="pattern-matching">Pattern Matching</h3>
+<p>```doxa
+enum Status { Success, Error, Pending }</p>
+<p>var result is match status {
+    .Success =&gt; "all good",
+    .Error =&gt; "failed",
+    else =&gt; "waiting"
+}
+```</p>
+<p>Match expressions must be exhaustive or include an <code>else</code> clause.</p>
+<h3 id="enum-variant-shorthand">Enum variant shorthand</h3>
+<p><code>.Variant</code> names a variant of the enum its position expects, and nothing else
+gives it a type. The context must be explicit: a parameter, an annotated or
+already-declared variable, a struct field, an annotated array, a return, or
+the other side of a comparison.</p>
+<p>```doxa
+var status :: Status is .Pending   # annotation
+status is .Success                 # declared variable
+if status == .Error then { … }     # comparison
+report(.Error)                     # parameter</p>
+<p>const bad is .Success              # error: no context; write <code>Status.Success</code>
+```</p>
+<p>A shorthand the expected enum does not declare is an error naming the enum.</p>
+<h3 id="error-handling">Error Handling</h3>
+<p>Errors are best handled with custom enum and type unions.</p>
+<p>```doxa
+enum Error {
+    TOO_BIG,
+    TOO_SMALL,
+}</p>
+<p>const res is intOrError()
+res as int then {
+    intsOnly(res) # narrowed to int
+} else {
+    match res { # else blocks do not narrow
+        Error.TOO_BIG then {
+            @print("result was too big")
+        }
+        Error.TOO_SMALL then {
+            @print("result was too small")
+        }
+        else { # we know this will never be reached
+            unreachable
+        }
+    }
+}</p>
+<p>```</p>
+<h3 id="unreachable"><code>unreachable</code></h3>
+<p>Use the <code>unreachable</code> keyword when a control-flow path should be impossible. It behaves like Zig's <code>unreachable</code>: the compiler treats it as a no-return expression for type checking and reaching it at runtime is a fault: <code>Reached unreachable code at &lt;file&gt;:&lt;line&gt;:&lt;column&gt;</code>, exit 2 (see <a href="../methods/#runtime-faults">Runtime faults</a>).</p>
+<h2 id="special-operators">Special Operators</h2>
+<h3 id="peek-operator">Peek operator (<code>?</code>)</h3>
+<p>Evaluates the operand for its side effect only: it prints a debug line (file/line/column when available, variable name, static type, and runtime value) and leaves the value on the stack unchanged. Output goes through Zig’s <code>std.debug.print</code> (typically <strong>stderr</strong>), so it stays separate from normal <strong>stdout</strong> (<code>@print</code>, <code>std.io.print</code>, and so on) and does not use the same fallible stdout path.</p>
+<p><code>doxa
+var x is computeValue()
+x?                              # Prints value with location, name, and type</code>
+<code>[./test.doxa:2:2] x :: int is 62</code></p>
+<h3 id="range-to">Range (<code>to</code>)</h3>
+<p>Ranges are arrays which can be declared between two ints or bytes</p>
+<p><code>const range is 10 to 15
+@print("{range}") # [10, 11, 12, 13, 14, 15]</code></p>
+<h3 id="collection-quantifiers">Collection Quantifiers</h3>
+<p>As with all formal logic operations, both symbolic notation and keyword notations are supported.</p>
+<p><code>doxa
+(∃x ∈ numbers : x &gt; 10) # Logical notation
+(exists x in numbers where x &gt; 10) # English prose
+(∀x ∈ numbers : x &gt; 0) # Logical notation
+(forall x in numbers where x &gt; 0) # English prose</code></p>
+<h2 id="conditional-expressions">Conditional Expressions</h2>
+<p>All conditionals can be used as expressions to assign values:</p>
+<p><code>doxa
+var result is if condition then {
+    value1
+} else {
+    value2
+}</code></p>
+<p>Be aware assigning an expression without a value will assign <code>nothing</code>:
+<code>doxa
+    var x is if (false) { y is 1 }  # x becomes nothing</code></p>
+<h3 id="function-return-types">Function Return Types</h3>
+<p>Functions can specify return types using the <code>returns</code> syntax. Any type can be returned, including composite types, but only one type at a time. This is one of the places where type unions can come in handy.</p>
+<p><code>doxa
+function add(a :: int, b :: int) returns int {
+    return a + b
+}</code></p>
+<p>A function that declares <code>returns</code> returns on every path: no path may reach the end of its body (E5011). Reaching the end is a bare <code>return</code>, so a function whose return type includes <code>nothing</code> may let a path reach it, and returns <code>nothing</code> there. A path ends at a <code>return</code>, <code>unreachable</code>, <code>@panic</code> or <code>@exit</code>, at an <code>if</code> or <code>as</code> whose branches all end, at a <code>match</code> that covers its subject and whose arms all end, or at a loop that nothing but a <code>break</code> could stop and that holds none.</p>
+<p>A function or method without <code>returns</code> returns <code>nothing</code>. It may <code>return</code> early,
+but returning a value from it is an error:</p>
+<p>```doxa
+function log(message :: string) {
+    if message == "" then return  # fine: returns nothing
+    @print(message)
+}</p>
+<p>function add(a :: int, b :: int) {
+    return a + b # error: 'add' declares no <code>returns</code>, so it cannot return a value
+}
+```</p>
+<p>The converse holds too: a bare <code>return</code> returns <code>nothing</code>, so a function that
+declares <code>returns</code> may use one only when its return type includes <code>nothing</code>. A
+function returns exactly what it declares; nothing widens the type for it.</p>
+<p>```doxa
+function check(n :: int) returns nothing | Error {
+    if n &gt; 0 then return   # fine: the declared type includes nothing
+    return IOError.Denied
+}</p>
+<p>function strict(n :: int) returns Error {
+    if n &gt; 0 then return   # error: 'strict' returns Error, so a bare <code>return</code> has no value to give
+    return IOError.Denied
+}
+```</p>
+<h2 id="logic">Logic</h2>
+<h3 id="first-order-logic">First order logic</h3>
+<p>First order logic always produces a true or false value. For more information on tetras see the tetra page.</p>
+<p>Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:</p>
+<p>```
+const arr :: int[] = [1, 2, 3, 4, 5]</p>
+<h1 id="existential-quantifier-element-of">existential quantifier ∃, element of ∈</h1>
+<p>∃x ∈ arr : x &gt; 3 # true</p>
+<h1 id="universal-quantifier-where">universal quantifier ∀, where :</h1>
+<p>∀x ∈ arr : x &gt; 3 # false</p>
+<h1 id="not">NOT ¬</h1>
+<p>¬false # true</p>
+<h1 id="biconditional">biconditional ↔</h1>
+<p>false ↔ false # true</p>
+<h1 id="xor">XOR ⊕</h1>
+<p>true ⊕ true # false</p>
+<h1 id="and">AND ∧</h1>
+<p>true ∧ false # false</p>
+<h1 id="or">OR ∨</h1>
+<p>true ∨ false # true</p>
+<h1 id="nand">NAND ↑</h1>
+<p>true ↑ false # true</p>
+<h1 id="nor">NOR ↓</h1>
+<p>true ↓ false # false</p>
+<h1 id="implication">implication →</h1>
+<p>true → false # false
+```</p>
+<p>This unicode support is paired with plaintext keywords which act in an identical fashion:</p>
+<p><code>∃ - exists
+∀ - forall
+∈ - in
+: - where
+¬ - not (`!` is also accepted)
+↔ - iff
+⊕ - xor
+∧ - and
+∨ - or
+↑ - nand
+↓ - nor
+→ - implies</code></p>
+<p>This means formal logical representation can be written in either way:</p>
+<p>```
+const arr :: int[] = [1, 2, 3, 4, 5]</p>
+<p>¬(∀x ∈ arr : x &gt; 3) # true
+not (forall x in arr where x &gt; 3) # true
+```</p>
+<h3 id="paradoxical-logic">Paradoxical logic</h3>
+<p>Every binary tetra operator reads whether each operand holds (<code>true</code> and <code>both</code> hold, <code>false</code> and <code>neither</code> do not) and answers <code>true</code> or <code>false</code>; <code>not</code> is the one operator that keeps a contradiction. The rule is in <a href="../tetras/">Tetras</a>, "Intentionality". For <code>and</code> (rows are the left operand) and <code>not</code>:</p>
+<table>
+<thead>
+<tr>
+<th>and</th>
+<th>T</th>
+<th>F</th>
+<th>B</th>
+<th>N</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>T</strong></td>
+<td>T</td>
+<td>F</td>
+<td>T</td>
+<td>F</td>
+</tr>
+<tr>
+<td><strong>F</strong></td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
+</tr>
+<tr>
+<td><strong>B</strong></td>
+<td>T</td>
+<td>F</td>
+<td>T</td>
+<td>F</td>
+</tr>
+<tr>
+<td><strong>N</strong></td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
+<td>F</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>not</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>T</strong></td>
+<td>F</td>
+</tr>
+<tr>
+<td><strong>F</strong></td>
+<td>T</td>
+</tr>
+<tr>
+<td><strong>B</strong></td>
+<td>B</td>
+</tr>
+<tr>
+<td><strong>N</strong></td>
+<td>N</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>
